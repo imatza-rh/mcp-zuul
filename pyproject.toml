@@ -1,0 +1,38 @@
+[project]
+name = "mcp-zuul"
+version = "0.1.0"
+description = "MCP server for Zuul CI — read-only access to builds, logs, status, and jobs"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    {name = "Itay Matza"},
+]
+keywords = ["mcp", "zuul", "ci", "zuul-ci", "model-context-protocol"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "mcp>=1.26.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+mcp-zuul = "mcp_zuul:main"
+
+[project.urls]
+Homepage = "https://github.com/imatza-rh/mcp-zuul"
+Repository = "https://github.com/imatza-rh/mcp-zuul"
+Issues = "https://github.com/imatza-rh/mcp-zuul/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_zuul"]
