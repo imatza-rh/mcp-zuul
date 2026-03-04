@@ -10,6 +10,7 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP, Context
@@ -107,6 +108,18 @@ def _tenant(ctx: Context, tenant: str) -> str:
     return t
 
 
+def _safepath(value: str) -> str:
+    """Sanitize a user-supplied value for use in a URL path.
+
+    Preserves slashes (needed for Zuul project names like org/repo)
+    but rejects path traversal attempts.
+    """
+    if ".." in value.split("/"):
+        raise ValueError(f"Invalid path segment: {value!r}")
+    return quote(value, safe="/")
+
+
+
 async def _api(ctx: Context, path: str, params: dict | None = None) -> Any:
     resp = await _app(ctx).client.get(f"/api{path}", params=params)
     resp.raise_for_status()
@@ -135,7 +148,7 @@ def _clean(d: dict) -> dict:
 
 def _fmt_build(b: dict, brief: bool = True) -> dict:
     out = {
-        "uuid": b["uuid"],
+        "uuid": b.get("uuid", "unknown"),
         "job": b["job_name"],
         "result": b.get("result") or "IN_PROGRESS",
         "pipeline": b.get("pipeline", ""),
@@ -164,7 +177,7 @@ def _fmt_build(b: dict, brief: bool = True) -> dict:
 
 def _fmt_buildset(bs: dict, brief: bool = True) -> dict:
     out = {
-        "uuid": bs["uuid"],
+        "uuid": bs.get("uuid", "unknown"),
         "result": bs.get("result") or "IN_PROGRESS",
         "pipeline": bs.get("pipeline", ""),
         "event_timestamp": bs.get("event_timestamp"),
@@ -275,7 +288,7 @@ async def get_status(
         active_only: Only show pipelines with active items (default true)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/status")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/status")
 
     pipelines = data.get("pipelines", [])
     result = []
@@ -333,7 +346,7 @@ async def get_change_status(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/status/change/{change}")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/status/change/{_safepath(change)}")
     if not data:
         return json.dumps({"change": change, "status": "not_in_pipeline"})
     return json.dumps([_fmt_status_item(item) for item in data])
@@ -381,7 +394,7 @@ async def list_builds(
         if val:
             params[key] = val
 
-    data = await _api(ctx, f"/tenant/{t}/builds", params)
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/builds", params)
     has_more = len(data) > limit
     builds = [_fmt_build(b) for b in data[:limit]]
     return json.dumps({"builds": builds, "count": len(builds),
@@ -402,7 +415,7 @@ async def get_build(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/build/{uuid}")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/build/{_safepath(uuid)}")
     return json.dumps(_fmt_build(data, brief=False))
 
 
@@ -435,10 +448,15 @@ async def get_build_log(
         grep: Regex pattern to filter log lines (overrides mode)
     """
     t = _tenant(ctx, tenant)
-    build = await _api(ctx, f"/tenant/{t}/build/{uuid}")
+    build = await _api(ctx, f"/tenant/{_safepath(t)}/build/{_safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
         return _error(f"No log_url for build {uuid}")
+
+    # Validate log URL scheme before fetching
+    parsed = urlparse(log_url)
+    if parsed.scheme not in ("http", "https"):
+        return _error(f"Invalid log URL scheme: {parsed.scheme}")
 
     # Fetch job-output.txt (separate client — no auth token)
     app = _app(ctx)
@@ -467,7 +485,7 @@ async def get_build_log(
             return _error(f"Invalid regex: {e}")
         try:
             matched = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(
+                asyncio.get_running_loop().run_in_executor(
                     None,
                     lambda: [(i + 1, l) for i, l in enumerate(all_lines) if pat.search(l)],
                 ),
@@ -553,7 +571,7 @@ async def list_buildsets(
         if val:
             params[key] = val
 
-    data = await _api(ctx, f"/tenant/{t}/buildsets", params)
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/buildsets", params)
     has_more = len(data) > limit
     buildsets = [_fmt_buildset(bs) for bs in data[:limit]]
     return json.dumps({
@@ -578,7 +596,7 @@ async def get_buildset(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/buildset/{uuid}")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/buildset/{_safepath(uuid)}")
     return json.dumps(_fmt_buildset(data, brief=False))
 
 
@@ -596,7 +614,7 @@ async def list_jobs(
         filter: Case-insensitive substring to filter job names
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/jobs")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/jobs")
     if filter:
         f_lower = filter.lower()
         data = [j for j in data if f_lower in j.get("name", "").lower()]
@@ -625,7 +643,7 @@ async def get_job(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/job/{name}")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/job/{_safepath(name)}")
     variants = []
     for v in data:
         sc = v.get("source_context") or {}
@@ -657,7 +675,7 @@ async def get_project(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/project/{name}")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/project/{_safepath(name)}")
     configs: dict[str, list[str]] = {}
     for cfg in data.get("configs", []):
         for pipeline in cfg.get("pipelines", []):
@@ -691,7 +709,7 @@ async def list_pipelines(
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
-    data = await _api(ctx, f"/tenant/{t}/pipelines")
+    data = await _api(ctx, f"/tenant/{_safepath(t)}/pipelines")
     result = [
         {"name": p["name"], "triggers": [tr["driver"] for tr in p.get("triggers", [])]}
         for p in data
