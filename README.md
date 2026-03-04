@@ -103,6 +103,38 @@ claude mcp add -t stdio \
   zuul -- mcp-zuul
 ```
 
+### Authenticated instances
+
+For Zuul instances behind SSO or token auth, pass `ZUUL_AUTH_TOKEN` via the
+host environment — **never hardcode tokens in config files or Docker args**
+(they are visible in `ps` output).
+
+Set the token in your shell environment first:
+```bash
+export ZUUL_AUTH_TOKEN=<your-token>
+```
+
+Then reference it in your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "zuul-internal": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
+        "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
+        "-e", "ZUUL_AUTH_TOKEN",
+        "mcp-zuul"
+      ]
+    }
+  }
+}
+```
+
+> When `-e ZUUL_AUTH_TOKEN` is passed without `=value`, Docker forwards the
+> variable from the host environment.
+
 ### Multiple Zuul instances
 
 Configure separate MCP server entries for each instance:
@@ -123,7 +155,7 @@ Configure separate MCP server entries for each instance:
       "args": ["run", "-i", "--rm",
         "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
         "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
-        "-e", "ZUUL_AUTH_TOKEN=my-token",
+        "-e", "ZUUL_AUTH_TOKEN",
         "mcp-zuul"
       ]
     }
