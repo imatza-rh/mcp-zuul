@@ -283,11 +283,17 @@ async def get_status(
                     if active_only and not item.get("active", False):
                         continue
                     items.append(_fmt_status_item(item))
+                    if len(items) >= 50:
+                        break
+                if len(items) >= 50:
+                    break
+            if len(items) >= 50:
+                break
         if items or not active_only:
             result.append({
                 "pipeline": p["name"],
                 "item_count": len(items),
-                "items": items[:50],
+                "items": items,
             })
 
     # Only include pipelines with items when active_only
@@ -448,20 +454,23 @@ async def get_build_log(
             "lines": [{"n": n, "text": text[:500]} for n, text in matched[:100]],
         })
 
-    # Summary mode
+    # Summary mode — single pass for both errors and tail
     if mode == "summary":
         tail_n = lines or 100
-        tail = all_lines[-tail_n:]
-        errors = [
-            (i + 1, line) for i, line in enumerate(all_lines)
-            if _ERROR_PATTERNS.search(line)
-        ]
+        tail_start = max(0, total - tail_n)
+        errors = []
+        tail = []
+        for i, line in enumerate(all_lines):
+            if _ERROR_PATTERNS.search(line) and len(errors) < 30:
+                errors.append((i + 1, line))
+            if i >= tail_start:
+                tail.append(line)
         return json.dumps({
             "total_lines": total,
             "log_url": txt_url,
             "job": build.get("job_name", ""),
             "result": build.get("result", ""),
-            "error_lines": [{"n": n, "text": t[:500]} for n, t in errors[:30]],
+            "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
             "tail": [l[:500] for l in tail],
         })
 
@@ -517,9 +526,10 @@ async def list_buildsets(
 
     data = await _api(ctx, f"/tenant/{t}/buildsets", params)
     has_more = len(data) > limit
+    buildsets = [_fmt_buildset(bs) for bs in data[:limit]]
     return json.dumps({
-        "buildsets": [_fmt_buildset(bs) for bs in data[:limit]],
-        "count": min(len(data), limit),
+        "buildsets": buildsets,
+        "count": len(buildsets),
         "has_more": has_more,
         "skip": skip,
     })

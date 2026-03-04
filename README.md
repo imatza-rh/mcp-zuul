@@ -163,6 +163,58 @@ Configure separate MCP server entries for each instance:
 }
 ```
 
+## Usage examples
+
+Once connected, ask your AI assistant naturally:
+
+```
+"List all Zuul tenants"
+"What's currently running in the check pipeline?"
+"Show me the last 5 failed builds for project rdoproject.org/rdoinfo"
+"Get the log for build <uuid> and find the error"
+"What jobs are configured for project rdoproject.org/rdoinfo?"
+"Show me the status of change 12345"
+```
+
+Example interactions:
+
+**Find failing builds and debug them:**
+```
+> "Show me recent failed builds in rdoproject.org"
+
+→ list_builds(tenant="rdoproject.org", result="FAILURE", limit=5)
+
+> "Get the log for the first one and find the error"
+
+→ get_build_log(uuid="abc123...", mode="summary")
+
+> "Grep the log for 'UNREACHABLE'"
+
+→ get_build_log(uuid="abc123...", grep="UNREACHABLE")
+```
+
+**Check live pipeline status:**
+```
+> "What's running in the gate pipeline right now?"
+
+→ get_status(tenant="rdoproject.org", pipeline="gate")
+
+> "Is change 54321 in any pipeline?"
+
+→ get_change_status(change="54321")
+```
+
+**Explore jobs and project config:**
+```
+> "List all jobs with 'tempest' in the name"
+
+→ list_jobs(filter="tempest")
+
+> "What pipelines and jobs does rdoproject.org/rdoinfo have?"
+
+→ get_project(name="rdoproject.org/rdoinfo")
+```
+
 ## Log analysis
 
 The `get_build_log` tool has three modes:
