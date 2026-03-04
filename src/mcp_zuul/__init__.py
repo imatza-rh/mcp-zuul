@@ -1,5 +1,6 @@
 """Zuul CI MCP Server — read-only access to builds, logs, status, and jobs."""
 
+import asyncio
 import functools
 import json
 import os
@@ -41,11 +42,17 @@ class Config:
         if not base_url:
             log.error("ZUUL_URL environment variable is required")
             sys.exit(1)
+        raw_timeout = os.environ.get("ZUUL_TIMEOUT", "30")
+        try:
+            timeout = int(raw_timeout)
+        except ValueError:
+            log.error("ZUUL_TIMEOUT must be an integer (seconds), got: %s", raw_timeout)
+            sys.exit(1)
         return cls(
             base_url=base_url,
             default_tenant=os.environ.get("ZUUL_DEFAULT_TENANT", ""),
             auth_token=os.environ.get("ZUUL_AUTH_TOKEN"),
-            timeout=int(os.environ.get("ZUUL_TIMEOUT", "30")),
+            timeout=timeout,
             verify_ssl=os.environ.get("ZUUL_VERIFY_SSL", "true").lower() == "true",
         )
 
@@ -57,6 +64,7 @@ class Config:
 @dataclass
 class AppContext:
     client: httpx.AsyncClient
+    log_client: httpx.AsyncClient
     config: Config
 
 
@@ -72,9 +80,13 @@ async def lifespan(server: FastMCP):
         timeout=config.timeout,
         follow_redirects=True,
         verify=config.verify_ssl,
-    ) as client:
+    ) as client, httpx.AsyncClient(
+        timeout=config.timeout,
+        follow_redirects=True,
+        verify=config.verify_ssl,
+    ) as log_client:
         log.info("Zuul MCP connected to %s", config.base_url)
-        yield AppContext(client=client, config=config)
+        yield AppContext(client=client, log_client=log_client, config=config)
 
 
 mcp = FastMCP("zuul", lifespan=lifespan)
@@ -396,6 +408,7 @@ async def get_build(
 
 # Log fetching constants
 _MAX_LOG_LINES = 200
+_MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
 _ERROR_PATTERNS = re.compile(
     r"(FAILED|ERROR|UNREACHABLE|fatal|Traceback|TASK \[.*\] \*+$)",
     re.IGNORECASE,
@@ -427,15 +440,22 @@ async def get_build_log(
     if not log_url:
         return _error(f"No log_url for build {uuid}")
 
-    # Fetch job-output.txt
+    # Fetch job-output.txt (separate client — no auth token)
     app = _app(ctx)
     txt_url = log_url.rstrip("/") + "/job-output.txt"
-    resp = await app.client.get(txt_url, follow_redirects=True)
-    if resp.status_code == 404:
-        return _error(f"job-output.txt not found at {txt_url}")
-    resp.raise_for_status()
+    chunks: list[bytes] = []
+    size = 0
+    async with app.log_client.stream("GET", txt_url) as resp:
+        if resp.status_code == 404:
+            return _error(f"job-output.txt not found at {txt_url}")
+        resp.raise_for_status()
+        async for chunk in resp.aiter_bytes():
+            size += len(chunk)
+            if size > _MAX_LOG_BYTES:
+                break
+            chunks.append(chunk)
 
-    raw = _strip_ansi(resp.text)
+    raw = _strip_ansi(b"".join(chunks).decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
 
@@ -445,7 +465,16 @@ async def get_build_log(
             pat = re.compile(grep, re.IGNORECASE)
         except re.error as e:
             return _error(f"Invalid regex: {e}")
-        matched = [(i + 1, line) for i, line in enumerate(all_lines) if pat.search(line)]
+        try:
+            matched = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: [(i + 1, l) for i, l in enumerate(all_lines) if pat.search(l)],
+                ),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            return _error("Regex search timed out (pattern may be too complex)")
         return json.dumps({
             "total_lines": total,
             "log_url": txt_url,
