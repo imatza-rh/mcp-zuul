@@ -580,12 +580,15 @@ async def get_build_log(
     if parsed.scheme not in ("http", "https"):
         return _error(f"Invalid log URL scheme: {parsed.scheme}")
 
-    # Fetch job-output.txt (separate client — no auth token)
+    # Fetch job-output.txt — use authenticated client when log host matches API host
     app = _app(ctx)
     txt_url = log_url.rstrip("/") + "/job-output.txt"
+    api_host = urlparse(app.config.base_url).hostname
+    log_host = urlparse(txt_url).hostname
+    http = app.client if log_host == api_host else app.log_client
     chunks: list[bytes] = []
     size = 0
-    async with app.log_client.stream("GET", txt_url) as resp:
+    async with http.stream("GET", txt_url) as resp:
         if resp.status_code == 404:
             return _error(f"job-output.txt not found at {txt_url}")
         resp.raise_for_status()
