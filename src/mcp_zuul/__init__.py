@@ -1,6 +1,7 @@
 """Zuul CI MCP Server — read-only access to builds, logs, status, and jobs."""
 
 import asyncio
+import base64
 import functools
 import json
 import os
@@ -36,6 +37,7 @@ class Config:
     auth_token: str | None
     timeout: int
     verify_ssl: bool
+    use_kerberos: bool
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -49,13 +51,124 @@ class Config:
         except ValueError:
             log.error("ZUUL_TIMEOUT must be an integer (seconds), got: %s", raw_timeout)
             sys.exit(1)
+        use_kerberos = os.environ.get("ZUUL_USE_KERBEROS", "false").lower() == "true"
+        auth_token = os.environ.get("ZUUL_AUTH_TOKEN")
+        if use_kerberos and auth_token:
+            log.error("ZUUL_USE_KERBEROS and ZUUL_AUTH_TOKEN are mutually exclusive")
+            sys.exit(1)
+        if use_kerberos:
+            try:
+                import gssapi  # noqa: F401
+            except ImportError:
+                log.error(
+                    "ZUUL_USE_KERBEROS=true but 'gssapi' is not installed. "
+                    "Install with: pip install mcp-zuul[kerberos]"
+                )
+                sys.exit(1)
         return cls(
             base_url=base_url,
             default_tenant=os.environ.get("ZUUL_DEFAULT_TENANT", ""),
-            auth_token=os.environ.get("ZUUL_AUTH_TOKEN"),
+            auth_token=auth_token,
             timeout=timeout,
             verify_ssl=os.environ.get("ZUUL_VERIFY_SSL", "true").lower() == "true",
+            use_kerberos=use_kerberos,
         )
+
+
+# ---------------------------------------------------------------------------
+# Kerberos / SPNEGO authentication
+# ---------------------------------------------------------------------------
+
+def _follow_redirect(resp: httpx.Response) -> str | None:
+    """Extract the Location header from a redirect response."""
+    if resp.status_code not in (301, 302, 303, 307, 308):
+        return None
+    location = resp.headers.get("location")
+    if not location:
+        raise RuntimeError(
+            f"Kerberos auth: {resp.status_code} redirect has no Location header"
+        )
+    return location
+
+
+async def _kerberos_auth(client: httpx.AsyncClient, base_url: str) -> None:
+    """Authenticate via SPNEGO/Kerberos against an OIDC-protected Zuul.
+
+    Drives the redirect chain manually:
+      Zuul API → 302 OIDC login → 401 Negotiate → SPNEGO token →
+      302 callback → session cookie established.
+
+    Requires a valid Kerberos ticket (run ``kinit`` first).
+    """
+    import gssapi
+
+    max_hops = 10
+    url = f"{base_url}/api/tenants"
+
+    # The client may have Accept: application/json which causes some servers
+    # to return 401 directly instead of redirecting to SSO.  Override with
+    # a browser-like Accept during the auth handshake.
+    auth_headers: dict[str, str] = {"Accept": "text/html"}
+
+    # Follow redirects until we hit a 401 Negotiate challenge.
+    resp = await client.get(url, headers=auth_headers, follow_redirects=False)
+    for _ in range(max_hops):
+        location = _follow_redirect(resp)
+        if location:
+            url = location
+            resp = await client.get(url, headers=auth_headers, follow_redirects=False)
+        else:
+            break
+
+    if resp.status_code != 401:
+        raise RuntimeError(
+            f"Kerberos auth: expected 401 Negotiate challenge, got {resp.status_code}"
+        )
+    www_auth = resp.headers.get("www-authenticate", "")
+    if "negotiate" not in www_auth.lower():
+        raise RuntimeError(
+            f"Kerberos auth: server did not offer Negotiate (got: {www_auth})"
+        )
+
+    # Generate SPNEGO token for the SSO host.
+    host = urlparse(url).hostname
+    spn = gssapi.Name(f"HTTP@{host}", gssapi.NameType.hostbased_service)
+    ctx = gssapi.SecurityContext(name=spn, usage="initiate")
+
+    # Extract server token from "Negotiate <base64>" if present.
+    in_token = None
+    parts = www_auth.strip().split()
+    if len(parts) >= 2 and parts[0].lower() == "negotiate":
+        in_token = base64.b64decode(parts[1])
+
+    try:
+        out_token = ctx.step(in_token)
+    except gssapi.exceptions.GSSError as e:
+        raise RuntimeError(
+            f"Kerberos auth: SPNEGO token generation failed "
+            f"(is your ticket valid? run kinit): {e}"
+        ) from e
+
+    # Send the authenticated request to the SSO endpoint.
+    resp = await client.get(
+        url,
+        headers={"Authorization": f"Negotiate {base64.b64encode(out_token).decode()}"},
+        follow_redirects=False,
+    )
+
+    # Follow remaining redirects (SSO callback → Zuul session).
+    for _ in range(max_hops):
+        location = _follow_redirect(resp)
+        if location:
+            resp = await client.get(location, follow_redirects=False)
+        else:
+            break
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Kerberos auth: final response was {resp.status_code}, expected 200"
+        )
+    log.info("Kerberos authentication successful")
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +199,8 @@ async def lifespan(server: FastMCP):
         follow_redirects=True,
         verify=config.verify_ssl,
     ) as log_client:
+        if config.use_kerberos:
+            await _kerberos_auth(client, config.base_url)
         log.info("Zuul MCP connected to %s", config.base_url)
         yield AppContext(client=client, log_client=log_client, config=config)
 
@@ -119,9 +234,16 @@ def _safepath(value: str) -> str:
     return quote(value, safe="/")
 
 
-
 async def _api(ctx: Context, path: str, params: dict | None = None) -> Any:
-    resp = await _app(ctx).client.get(f"/api{path}", params=params)
+    app = _app(ctx)
+    resp = await app.client.get(f"/api{path}", params=params)
+
+    # Re-authenticate if the session expired (Kerberos only).
+    if resp.status_code in (401, 302) and app.config.use_kerberos:
+        log.info("Session expired, re-authenticating via Kerberos")
+        await _kerberos_auth(app.client, app.config.base_url)
+        resp = await app.client.get(f"/api{path}", params=params)
+
     resp.raise_for_status()
     return resp.json()
 

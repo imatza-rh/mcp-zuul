@@ -28,6 +28,7 @@ Works with any Zuul instance (Software Factory, OpenDev, etc.) via the [Zuul RES
 | `ZUUL_URL` | Yes | Zuul base URL (e.g. `https://softwarefactory-project.io/zuul`) |
 | `ZUUL_DEFAULT_TENANT` | No | Default tenant name (e.g. `rdoproject.org`) |
 | `ZUUL_AUTH_TOKEN` | No | Bearer token for authenticated instances |
+| `ZUUL_USE_KERBEROS` | No | Enable Kerberos/SPNEGO authentication (default: `false`) |
 | `ZUUL_TIMEOUT` | No | HTTP timeout in seconds (default: 30) |
 | `ZUUL_VERIFY_SSL` | No | SSL verification (default: `true`) |
 
@@ -134,6 +135,52 @@ Then reference it in your MCP config:
 
 > When `-e ZUUL_AUTH_TOKEN` is passed without `=value`, Docker forwards the
 > variable from the host environment.
+
+### Kerberos / SPNEGO authentication
+
+For Zuul instances behind OIDC + Kerberos (SPNEGO), authenticate using your
+existing Kerberos ticket instead of a short-lived bearer token.
+
+**Prerequisites:** a valid Kerberos ticket (`kinit` first) and the `gssapi`
+Python package (`pip install mcp-zuul[kerberos]`).
+
+```json
+{
+  "mcpServers": {
+    "zuul-internal": {
+      "command": "mcp-zuul",
+      "env": {
+        "ZUUL_URL": "https://my-internal-zuul.example.com/zuul",
+        "ZUUL_DEFAULT_TENANT": "my-tenant",
+        "ZUUL_USE_KERBEROS": "true",
+        "ZUUL_VERIFY_SSL": "false"
+      }
+    }
+  }
+}
+```
+
+For Docker, mount your Kerberos ticket cache and `krb5.conf`:
+
+```json
+{
+  "mcpServers": {
+    "zuul-internal": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm",
+        "-v", "/etc/krb5.conf:/etc/krb5.conf:ro",
+        "-v", "/tmp/krb5cc_1000:/tmp/krb5cc_1000:ro",
+        "-e", "KRB5CCNAME=/tmp/krb5cc_1000",
+        "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
+        "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
+        "-e", "ZUUL_USE_KERBEROS=true",
+        "-e", "ZUUL_VERIFY_SSL=false",
+        "mcp-zuul"
+      ]
+    }
+  }
+}
+```
 
 ### Multiple Zuul instances
 

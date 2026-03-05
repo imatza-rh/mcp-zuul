@@ -22,6 +22,9 @@ dependencies = [
     "httpx>=0.28.0",
 ]
 
+[project.optional-dependencies]
+kerberos = ["gssapi>=1.8.0"]
+
 [project.scripts]
 mcp-zuul = "mcp_zuul:main"
 
