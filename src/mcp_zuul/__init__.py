@@ -544,10 +544,114 @@ async def get_build(
 # Log fetching constants
 _MAX_LOG_LINES = 200
 _MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_JSON_LOG_BYTES = 20 * 1024 * 1024  # 20 MB (JSON is larger)
 _ERROR_PATTERNS = re.compile(
     r"(FAILED!|UNREACHABLE|fatal:|Traceback|failed=[1-9])",
 )
 _ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
+
+
+async def _fetch_log_url(app: AppContext, url: str) -> httpx.Response:
+    """Fetch a log URL with automatic Kerberos re-auth if needed."""
+    api_host = urlparse(app.config.base_url).hostname
+    log_host = urlparse(url).hostname
+    http = app.client if log_host == api_host else app.log_client
+    resp = await http.get(url, follow_redirects=True)
+    if resp.status_code in (401, 302) and app.config.use_kerberos and http is app.client:
+        log.info("Log fetch: session expired, re-authenticating via Kerberos")
+        await _kerberos_auth(app.client, app.config.base_url)
+        resp = await http.get(url, follow_redirects=True)
+    return resp
+
+
+@mcp.tool()
+@_handle_errors
+async def get_build_failures(
+    ctx: Context,
+    uuid: str,
+    tenant: str = "",
+) -> str:
+    """Analyze build failures using structured job-output.json.
+
+    Returns failed playbooks and tasks with error messages, rc, stderr.
+    Much more accurate than text log parsing.
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    build = await _api(ctx, f"/tenant/{_safepath(t)}/build/{_safepath(uuid)}")
+    log_url = build.get("log_url")
+    if not log_url:
+        return _error(f"No log_url for build {uuid}")
+
+    app = _app(ctx)
+    json_url = log_url.rstrip("/") + "/job-output.json.gz"
+    resp = await _fetch_log_url(app, json_url)
+    if resp.status_code == 404:
+        # Fall back to uncompressed
+        json_url = log_url.rstrip("/") + "/job-output.json"
+        resp = await _fetch_log_url(app, json_url)
+    if resp.status_code == 404:
+        return _error("job-output.json not found")
+    resp.raise_for_status()
+
+    raw = resp.content[:_MAX_JSON_LOG_BYTES]
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return _error(f"Failed to parse job-output.json: {e}")
+
+    if not isinstance(data, list):
+        return _error("Unexpected job-output.json format")
+
+    playbooks = []
+    failed_tasks = []
+    for pb in data:
+        phase = pb.get("phase", "")
+        playbook = pb.get("playbook", "")
+        stats = pb.get("stats", {})
+        has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
+
+        pb_summary = _clean({
+            "phase": phase,
+            "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+            "playbook_full": playbook,
+            "failed": has_failure,
+            "stats": stats,
+        })
+        playbooks.append(pb_summary)
+
+        if has_failure:
+            for play in pb.get("plays", []):
+                play_name = play.get("play", {}).get("name", "")
+                for task in play.get("tasks", []):
+                    task_info = task.get("task", {})
+                    task_name = task_info.get("name", "")
+                    duration = task_info.get("duration", {})
+                    for host, result in task.get("hosts", {}).items():
+                        if result.get("failed"):
+                            ft = _clean({
+                                "play": play_name,
+                                "task": task_name,
+                                "host": host,
+                                "msg": str(result.get("msg", ""))[:500],
+                                "rc": result.get("rc"),
+                                "stderr": str(result.get("stderr", ""))[:500] or None,
+                                "stdout": str(result.get("stdout", ""))[:300] or None,
+                                "duration": duration.get("end", ""),
+                                "playbook": playbook,
+                            })
+                            failed_tasks.append(ft)
+
+    return json.dumps({
+        "job": build.get("job_name", ""),
+        "result": build.get("result", ""),
+        "playbook_count": len(playbooks),
+        "playbooks": playbooks,
+        "failed_tasks": failed_tasks,
+    })
 
 
 @mcp.tool()
@@ -734,16 +838,8 @@ async def browse_build_logs(
 
     app = _app(ctx)
     target_url = log_url.rstrip("/") + "/" + path.lstrip("/")
-    api_host = urlparse(app.config.base_url).hostname
-    log_host = urlparse(target_url).hostname
-    http = app.client if log_host == api_host else app.log_client
 
-    resp = await http.get(target_url, follow_redirects=True)
-    # Re-authenticate if session expired (Kerberos only)
-    if resp.status_code in (401, 302) and app.config.use_kerberos and http is app.client:
-        log.info("Browse logs: session expired, re-authenticating via Kerberos")
-        await _kerberos_auth(app.client, app.config.base_url)
-        resp = await http.get(target_url, follow_redirects=True)
+    resp = await _fetch_log_url(app, target_url)
     if resp.status_code == 404:
         return _error(f"Not found: {path or '/'}")
     resp.raise_for_status()
