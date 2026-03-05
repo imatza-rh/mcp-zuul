@@ -545,9 +545,9 @@ async def get_build(
 _MAX_LOG_LINES = 200
 _MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
 _ERROR_PATTERNS = re.compile(
-    r"(FAILED|ERROR|UNREACHABLE|fatal|Traceback|TASK \[.*\] \*+$)",
-    re.IGNORECASE,
+    r"(FAILED!|UNREACHABLE|fatal:|Traceback|failed=[1-9])",
 )
+_ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
 
 
 @mcp.tool()
@@ -559,6 +559,7 @@ async def get_build_log(
     mode: str = "summary",
     lines: int = 0,
     grep: str = "",
+    context: int = 0,
 ) -> str:
     """Fetch and parse build log (job-output.txt).
 
@@ -568,6 +569,7 @@ async def get_build_log(
         mode: "summary" (default: tail + error lines) or "full" (paginated chunks)
         lines: For summary: tail line count (default 100). For full: offset start line.
         grep: Regex pattern to filter log lines (overrides mode)
+        context: Lines of context before/after each grep match (default 0, max 10)
     """
     t = _tenant(ctx, tenant)
     build = await _api(ctx, f"/tenant/{_safepath(t)}/build/{_safepath(uuid)}")
@@ -589,14 +591,29 @@ async def get_build_log(
     chunks: list[bytes] = []
     size = 0
     async with http.stream("GET", txt_url) as resp:
-        if resp.status_code == 404:
-            return _error(f"job-output.txt not found at {txt_url}")
-        resp.raise_for_status()
-        async for chunk in resp.aiter_bytes():
-            size += len(chunk)
-            if size > _MAX_LOG_BYTES:
-                break
-            chunks.append(chunk)
+        # Re-authenticate if session expired (Kerberos only)
+        if resp.status_code in (401, 302) and app.config.use_kerberos and http is app.client:
+            await resp.aclose()
+            log.info("Log fetch: session expired, re-authenticating via Kerberos")
+            await _kerberos_auth(app.client, app.config.base_url)
+            async with http.stream("GET", txt_url) as resp2:
+                if resp2.status_code == 404:
+                    return _error(f"job-output.txt not found at {txt_url}")
+                resp2.raise_for_status()
+                async for chunk in resp2.aiter_bytes():
+                    size += len(chunk)
+                    if size > _MAX_LOG_BYTES:
+                        break
+                    chunks.append(chunk)
+        else:
+            if resp.status_code == 404:
+                return _error(f"job-output.txt not found at {txt_url}")
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes():
+                size += len(chunk)
+                if size > _MAX_LOG_BYTES:
+                    break
+                chunks.append(chunk)
 
     raw = _strip_ansi(b"".join(chunks).decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
@@ -618,6 +635,25 @@ async def get_build_log(
             )
         except asyncio.TimeoutError:
             return _error("Regex search timed out (pattern may be too complex)")
+        ctx_n = max(0, min(context, 10))
+        if ctx_n > 0 and matched:
+            # Build context blocks around each match
+            blocks = []
+            for n, _text in matched[:50]:
+                start = max(0, n - 1 - ctx_n)
+                end = min(total, n + ctx_n)
+                block = [
+                    {"n": i + 1, "text": all_lines[i][:500], "match": pat.search(all_lines[i]) is not None}
+                    for i in range(start, end)
+                ]
+                blocks.append(block)
+            return json.dumps({
+                "total_lines": total,
+                "log_url": txt_url,
+                "grep": grep,
+                "matched": len(matched),
+                "blocks": blocks,
+            })
         return json.dumps({
             "total_lines": total,
             "log_url": txt_url,
@@ -633,7 +669,7 @@ async def get_build_log(
         errors = []
         tail = []
         for i, line in enumerate(all_lines):
-            if _ERROR_PATTERNS.search(line) and len(errors) < 30:
+            if _ERROR_PATTERNS.search(line) and not _ERROR_NOISE.search(line) and len(errors) < 30:
                 errors.append((i + 1, line))
             if i >= tail_start:
                 tail.append(line)
@@ -656,6 +692,88 @@ async def get_build_log(
         "count": len(chunk),
         "has_more": offset + len(chunk) < total,
         "lines": [l[:500] for l in chunk],
+    })
+
+
+_MAX_FILE_BYTES = 512 * 1024  # 512 KB for fetched log files
+
+
+@mcp.tool()
+@_handle_errors
+async def browse_build_logs(
+    ctx: Context,
+    uuid: str,
+    tenant: str = "",
+    path: str = "",
+) -> str:
+    """Browse or fetch files from a build's log directory.
+
+    Without path: lists the top-level log directory.
+    With path ending in '/': lists that subdirectory.
+    With path to a file: fetches and returns the file content (max 512KB).
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant name (uses default if empty)
+        path: Relative path within the log dir (e.g. "logs/controller/",
+              "zuul-info/inventory.yaml", "logs/hypervisor/ci-framework-data/artifacts/")
+    """
+    t = _tenant(ctx, tenant)
+    build = await _api(ctx, f"/tenant/{_safepath(t)}/build/{_safepath(uuid)}")
+    log_url = build.get("log_url")
+    if not log_url:
+        return _error(f"No log_url for build {uuid}")
+
+    parsed = urlparse(log_url)
+    if parsed.scheme not in ("http", "https"):
+        return _error(f"Invalid log URL scheme: {parsed.scheme}")
+
+    # Prevent path traversal
+    if ".." in path.split("/"):
+        return _error("Path traversal not allowed")
+
+    app = _app(ctx)
+    target_url = log_url.rstrip("/") + "/" + path.lstrip("/")
+    api_host = urlparse(app.config.base_url).hostname
+    log_host = urlparse(target_url).hostname
+    http = app.client if log_host == api_host else app.log_client
+
+    resp = await http.get(target_url, follow_redirects=True)
+    # Re-authenticate if session expired (Kerberos only)
+    if resp.status_code in (401, 302) and app.config.use_kerberos and http is app.client:
+        log.info("Browse logs: session expired, re-authenticating via Kerberos")
+        await _kerberos_auth(app.client, app.config.base_url)
+        resp = await http.get(target_url, follow_redirects=True)
+    if resp.status_code == 404:
+        return _error(f"Not found: {path or '/'}")
+    resp.raise_for_status()
+
+    content_type = resp.headers.get("content-type", "")
+
+    # Directory listing (Apache/nginx index page)
+    if "text/html" in content_type and (not path or path.endswith("/")):
+        entries = re.findall(r'href="([^"?][^"]*)"', resp.text)
+        # Filter out parent directory and absolute links
+        entries = [e for e in entries if not e.startswith("/") and not e.startswith("http")]
+        return json.dumps({
+            "log_url": target_url,
+            "path": path or "/",
+            "entries": entries,
+        })
+
+    # File content
+    raw = resp.content[:_MAX_FILE_BYTES]
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception:
+        return _error(f"Cannot decode file at {path}")
+    truncated = len(resp.content) > _MAX_FILE_BYTES
+    return json.dumps({
+        "log_url": target_url,
+        "path": path,
+        "size": len(resp.content),
+        "truncated": truncated,
+        "content": text,
     })
 
 
