@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import logging
+import time as _time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -342,26 +343,32 @@ def _fmt_status_item(item: dict) -> dict:
         out["buildset_uuid"] = zuul_ref[1:]
     jobs = item.get("jobs", [])
     if jobs:
-        out["jobs"] = [
-            _clean({
+        now = _time.time()
+        formatted_jobs = []
+        for j in jobs:
+            elapsed = j.get("elapsed_time")
+            start = j.get("start_time")
+            # Compute elapsed server-side when Zuul doesn't provide it
+            if elapsed is None and start and not j.get("result"):
+                elapsed = int((now - start) * 1000)  # ms
+            formatted_jobs.append(_clean({
                 "name": j.get("name", ""),
                 "uuid": j.get("uuid"),
                 "result": j.get("result"),
                 "voting": j.get("voting", True),
                 "pre_fail": j.get("pre_fail"),
-                "elapsed": j.get("elapsed_time"),
+                "elapsed": elapsed,
                 "remaining": j.get("remaining_time"),
                 "estimated": j.get("estimated_time"),
-                "start_time": j.get("start_time"),
+                "start_time": start,
                 "report_url": j.get("report_url"),
                 "stream_url": j.get("url"),
                 "dependencies": j.get("dependencies") or None,
                 "waiting_status": j.get("waiting_status"),
                 "queued": j.get("queued"),
                 "tries": j.get("tries"),
-            })
-            for j in jobs
-        ]
+            }))
+        out["jobs"] = formatted_jobs
     failing = item.get("failing_reasons", [])
     if failing:
         out["failing_reasons"] = failing
@@ -480,6 +487,11 @@ async def get_change_status(
 ) -> str:
     """Pipeline status for a specific Gerrit change or GitHub/GitLab PR/MR.
 
+    When the change is in the pipeline, returns live status with jobs,
+    elapsed times, and buildset UUID. When not in pipeline, automatically
+    fetches the latest completed buildset with all build results — no
+    extra ``list_buildsets`` + ``get_buildset`` round-trips needed.
+
     Args:
         change: Change number (e.g. "12345"), GitHub ref ("refs/pull/123/head"),
                 or GitLab ref ("refs/merge-requests/123/head")
@@ -497,14 +509,44 @@ async def get_change_status(
                 for heads_group in queue.get("heads", []):
                     for item in heads_group:
                         for r in item.get("refs", []):
-                            ref_change = r.get("change") or r.get("ref", "")
-                            if f"/{change}/" in ref_change:
-                                items.append(_fmt_status_item(item))
+                            ref_str = r.get("ref", "")
+                            if f"/{change}/" in ref_str:
+                                items.append(item)
                                 break
         data = items
     if not data:
-        return json.dumps({"change": change, "status": "not_in_pipeline"})
-    return json.dumps([_fmt_status_item(item) for item in data])
+        # Not in pipeline — fetch the latest completed buildset to save
+        # the caller a list_buildsets + get_buildset round-trip.
+        result: dict[str, Any] = {"change": change, "status": "not_in_pipeline"}
+        try:
+            buildsets = await _api(
+                ctx,
+                f"/tenant/{_safepath(t)}/buildsets",
+                {"change": change, "limit": 1},
+            )
+            if buildsets:
+                bs_uuid = buildsets[0].get("uuid")
+                if bs_uuid:
+                    bs_detail = await _api(
+                        ctx, f"/tenant/{_safepath(t)}/buildset/{_safepath(bs_uuid)}"
+                    )
+                    result["latest_buildset"] = _fmt_buildset(bs_detail, brief=False)
+        except Exception:
+            pass  # Best-effort — don't fail the whole call
+        return json.dumps(result)
+    base = _app(ctx).config.base_url
+    formatted = [_fmt_status_item(item) for item in data]
+    # Enrich with status_url — constructed from ref id ("{change},{sha}")
+    for raw, fmt in zip(data, formatted):
+        refs = raw.get("refs", [])
+        if refs:
+            ref_id = refs[0].get("id", "")
+            if ref_id:
+                fmt["status_url"] = (
+                    f"{base}/t/{_safepath(t)}/status/change/"
+                    f"{quote(ref_id, safe='/,')}"
+                )
+    return json.dumps(formatted)
 
 
 @mcp.tool()
@@ -669,10 +711,10 @@ async def get_build_failures(
                                 "play": play_name,
                                 "task": task_name,
                                 "host": host,
-                                "msg": str(result.get("msg", ""))[:500],
+                                "msg": str(result.get("msg", ""))[:1000],
                                 "rc": result.get("rc"),
-                                "stderr": str(result.get("stderr", ""))[:500] or None,
-                                "stdout": str(result.get("stdout", ""))[:300] or None,
+                                "stderr": str(result.get("stderr", ""))[:1000] or None,
+                                "stdout": str(result.get("stdout", ""))[:1000] or None,
                                 "duration": duration.get("end", ""),
                                 "playbook": playbook,
                             })
@@ -921,6 +963,7 @@ async def list_buildsets(
     result: str = "",
     limit: int = 20,
     skip: int = 0,
+    include_builds: bool = False,
 ) -> str:
     """Search buildsets (groups of builds triggered by a single event).
 
@@ -934,6 +977,9 @@ async def list_buildsets(
         result: Filter by result
         limit: Max results, 1-100 (default 20)
         skip: Offset for pagination
+        include_builds: Fetch full details (builds, events) for each buildset.
+                        Saves a separate get_buildset call per result, but
+                        slower for large result sets. Best with limit ≤ 5.
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
@@ -947,7 +993,25 @@ async def list_buildsets(
 
     data = await _api(ctx, f"/tenant/{_safepath(t)}/buildsets", params)
     has_more = len(data) > limit
-    buildsets = [_fmt_buildset(bs) for bs in data[:limit]]
+    trimmed = data[:limit]
+
+    if include_builds and trimmed:
+        details = await asyncio.gather(
+            *[
+                _api(ctx, f"/tenant/{_safepath(t)}/buildset/{_safepath(bs['uuid'])}")
+                for bs in trimmed
+                if bs.get("uuid")
+            ],
+            return_exceptions=True,
+        )
+        buildsets = []
+        for d in details:
+            if isinstance(d, Exception):
+                continue
+            buildsets.append(_fmt_buildset(d, brief=False))
+    else:
+        buildsets = [_fmt_buildset(bs) for bs in trimmed]
+
     return json.dumps({
         "buildsets": buildsets,
         "count": len(buildsets),
