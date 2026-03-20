@@ -10,11 +10,13 @@ Works with any Zuul instance (Software Factory, OpenDev, etc.) via the [Zuul RES
 |------|-------------|
 | `list_tenants` | List tenants with project counts |
 | `get_status` | Live pipeline status (filtered to active items) |
-| `get_change_status` | Status for a specific Gerrit change or GitHub PR |
+| `get_change_status` | Status for a specific change/PR/MR. Returns live jobs with elapsed times when in pipeline, or the latest completed buildset with all builds when not |
 | `list_builds` | Search builds by project, job, result, change, etc. |
 | `get_build` | Full build details |
-| `get_build_log` | Fetch + parse logs (summary/full/grep modes) |
-| `list_buildsets` | Search buildsets |
+| `get_build_failures` | Analyze failures from structured `job-output.json` — failed tasks with error messages, rc, stderr/stdout |
+| `get_build_log` | Fetch + parse logs (summary/full/grep modes with context) |
+| `browse_build_logs` | Browse or fetch files from a build's log directory |
+| `list_buildsets` | Search buildsets (with optional `include_builds` to inline full details) |
 | `get_buildset` | Buildset with all builds and events |
 | `list_jobs` | List/filter jobs |
 | `get_job` | Job config and variants |
@@ -262,18 +264,21 @@ Example interactions:
 → get_project(name="rdoproject.org/rdoinfo")
 ```
 
-## Log analysis
+## Failure analysis
 
-The `get_build_log` tool has three modes:
+Two complementary tools for debugging build failures:
 
-- **summary** (default): Last 100 lines + all ERROR/FAILURE/UNREACHABLE lines from the full log
-- **full**: Paginated 200-line chunks with offset
-- **grep**: Regex filter returning matching lines with line numbers
+- **`get_build_failures`**: Parses structured `job-output.json` — returns failed playbooks and tasks with error messages, return codes, stderr/stdout (up to 1000 chars each). Start here.
+- **`get_build_log`**: Raw log analysis with three modes:
+  - **summary** (default): Last 100 lines + all ERROR/FAILURE/UNREACHABLE lines
+  - **full**: Paginated 200-line chunks with offset
+  - **grep**: Regex filter with optional context lines (`context=3` shows surrounding lines)
+- **`browse_build_logs`**: Browse the log directory tree or fetch specific artifact files (e.g. inventory, must-gather).
 
 ```
-"Show me the last 5 failed builds"
-"Get the log for build <uuid> and find the error"
-"Grep the log for 'UNREACHABLE' or 'timeout'"
+"What failed in build <uuid>?"           → get_build_failures
+"Grep the log for 'UNREACHABLE'"         → get_build_log (grep mode)
+"Show me the collected artifacts"        → browse_build_logs
 ```
 
 ## Development
