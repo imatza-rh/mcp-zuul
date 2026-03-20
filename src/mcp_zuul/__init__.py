@@ -276,24 +276,25 @@ def _fmt_build(b: dict, brief: bool = True) -> dict:
         "pipeline": b.get("pipeline", ""),
         "duration": b.get("duration"),
         "voting": b.get("voting", True),
+        "start_time": b.get("start_time"),
     }
     ref = b.get("ref") or {}
     if ref:
         out["project"] = ref.get("project", "")
         out["change"] = ref.get("change")
         out["ref_url"] = ref.get("ref_url", "")
+    bs = b.get("buildset")
+    if bs:
+        out["buildset_uuid"] = bs.get("uuid")
     if not brief:
-        out["start_time"] = b.get("start_time")
         out["end_time"] = b.get("end_time")
+        out["event_timestamp"] = b.get("event_timestamp")
         out["log_url"] = b.get("log_url")
         out["nodeset"] = b.get("nodeset")
         out["error_detail"] = b.get("error_detail")
         out["artifacts"] = [a["name"] for a in b.get("artifacts", [])]
         out["patchset"] = ref.get("patchset")
         out["branch"] = ref.get("branch")
-        bs = b.get("buildset")
-        if bs:
-            out["buildset_uuid"] = bs.get("uuid")
     return _clean(out)
 
 
@@ -333,15 +334,31 @@ def _fmt_status_item(item: dict) -> dict:
         out["project"] = r.get("project", "")
         out["change"] = r.get("change") or r.get("ref", "")
         out["url"] = r.get("url", "")
+    enqueue_time = item.get("enqueue_time")
+    if enqueue_time:
+        out["enqueue_time"] = enqueue_time
+    zuul_ref = item.get("zuul_ref", "")
+    if zuul_ref.startswith("Z"):
+        out["buildset_uuid"] = zuul_ref[1:]
     jobs = item.get("jobs", [])
     if jobs:
         out["jobs"] = [
             _clean({
                 "name": j.get("name", ""),
+                "uuid": j.get("uuid"),
                 "result": j.get("result"),
                 "voting": j.get("voting", True),
+                "pre_fail": j.get("pre_fail"),
                 "elapsed": j.get("elapsed_time"),
                 "remaining": j.get("remaining_time"),
+                "estimated": j.get("estimated_time"),
+                "start_time": j.get("start_time"),
+                "report_url": j.get("report_url"),
+                "stream_url": j.get("url"),
+                "dependencies": j.get("dependencies") or None,
+                "waiting_status": j.get("waiting_status"),
+                "queued": j.get("queued"),
+                "tries": j.get("tries"),
             })
             for j in jobs
         ]
@@ -461,14 +478,30 @@ async def get_change_status(
     change: str,
     tenant: str = "",
 ) -> str:
-    """Pipeline status for a specific Gerrit change or GitHub PR.
+    """Pipeline status for a specific Gerrit change or GitHub/GitLab PR/MR.
 
     Args:
-        change: Change number (e.g. "12345")
+        change: Change number (e.g. "12345"), GitHub ref ("refs/pull/123/head"),
+                or GitLab ref ("refs/merge-requests/123/head")
         tenant: Tenant name (uses default if empty)
     """
     t = _tenant(ctx, tenant)
     data = await _api(ctx, f"/tenant/{_safepath(t)}/status/change/{_safepath(change)}")
+    if not data and change.isdigit():
+        # Zuul status/change API doesn't match bare numbers to GitLab-style
+        # refs. Fall back to filtering the full status by change number.
+        full = await _api(ctx, f"/tenant/{_safepath(t)}/status")
+        items = []
+        for p in full.get("pipelines", []):
+            for queue in p.get("change_queues", []):
+                for heads_group in queue.get("heads", []):
+                    for item in heads_group:
+                        for r in item.get("refs", []):
+                            ref_change = r.get("change") or r.get("ref", "")
+                            if f"/{change}/" in ref_change:
+                                items.append(_fmt_status_item(item))
+                                break
+        data = items
     if not data:
         return json.dumps({"change": change, "status": "not_in_pipeline"})
     return json.dumps([_fmt_status_item(item) for item in data])
@@ -645,13 +678,15 @@ async def get_build_failures(
                             })
                             failed_tasks.append(ft)
 
-    return json.dumps({
+    return json.dumps(_clean({
         "job": build.get("job_name", ""),
         "result": build.get("result", ""),
+        "log_url": log_url,
+        "duration": build.get("duration"),
         "playbook_count": len(playbooks),
         "playbooks": playbooks,
         "failed_tasks": failed_tasks,
-    })
+    }))
 
 
 @mcp.tool()
