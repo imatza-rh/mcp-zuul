@@ -28,6 +28,8 @@ def handle_errors(
             return error("Cannot connect to Zuul API")
         except httpx.TimeoutException:
             return error("Request timed out")
+        except FileNotFoundError as e:
+            return error(f"Log file not found at {e}")
         except ValueError as e:
             return error(str(e))
         except Exception as e:

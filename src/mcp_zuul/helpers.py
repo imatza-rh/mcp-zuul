@@ -1,5 +1,6 @@
 """Shared helpers for Zuul MCP server."""
 
+import asyncio
 import json
 import logging
 import re
@@ -52,15 +53,30 @@ def safepath(value: str) -> str:
 
 
 async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
-    """Make an authenticated GET request to the Zuul API."""
-    a = app(ctx)
-    resp = await a.client.get(f"/api{path}", params=params)
+    """Make an authenticated GET request to the Zuul API.
 
-    # Re-authenticate if the session expired (Kerberos only).
-    if resp.status_code in (401, 302) and a.config.use_kerberos:
-        log.info("Session expired, re-authenticating via Kerberos")
-        await kerberos_auth(a.client, a.config.base_url)
-        resp = await a.client.get(f"/api{path}", params=params)
+    Retries once on 503 (common behind load balancers) and re-authenticates
+    via Kerberos on 401/302.
+    """
+    a = app(ctx)
+    url = f"/api{path}"
+
+    for attempt in range(2):
+        resp = await a.client.get(url, params=params)
+
+        # Re-authenticate if the session expired (Kerberos only).
+        if resp.status_code in (401, 302) and a.config.use_kerberos:
+            log.info("Session expired, re-authenticating via Kerberos")
+            await kerberos_auth(a.client, a.config.base_url)
+            resp = await a.client.get(url, params=params)
+
+        # Retry once on 503 Service Unavailable (transient LB errors).
+        if resp.status_code == 503 and attempt == 0:
+            log.info("API returned 503 for %s, retrying in 1s", path)
+            await asyncio.sleep(1)
+            continue
+
+        break
 
     resp.raise_for_status()
     return resp.json()
@@ -77,6 +93,47 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
         await kerberos_auth(a.client, a.config.base_url)
         resp = await http.get(url, follow_redirects=True)
     return resp
+
+
+_MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+async def stream_log(a: AppContext, url: str) -> bytes:
+    """Stream a log file with Kerberos re-auth, size-limited to 10 MB.
+
+    Raises:
+        httpx.HTTPStatusError: on non-404 HTTP errors
+        FileNotFoundError: when the log file returns 404
+    """
+    api_host = urlparse(a.config.base_url).hostname
+    log_host = urlparse(url).hostname
+    http = a.client if log_host == api_host else a.log_client
+
+    chunks: list[bytes] = []
+    size = 0
+    async with http.stream("GET", url) as resp:
+        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
+            await resp.aclose()
+            await kerberos_auth(a.client, a.config.base_url)
+            async with http.stream("GET", url) as resp2:
+                if resp2.status_code == 404:
+                    raise FileNotFoundError(url)
+                resp2.raise_for_status()
+                async for chunk in resp2.aiter_bytes():
+                    size += len(chunk)
+                    if size > _MAX_LOG_BYTES:
+                        break
+                    chunks.append(chunk)
+        else:
+            if resp.status_code == 404:
+                raise FileNotFoundError(url)
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes():
+                size += len(chunk)
+                if size > _MAX_LOG_BYTES:
+                    break
+                chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def error(msg: str) -> str:

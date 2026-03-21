@@ -6,11 +6,12 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+import respx
 
 from mcp_zuul.config import Config
 from mcp_zuul.errors import handle_errors
 from mcp_zuul.formatters import fmt_build, fmt_status_item
-from mcp_zuul.helpers import clean, error, parse_zuul_url, safepath, strip_ansi, tenant
+from mcp_zuul.helpers import api, clean, error, parse_zuul_url, safepath, strip_ansi, tenant
 
 
 class TestClean:
@@ -299,3 +300,49 @@ class TestFmtStatusItem:
         assert result["buildset_uuid"] == "bs-uuid"
         assert result["jobs"][0]["name"] == "test-job"
         assert result["jobs"][0]["elapsed"] == 60000
+
+
+class TestApiRetry:
+    @respx.mock
+    async def test_retries_on_503(self, mock_ctx):
+        """503 on first attempt should retry and succeed."""
+        route = respx.get("https://zuul.example.com/api/tenants")
+        route.side_effect = [
+            httpx.Response(503, text="Service Unavailable"),
+            httpx.Response(200, json=[{"name": "t1"}]),
+        ]
+        result = await api(mock_ctx, "/tenants")
+        assert result == [{"name": "t1"}]
+        assert route.call_count == 2
+
+    @respx.mock
+    async def test_raises_after_two_503s(self, mock_ctx):
+        """Two consecutive 503s should raise HTTPStatusError."""
+        route = respx.get("https://zuul.example.com/api/tenants")
+        route.side_effect = [
+            httpx.Response(503, text="Service Unavailable"),
+            httpx.Response(503, text="Service Unavailable"),
+        ]
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await api(mock_ctx, "/tenants")
+        assert exc_info.value.response.status_code == 503
+        assert route.call_count == 2
+
+    @respx.mock
+    async def test_no_retry_on_other_errors(self, mock_ctx):
+        """Non-503 errors should not trigger a retry."""
+        route = respx.get("https://zuul.example.com/api/tenants")
+        route.side_effect = [httpx.Response(500, text="Internal Server Error")]
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await api(mock_ctx, "/tenants")
+        assert exc_info.value.response.status_code == 500
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_success_no_retry(self, mock_ctx):
+        """Successful response should not trigger a retry."""
+        route = respx.get("https://zuul.example.com/api/tenants")
+        route.side_effect = [httpx.Response(200, json=[{"name": "t1"}])]
+        result = await api(mock_ctx, "/tenants")
+        assert result == [{"name": "t1"}]
+        assert route.call_count == 1

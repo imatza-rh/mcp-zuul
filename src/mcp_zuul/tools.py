@@ -11,7 +11,17 @@ from mcp.types import ToolAnnotations
 
 from .errors import handle_errors
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
-from .helpers import api, app, clean, error, fetch_log_url, parse_zuul_url, safepath, strip_ansi
+from .helpers import (
+    api,
+    app,
+    clean,
+    error,
+    fetch_log_url,
+    parse_zuul_url,
+    safepath,
+    stream_log,
+    strip_ansi,
+)
 from .helpers import tenant as _tenant
 from .server import mcp
 
@@ -42,7 +52,6 @@ def _resolve(
 
 # Log fetching constants
 _MAX_LOG_LINES = 200
-_MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
 _MAX_JSON_LOG_BYTES = 20 * 1024 * 1024  # 20 MB (JSON is larger)
 _MAX_FILE_BYTES = 512 * 1024  # 512 KB for fetched log files
 _ERROR_PATTERNS = re.compile(
@@ -424,49 +433,13 @@ async def get_build_log(
     if not log_url:
         return error(f"No log_url for build {uuid}")
 
-    # Validate log URL scheme before fetching
-    parsed = urlparse(log_url)
-    if parsed.scheme not in ("http", "https"):
-        return error(f"Invalid log URL scheme: {parsed.scheme}")
-
-    # Fetch log file — use authenticated client when log host matches API host
-    a = app(ctx)
     # Sanitize log_name to prevent path traversal
     if ".." in log_name.split("/"):
         return error(f"Invalid log_name: {log_name!r}")
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-    api_host = urlparse(a.config.base_url).hostname
-    log_host = urlparse(txt_url).hostname
-    http = a.client if log_host == api_host else a.log_client
-    chunks: list[bytes] = []
-    size = 0
-    async with http.stream("GET", txt_url) as resp:
-        # Re-authenticate if session expired (Kerberos only)
-        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
-            await resp.aclose()
-            from .auth import kerberos_auth
 
-            await kerberos_auth(a.client, a.config.base_url)
-            async with http.stream("GET", txt_url) as resp2:
-                if resp2.status_code == 404:
-                    return error(f"Log file not found at {txt_url}")
-                resp2.raise_for_status()
-                async for chunk in resp2.aiter_bytes():
-                    size += len(chunk)
-                    if size > _MAX_LOG_BYTES:
-                        break
-                    chunks.append(chunk)
-        else:
-            if resp.status_code == 404:
-                return error(f"Log file not found at {txt_url}")
-            resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                size += len(chunk)
-                if size > _MAX_LOG_BYTES:
-                    break
-                chunks.append(chunk)
-
-    raw = strip_ansi(b"".join(chunks).decode("utf-8", errors="replace"))
+    a = app(ctx)
+    raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
 
@@ -691,38 +664,7 @@ async def tail_build_log(
 
     a = app(ctx)
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-    api_host = urlparse(a.config.base_url).hostname
-    log_host = urlparse(txt_url).hostname
-    http = a.client if log_host == api_host else a.log_client
-
-    chunks: list[bytes] = []
-    size = 0
-    async with http.stream("GET", txt_url) as resp:
-        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
-            await resp.aclose()
-            from .auth import kerberos_auth
-
-            await kerberos_auth(a.client, a.config.base_url)
-            async with http.stream("GET", txt_url) as resp2:
-                if resp2.status_code == 404:
-                    return error(f"Log file not found at {txt_url}")
-                resp2.raise_for_status()
-                async for chunk in resp2.aiter_bytes():
-                    size += len(chunk)
-                    if size > _MAX_LOG_BYTES:
-                        break
-                    chunks.append(chunk)
-        else:
-            if resp.status_code == 404:
-                return error(f"Log file not found at {txt_url}")
-            resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                size += len(chunk)
-                if size > _MAX_LOG_BYTES:
-                    break
-                chunks.append(chunk)
-
-    raw = strip_ansi(b"".join(chunks).decode("utf-8", errors="replace"))
+    raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
     n = max(1, min(lines, 500))

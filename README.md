@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-23 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+26 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -113,6 +113,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `get_config_errors` | **Check this when jobs aren't running.** Configuration errors, missing refs, broken configs. Filterable by project. |
 | `get_freeze_jobs` | Resolved job dependency graph for a pipeline/project/branch. Shows exactly which jobs will run with inheritance resolved. |
 | `find_flaky_jobs` | Analyze recent build history for intermittent failures. Computes pass/fail rate and flags jobs as flaky (>20% failure with mixed results). |
+| `get_build_times` | Build duration trends with avg/min/max stats. Detect performance regressions or timeout-prone jobs. |
 
 ### Infrastructure
 
@@ -122,6 +123,8 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `list_labels` | Available nodepool labels — what node types jobs can request. |
 | `list_semaphores` | Resource locks with current holders and max capacity. Check when jobs wait unexpectedly. |
 | `list_autoholds` | Active autohold requests — nodes held after failure for debugging. |
+| `get_connections` | Configured source connections — Gerrit, GitHub, GitLab instances with driver and hostname. |
+| `get_components` | System components — schedulers, executors, mergers, web servers with state and version. |
 
 ## Prompts
 
@@ -358,7 +361,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (23 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (26 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 
