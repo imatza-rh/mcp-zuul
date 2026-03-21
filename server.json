@@ -1,5 +1,5 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.imatza-rh/mcp-zuul",
   "version": "0.1.1",
   "description": "Zuul CI — build failure analysis, log search, pipeline status, and job configuration",
