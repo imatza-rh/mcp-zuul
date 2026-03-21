@@ -1,7 +1,7 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "name": "io.github.imatza-rh/mcp-zuul",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for Zuul CI — read-only access to builds, logs, pipeline status, and jobs. Structured failure analysis, smart log search, and Kerberos auth.",
   "repository": {
     "url": "https://github.com/imatza-rh/mcp-zuul",
@@ -12,7 +12,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "mcp-zuul",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
