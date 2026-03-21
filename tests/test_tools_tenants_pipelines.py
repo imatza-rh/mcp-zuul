@@ -9,9 +9,13 @@ from mcp_zuul.tools import (
     get_config_errors,
     get_job,
     get_project,
+    list_autoholds,
     list_jobs,
+    list_labels,
+    list_nodes,
     list_pipelines,
     list_projects,
+    list_semaphores,
     list_tenants,
 )
 
@@ -262,3 +266,132 @@ class TestListProjects:
         result = json.loads(await list_projects(mock_ctx, filter="openstack"))
         assert result["count"] == 2
         assert all("openstack" in p["name"] for p in result["projects"])
+
+
+class TestListNodes:
+    @respx.mock
+    async def test_returns_nodes_with_state_summary(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "001",
+                        "type": ["centos-9"],
+                        "state": "in-use",
+                        "provider": "cloud-a",
+                        "connection_type": "ssh",
+                        "external_id": "ext-1",
+                    },
+                    {
+                        "id": "002",
+                        "type": ["centos-9"],
+                        "state": "ready",
+                        "provider": "cloud-a",
+                        "connection_type": "ssh",
+                        "external_id": "ext-2",
+                    },
+                    {
+                        "id": "003",
+                        "type": ["ubuntu-22"],
+                        "state": "in-use",
+                        "provider": "cloud-b",
+                        "connection_type": "ssh",
+                        "external_id": "ext-3",
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_nodes(mock_ctx))
+        assert result["count"] == 3
+        assert result["by_state"] == {"in-use": 2, "ready": 1}
+        assert result["nodes"][0]["id"] == "001"
+
+    @respx.mock
+    async def test_empty_nodes(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await list_nodes(mock_ctx))
+        assert result["count"] == 0
+        assert result["by_state"] == {}
+
+
+class TestListLabels:
+    @respx.mock
+    async def test_returns_sorted_labels(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/labels").mock(
+            return_value=httpx.Response(
+                200,
+                json=[{"name": "centos-9"}, {"name": "ubuntu-22"}, {"name": "alma-9"}],
+            )
+        )
+        result = json.loads(await list_labels(mock_ctx))
+        assert result["count"] == 3
+        assert result["labels"] == ["alma-9", "centos-9", "ubuntu-22"]
+
+
+class TestListSemaphores:
+    @respx.mock
+    async def test_returns_semaphores(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/semaphores").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "deploy-lock",
+                        "global": False,
+                        "max": 1,
+                        "holders": {"count": 1, "this_tenant": ["job-a"], "other_tenants": 0},
+                    },
+                    {
+                        "name": "test-pool",
+                        "global": True,
+                        "max": 5,
+                        "holders": {"count": 0, "this_tenant": [], "other_tenants": 0},
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_semaphores(mock_ctx))
+        assert result["count"] == 2
+        assert result["semaphores"][0]["name"] == "deploy-lock"
+        assert result["semaphores"][0]["holders_count"] == 1
+        assert result["semaphores"][0]["holders"] == ["job-a"]
+
+
+class TestListAutoholds:
+    @respx.mock
+    async def test_returns_autoholds(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "1",
+                        "project": "org/repo",
+                        "job": "test-job",
+                        "ref_filter": ".*",
+                        "reason": "Debugging infra failure",
+                        "count": 1,
+                        "current_count": 0,
+                        "max_count": 1,
+                        "node_expiration": 86400,
+                        "expired": False,
+                    }
+                ],
+            )
+        )
+        result = json.loads(await list_autoholds(mock_ctx))
+        assert result["count"] == 1
+        assert result["autoholds"][0]["project"] == "org/repo"
+        assert result["autoholds"][0]["job"] == "test-job"
+        assert result["autoholds"][0]["expired"] is False
+
+    @respx.mock
+    async def test_empty_autoholds(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await list_autoholds(mock_ctx))
+        assert result["count"] == 0

@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 16 read-only tools."""
+"""Zuul MCP tool implementations — 20 read-only tools."""
 
 import asyncio
 import json
@@ -950,3 +950,126 @@ async def list_projects(
         for p in data
     ]
     return json.dumps({"projects": result, "count": len(result)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def list_nodes(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List nodepool nodes — shows what's available, in-use, or being provisioned.
+
+    Check this when jobs are stuck waiting for nodes. Shows node state
+    (ready, in-use, building, deleting), provider, and label.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/nodes")
+    result = [
+        clean(
+            {
+                "id": n.get("id"),
+                "label": n.get("type", []),
+                "state": n.get("state"),
+                "provider": n.get("provider"),
+                "connection_type": n.get("connection_type"),
+                "external_id": n.get("external_id"),
+                "comment": n.get("comment"),
+            }
+        )
+        for n in data
+    ]
+    # Summary by state
+    states: dict[str, int] = {}
+    for n in result:
+        s = n.get("state", "unknown")
+        states[s] = states.get(s, 0) + 1
+    return json.dumps({"nodes": result, "count": len(result), "by_state": states})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def list_labels(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List available nodepool labels (node types that jobs can request).
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/labels")
+    names = sorted(item.get("name", "") for item in data)
+    return json.dumps({"labels": names, "count": len(names)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def list_semaphores(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List semaphores — resource locks that limit concurrent job execution.
+
+    Check this when jobs are waiting unexpectedly. A semaphore at max
+    holders means jobs are queued waiting for the lock to be released.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/semaphores")
+    result = [
+        clean(
+            {
+                "name": s.get("name"),
+                "max": s.get("max"),
+                "global": s.get("global") or None,
+                "holders_count": s.get("holders", {}).get("count", 0),
+                "holders": s.get("holders", {}).get("this_tenant") or None,
+                "other_tenants": s.get("holders", {}).get("other_tenants") or None,
+            }
+        )
+        for s in data
+    ]
+    return json.dumps({"semaphores": result, "count": len(result)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def list_autoholds(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List autohold requests — nodes held after failure for debugging.
+
+    Shows active autohold requests: which project/job/change triggered
+    them, how many nodes are held, and expiration.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/autohold")
+    result = [
+        clean(
+            {
+                "id": a.get("id"),
+                "project": a.get("project"),
+                "job": a.get("job"),
+                "ref_filter": a.get("ref_filter"),
+                "reason": (a.get("reason") or "")[:200] or None,
+                "count": a.get("count"),
+                "current_count": a.get("current_count"),
+                "max_count": a.get("max_count"),
+                "node_expiration": a.get("node_expiration"),
+                "expired": a.get("expired"),
+            }
+        )
+        for a in data
+    ]
+    return json.dumps({"autoholds": result, "count": len(result)})
