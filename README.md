@@ -239,19 +239,26 @@ Add separate entries per Zuul instance:
 ```bash
 git clone https://github.com/imatza-rh/mcp-zuul.git
 cd mcp-zuul
-uv sync
+uv sync --extra dev
 
 # Run locally
 ZUUL_URL=https://softwarefactory-project.io/zuul uv run mcp-zuul
 
 # Run tests
-uv run --with pytest pytest tests/ -v
+uv run pytest tests/ -v
+
+# Lint and format
+uv run ruff check src/ tests/
+uv run ruff format --check src/ tests/
+
+# Type check
+uv run mypy src/mcp_zuul/
 
 # Build Docker image
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Single-module implementation in `src/mcp_zuul/__init__.py` (~1200 lines). Config → Lifespan → Helpers → Formatters → Error handler → 14 tools → Entry point. See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan), `helpers.py` (API client, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (14 tools). See `CLAUDE.md` for full architecture description.
 
 ## License
 
