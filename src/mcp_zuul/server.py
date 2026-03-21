@@ -1,5 +1,6 @@
 """FastMCP server instance and lifespan management."""
 
+import contextlib
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -42,6 +43,14 @@ async def lifespan(server: FastMCP):
     ):
         if config.use_kerberos:
             await kerberos_auth(client, config.base_url)
+
+        # Remove write tools when in read-only mode (default)
+        _WRITE_TOOLS = {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
+        if config.read_only:
+            for name in _WRITE_TOOLS:
+                with contextlib.suppress(KeyError):
+                    server._tool_manager.remove_tool(name)
+            log.info("Read-only mode: write tools disabled")
 
         # Apply tool filtering
         if config.enabled_tools:

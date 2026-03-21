@@ -82,6 +82,32 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
     return resp.json()
 
 
+async def api_post(ctx: Context, path: str, body: dict) -> Any:
+    """Make an authenticated POST request to the Zuul API."""
+    a = app(ctx)
+    if a.config.read_only:
+        raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
+    resp = await a.client.post(f"/api{path}", json=body)
+    if resp.status_code in (401, 302) and a.config.use_kerberos:
+        await kerberos_auth(a.client, a.config.base_url)
+        resp = await a.client.post(f"/api{path}", json=body)
+    resp.raise_for_status()
+    return resp.json() if resp.text else {}
+
+
+async def api_delete(ctx: Context, path: str) -> Any:
+    """Make an authenticated DELETE request to the Zuul API."""
+    a = app(ctx)
+    if a.config.read_only:
+        raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
+    resp = await a.client.delete(f"/api{path}")
+    if resp.status_code in (401, 302) and a.config.use_kerberos:
+        await kerberos_auth(a.client, a.config.base_url)
+        resp = await a.client.delete(f"/api{path}")
+    resp.raise_for_status()
+    return resp.json() if resp.text else {}
+
+
 async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
     """Fetch a log URL with automatic Kerberos re-auth if needed."""
     api_host = urlparse(a.config.base_url).hostname

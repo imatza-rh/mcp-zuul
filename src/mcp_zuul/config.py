@@ -23,6 +23,8 @@ class Config:
     disabled_tools: list[str] | None
     host: str
     port: int
+    read_only: bool
+    logjuicer_url: str | None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -81,4 +83,6 @@ class Config:
             disabled_tools=disabled_tools,
             host=os.environ.get("MCP_HOST", "127.0.0.1"),
             port=port,
+            read_only=os.environ.get("ZUUL_READ_ONLY", "true").lower() != "false",
+            logjuicer_url=os.environ.get("LOGJUICER_URL", "").rstrip("/") or None,
         )

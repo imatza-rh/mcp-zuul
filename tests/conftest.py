@@ -24,6 +24,8 @@ def config():
         disabled_tools=None,
         host="127.0.0.1",
         port=8000,
+        read_only=False,
+        logjuicer_url=None,
     )
 
 

@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 28 read-only tools."""
+"""Zuul MCP tool implementations — 33 tools (28 read-only + 5 write)."""
 
 import asyncio
 import json
@@ -13,6 +13,8 @@ from .errors import handle_errors
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
 from .helpers import (
     api,
+    api_delete,
+    api_post,
     app,
     clean,
     error,
@@ -28,6 +30,20 @@ from .server import mcp
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+_WRITE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+_DESTRUCTIVE = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
     idempotentHint=True,
     openWorldHint=True,
 )
@@ -1449,4 +1465,229 @@ async def get_tenant_info(
                 "websocket_url": info.get("websocket_url"),
             }
         )
+    )
+
+
+# -- Write operations (disabled by default, enable with ZUUL_READ_ONLY=false) --
+
+
+@mcp.tool(title="Enqueue Change", annotations=_WRITE)
+@handle_errors
+async def enqueue(
+    ctx: Context,
+    project: str,
+    pipeline: str,
+    change: str = "",
+    ref: str = "",
+    tenant: str = "",
+) -> str:
+    """Enqueue a change or ref into a pipeline for testing.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Provide either change (e.g. "12345,1") or ref (e.g. "refs/heads/main").
+
+    Args:
+        project: Project name (e.g. "org/repo")
+        pipeline: Pipeline to enqueue into (e.g. "check", "gate")
+        change: Change to enqueue (e.g. "12345,1" for Gerrit)
+        ref: Git ref to enqueue (for ref-based pipelines)
+        tenant: Tenant name (uses default if empty)
+    """
+    if not change and not ref:
+        return error("Either change or ref is required")
+    t = _tenant(ctx, tenant)
+    body: dict[str, Any] = {"pipeline": pipeline}
+    if change:
+        body["change"] = change
+    if ref:
+        body["ref"] = ref
+    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/enqueue"
+    result = await api_post(ctx, path, body)
+    return json.dumps(
+        clean({"status": "enqueued", "project": project, "pipeline": pipeline, **result})
+    )
+
+
+@mcp.tool(title="Dequeue Change", annotations=_DESTRUCTIVE)
+@handle_errors
+async def dequeue(
+    ctx: Context,
+    project: str,
+    pipeline: str,
+    change: str = "",
+    ref: str = "",
+    tenant: str = "",
+) -> str:
+    """Remove a change or ref from a pipeline.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        project: Project name (e.g. "org/repo")
+        pipeline: Pipeline to dequeue from
+        change: Change to dequeue (e.g. "12345,1")
+        ref: Git ref to dequeue
+        tenant: Tenant name (uses default if empty)
+    """
+    if not change and not ref:
+        return error("Either change or ref is required")
+    t = _tenant(ctx, tenant)
+    body: dict[str, Any] = {"pipeline": pipeline}
+    if change:
+        body["change"] = change
+    if ref:
+        body["ref"] = ref
+    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/dequeue"
+    result = await api_post(ctx, path, body)
+    return json.dumps(
+        clean({"status": "dequeued", "project": project, "pipeline": pipeline, **result})
+    )
+
+
+@mcp.tool(title="Create Autohold", annotations=_WRITE)
+@handle_errors
+async def autohold_create(
+    ctx: Context,
+    project: str,
+    job: str,
+    tenant: str = "",
+    reason: str = "",
+    count: int = 1,
+    node_hold_expiration: int = 86400,
+    change: str = "",
+    ref: str = "",
+) -> str:
+    """Create an autohold request — hold nodes after a job failure for debugging.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        project: Project name (e.g. "org/repo")
+        job: Job name to hold nodes for
+        tenant: Tenant name (uses default if empty)
+        reason: Why the hold is needed
+        count: Number of failed builds to hold (default 1)
+        node_hold_expiration: Seconds to hold nodes (default 86400 = 24h)
+        change: Specific change to match (optional)
+        ref: Specific ref to match (optional)
+    """
+    t = _tenant(ctx, tenant)
+    body: dict[str, Any] = {
+        "job": job,
+        "count": count,
+        "node_hold_expiration": node_hold_expiration,
+    }
+    if reason:
+        body["reason"] = reason
+    if change:
+        body["change"] = change
+    if ref:
+        body["ref_filter"] = ref
+    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/autohold"
+    result = await api_post(ctx, path, body)
+    return json.dumps(clean({"status": "created", "project": project, "job": job, **result}))
+
+
+@mcp.tool(title="Delete Autohold", annotations=_DESTRUCTIVE)
+@handle_errors
+async def autohold_delete(
+    ctx: Context,
+    autohold_id: str,
+    tenant: str = "",
+) -> str:
+    """Delete an autohold request.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        autohold_id: Autohold request ID (from list_autoholds)
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    path = f"/tenant/{safepath(t)}/autohold/{safepath(autohold_id)}"
+    await api_delete(ctx, path)
+    return json.dumps({"status": "deleted", "autohold_id": autohold_id})
+
+
+# -- LogJuicer integration (optional, requires LOGJUICER_URL) --
+
+
+@mcp.tool(title="Log Anomaly Detection", annotations=_READ_ONLY)
+@handle_errors
+async def get_build_anomalies(
+    ctx: Context,
+    uuid: str = "",
+    tenant: str = "",
+    url: str = "",
+) -> str:
+    """Detect anomalous log lines using LogJuicer ML-based analysis.
+
+    Compares failed build logs against successful baselines to find
+    lines that are unusual. Requires LOGJUICER_URL to be configured.
+    Accepts a build UUID or Zuul build URL.
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant name (uses default if empty)
+        url: Zuul build URL (alternative to uuid + tenant)
+    """
+    a = app(ctx)
+    if not a.config.logjuicer_url:
+        return error("LogJuicer not configured (set LOGJUICER_URL)")
+
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+    log_url = build.get("log_url")
+    if not log_url:
+        return error(f"No log_url for build {uuid}")
+
+    # Build the Zuul build URL for LogJuicer
+    build_url = f"{a.config.base_url}/t/{quote(t, safe='/')}/build/{quote(uuid)}"
+
+    # Request a LogJuicer report
+    report_url = f"{a.config.logjuicer_url}/api/report/new"
+    resp = await a.client.put(
+        report_url,
+        params={"target": build_url, "errors": "true"},
+        follow_redirects=True,
+    )
+    if resp.status_code != 200:
+        return error(f"LogJuicer report creation failed: {resp.status_code}")
+
+    report_data = resp.json()
+    report_id = report_data.get("id") or report_data.get("report_id")
+    if not report_id:
+        return error("LogJuicer returned no report ID")
+
+    # Fetch the report JSON
+    report_resp = await a.client.get(
+        f"{a.config.logjuicer_url}/api/report/{report_id}/json",
+        follow_redirects=True,
+    )
+    if report_resp.status_code != 200:
+        return error(f"LogJuicer report fetch failed: {report_resp.status_code}")
+
+    report = report_resp.json()
+    anomalies = []
+    for source in report if isinstance(report, list) else [report]:
+        for anomaly in source.get("anomalies", []):
+            anomalies.append(
+                clean(
+                    {
+                        "line": anomaly.get("line"),
+                        "pos": anomaly.get("pos"),
+                        "before": anomaly.get("before"),
+                        "after": anomaly.get("after"),
+                    }
+                )
+            )
+
+    return json.dumps(
+        {
+            "job": build.get("job_name", ""),
+            "result": build.get("result", ""),
+            "report_id": report_id,
+            "anomaly_count": len(anomalies),
+            "anomalies": anomalies[:50],
+        }
     )
