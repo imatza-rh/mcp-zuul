@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/github/license/imatza-rh/mcp-zuul)](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE)
 [![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
 
-**The first [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/).** Debug build failures by asking questions, not clicking through web UIs.
+An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
 Read-only access to any Zuul instance — builds, logs, pipelines, jobs, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 

@@ -1,18 +1,44 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "name": "io.github.imatza-rh/mcp-zuul",
+  "version": "0.1.0",
   "description": "MCP server for Zuul CI — read-only access to builds, logs, pipeline status, and jobs. Structured failure analysis, smart log search, and Kerberos auth.",
   "repository": {
     "url": "https://github.com/imatza-rh/mcp-zuul",
     "source": "github"
   },
-  "version": "0.1.0",
   "packages": [
     {
       "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
       "identifier": "mcp-zuul",
       "version": "0.1.0",
-      "transport": ["stdio"]
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "ZUUL_URL",
+          "description": "Zuul base URL (e.g. https://softwarefactory-project.io/zuul)",
+          "required": true
+        },
+        {
+          "name": "ZUUL_DEFAULT_TENANT",
+          "description": "Default tenant name",
+          "required": false
+        },
+        {
+          "name": "ZUUL_AUTH_TOKEN",
+          "description": "Bearer token for authenticated instances",
+          "required": false
+        },
+        {
+          "name": "ZUUL_USE_KERBEROS",
+          "description": "Enable Kerberos/SPNEGO authentication (true/false)",
+          "required": false
+        }
+      ]
     }
   ]
 }
