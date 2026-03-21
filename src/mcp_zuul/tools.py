@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 14 read-only tools."""
+"""Zuul MCP tool implementations — 16 read-only tools."""
 
 import asyncio
 import json
@@ -7,12 +7,38 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 from mcp.server.fastmcp import Context
+from mcp.types import ToolAnnotations
 
 from .errors import handle_errors
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
-from .helpers import api, app, clean, error, fetch_log_url, safepath, strip_ansi
+from .helpers import api, app, clean, error, fetch_log_url, parse_zuul_url, safepath, strip_ansi
 from .helpers import tenant as _tenant
 from .server import mcp
+
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
+
+def _resolve(
+    ctx: Context, uuid: str, tenant: str, url: str, kind: str = "build"
+) -> tuple[str, str]:
+    """Resolve resource ID and tenant from explicit params or Zuul URL."""
+    if url:
+        parts = parse_zuul_url(url)
+        if not parts:
+            raise ValueError(f"Cannot parse Zuul URL: {url}")
+        url_tenant, url_kind, url_id = parts
+        if url_kind != kind:
+            raise ValueError(f"Expected {kind} URL, got {url_kind}")
+        return url_id, _tenant(ctx, tenant or url_tenant)
+    if not uuid:
+        raise ValueError(f"{kind} identifier or url is required")
+    return uuid, _tenant(ctx, tenant)
+
 
 # Log fetching constants
 _MAX_LOG_LINES = 200
@@ -25,7 +51,7 @@ _ERROR_PATTERNS = re.compile(
 _ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def list_tenants(ctx: Context) -> str:
     """List all Zuul tenants with project and queue counts."""
@@ -37,7 +63,7 @@ async def list_tenants(ctx: Context) -> str:
     return json.dumps(result)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_status(
     ctx: Context,
@@ -101,12 +127,13 @@ async def get_status(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_change_status(
     ctx: Context,
-    change: str,
+    change: str = "",
     tenant: str = "",
+    url: str = "",
 ) -> str:
     """Pipeline status for a specific Gerrit change or GitHub/GitLab PR/MR.
 
@@ -119,7 +146,19 @@ async def get_change_status(
         change: Change number (e.g. "12345"), GitHub ref ("refs/pull/123/head"),
                 or GitLab ref ("refs/merge-requests/123/head")
         tenant: Tenant name (uses default if empty)
+        url: Zuul change status URL (alternative to change + tenant)
     """
+    if url:
+        parts = parse_zuul_url(url)
+        if not parts:
+            raise ValueError(f"Cannot parse Zuul URL: {url}")
+        url_tenant, url_kind, url_id = parts
+        if url_kind != "change":
+            raise ValueError(f"Expected change URL, got {url_kind}")
+        change = url_id
+        tenant = tenant or url_tenant
+    if not change:
+        raise ValueError("change or url is required")
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
     if not data and change.isdigit():
@@ -171,7 +210,7 @@ async def get_change_status(
     return json.dumps(formatted)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def list_builds(
     ctx: Context,
@@ -224,30 +263,34 @@ async def list_builds(
     return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more, "skip": skip})
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_build(
     ctx: Context,
-    uuid: str,
+    uuid: str = "",
     tenant: str = "",
+    url: str = "",
 ) -> str:
     """Get full build details — log URL, nodeset, artifacts, timing, error detail.
 
     Args:
         uuid: Build UUID (full or prefix from list_builds)
         tenant: Tenant name (uses default if empty)
+        url: Zuul build URL (alternative to uuid + tenant, e.g.
+             "https://zuul.example.com/t/tenant/build/abc123")
     """
-    t = _tenant(ctx, tenant)
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     data = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     return json.dumps(fmt_build(data, brief=False))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_build_failures(
     ctx: Context,
-    uuid: str,
+    uuid: str = "",
     tenant: str = "",
+    url: str = "",
 ) -> str:
     """Analyze a failed build — returns exactly which task failed, on which host, with error message and return code.
 
@@ -257,8 +300,9 @@ async def get_build_failures(
     Args:
         uuid: Build UUID
         tenant: Tenant name (uses default if empty)
+        url: Zuul build URL (alternative to uuid + tenant)
     """
-    t = _tenant(ctx, tenant)
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
@@ -342,11 +386,11 @@ async def get_build_failures(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_build_log(
     ctx: Context,
-    uuid: str,
+    uuid: str = "",
     tenant: str = "",
     log_name: str = "job-output.txt",
     mode: str = "summary",
@@ -355,6 +399,7 @@ async def get_build_log(
     end_line: int = 0,
     grep: str = "",
     context: int = 0,
+    url: str = "",
 ) -> str:
     """Read, search, and navigate build log files with grep, line ranges, and error summary.
 
@@ -372,8 +417,9 @@ async def get_build_log(
         grep: Python regex pattern to filter log lines (overrides mode).
               Use | for OR: "error|failed|timeout". Do NOT use backslash-pipe.
         context: Lines of context before/after each grep match (default 0, max 10)
+        url: Zuul build URL (alternative to uuid + tenant)
     """
-    t = _tenant(ctx, tenant)
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
@@ -537,13 +583,14 @@ async def get_build_log(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def browse_build_logs(
     ctx: Context,
-    uuid: str,
+    uuid: str = "",
     tenant: str = "",
     path: str = "",
+    url: str = "",
 ) -> str:
     """Browse or fetch files from a build's log directory.
 
@@ -556,8 +603,9 @@ async def browse_build_logs(
         tenant: Tenant name (uses default if empty)
         path: Relative path within the log dir (e.g. "logs/controller/",
               "zuul-info/inventory.yaml", "logs/hypervisor/ci-framework-data/artifacts/")
+        url: Zuul build URL (alternative to uuid + tenant)
     """
-    t = _tenant(ctx, tenant)
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
@@ -612,7 +660,7 @@ async def browse_build_logs(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def list_buildsets(
     ctx: Context,
@@ -688,25 +736,27 @@ async def list_buildsets(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_buildset(
     ctx: Context,
-    uuid: str,
+    uuid: str = "",
     tenant: str = "",
+    url: str = "",
 ) -> str:
     """Get full buildset details — all builds, results, events, and timing.
 
     Args:
         uuid: Buildset UUID
         tenant: Tenant name (uses default if empty)
+        url: Zuul buildset URL (alternative to uuid + tenant)
     """
-    t = _tenant(ctx, tenant)
+    uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")
     data = await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(uuid)}")
     return json.dumps(fmt_buildset(data, brief=False))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def list_jobs(
     ctx: Context,
@@ -737,7 +787,7 @@ async def list_jobs(
     return json.dumps({"jobs": result, "count": len(result)})
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_job(
     ctx: Context,
@@ -769,7 +819,7 @@ async def get_job(
     return json.dumps({"name": name, "variants": variants})
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def get_project(
     ctx: Context,
@@ -809,7 +859,7 @@ async def get_project(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 @handle_errors
 async def list_pipelines(
     ctx: Context,
@@ -827,3 +877,76 @@ async def list_pipelines(
         for p in data
     ]
     return json.dumps({"pipelines": result, "count": len(result)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def get_config_errors(
+    ctx: Context,
+    tenant: str = "",
+    project: str = "",
+) -> str:
+    """Get Zuul configuration errors — why jobs aren't running, broken configs, missing refs.
+
+    This is the first tool to check when a job isn't being triggered or a project
+    has unexpected behavior. Returns syntax errors, missing references, and repo
+    access issues for the tenant or a specific project.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+        project: Filter to a specific project name (optional)
+    """
+    t = _tenant(ctx, tenant)
+    params: dict[str, Any] = {}
+    if project:
+        params["project"] = project
+    data = await api(ctx, f"/tenant/{safepath(t)}/config-errors", params or None)
+    errors = []
+    for e in data:
+        sc = e.get("source_context") or {}
+        errors.append(
+            clean(
+                {
+                    "project": sc.get("project"),
+                    "branch": sc.get("branch"),
+                    "path": sc.get("path"),
+                    "severity": e.get("severity", "error"),
+                    "short_error": e.get("short_error"),
+                    "error": (e.get("error") or "")[:500] or None,
+                    "name": e.get("name"),
+                }
+            )
+        )
+    return json.dumps({"errors": errors, "count": len(errors)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def list_projects(
+    ctx: Context,
+    tenant: str = "",
+    filter: str = "",
+) -> str:
+    """List all projects in a tenant. Optionally filter by name substring.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+        filter: Case-insensitive substring to filter project names
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/projects")
+    if filter:
+        f_lower = filter.lower()
+        data = [p for p in data if f_lower in p.get("name", "").lower()]
+    result = [
+        clean(
+            {
+                "name": p["name"],
+                "connection": p.get("connection_name"),
+                "type": p.get("type"),
+                "canonical_name": p.get("canonical_name"),
+            }
+        )
+        for p in data
+    ]
+    return json.dumps({"projects": result, "count": len(result)})

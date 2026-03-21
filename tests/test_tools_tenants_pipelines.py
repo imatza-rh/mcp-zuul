@@ -6,10 +6,12 @@ import httpx
 import respx
 
 from mcp_zuul.tools import (
+    get_config_errors,
     get_job,
     get_project,
     list_jobs,
     list_pipelines,
+    list_projects,
     list_tenants,
 )
 
@@ -143,3 +145,120 @@ class TestGetProject:
         assert result["project"] == "org/repo"
         assert result["pipelines"]["check"] == ["lint", "test"]
         assert result["pipelines"]["gate"] == ["deploy"]
+
+
+class TestGetConfigErrors:
+    @respx.mock
+    async def test_returns_config_errors(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/config-errors").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "source_context": {
+                            "project": "org/broken-repo",
+                            "branch": "main",
+                            "path": ".zuul.yaml",
+                        },
+                        "error": "Job 'missing-parent' not found",
+                        "short_error": "Job not found",
+                        "severity": "error",
+                        "name": "Unknown",
+                    },
+                    {
+                        "source_context": {"project": "org/other-repo"},
+                        "error": "Repo access denied",
+                        "short_error": "Access denied",
+                        "severity": "warning",
+                        "name": "Unknown",
+                    },
+                ],
+            )
+        )
+        result = json.loads(await get_config_errors(mock_ctx))
+        assert result["count"] == 2
+        assert result["errors"][0]["project"] == "org/broken-repo"
+        assert result["errors"][0]["severity"] == "error"
+        assert result["errors"][0]["short_error"] == "Job not found"
+
+    @respx.mock
+    async def test_filter_by_project(self, mock_ctx):
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/config-errors").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        await get_config_errors(mock_ctx, project="org/my-project")
+        params = dict(route.calls[0].request.url.params)
+        assert params["project"] == "org/my-project"
+
+    @respx.mock
+    async def test_empty_errors(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/config-errors").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await get_config_errors(mock_ctx))
+        assert result["count"] == 0
+        assert result["errors"] == []
+
+    @respx.mock
+    async def test_error_text_truncated(self, mock_ctx):
+        long_error = "E" * 1000
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/config-errors").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "source_context": {"project": "org/repo"},
+                        "error": long_error,
+                        "short_error": "short",
+                        "severity": "error",
+                    }
+                ],
+            )
+        )
+        result = json.loads(await get_config_errors(mock_ctx))
+        assert len(result["errors"][0]["error"]) == 500
+
+
+class TestListProjects:
+    @respx.mock
+    async def test_returns_all_projects(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/projects").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "org/repo-a",
+                        "connection_name": "github",
+                        "canonical_name": "github.com/org/repo-a",
+                        "type": "untrusted",
+                    },
+                    {
+                        "name": "org/repo-b",
+                        "connection_name": "gerrit",
+                        "canonical_name": "gerrit.example.com/org/repo-b",
+                        "type": "config",
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_projects(mock_ctx))
+        assert result["count"] == 2
+        assert result["projects"][0]["name"] == "org/repo-a"
+        assert result["projects"][0]["connection"] == "github"
+        assert result["projects"][1]["type"] == "config"
+
+    @respx.mock
+    async def test_filter_by_name(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/projects").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"name": "openstack/nova", "connection_name": "g", "type": "untrusted"},
+                    {"name": "openstack/neutron", "connection_name": "g", "type": "untrusted"},
+                    {"name": "ansible/zuul-jobs", "connection_name": "g", "type": "config"},
+                ],
+            )
+        )
+        result = json.loads(await list_projects(mock_ctx, filter="openstack"))
+        assert result["count"] == 2
+        assert all("openstack" in p["name"] for p in result["projects"])
