@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-Read-only access to any Zuul instance — builds, logs, pipelines, jobs, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+20 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -61,6 +61,8 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Kerberos/SPNEGO auth** — First-class support for Zuul instances behind OIDC + Kerberos. Drives the full SPNEGO redirect chain automatically. Session cookies persist and re-authenticate transparently on expiry.
 
+**URL-based input** — Paste a Zuul build URL directly. Tools auto-parse the tenant and UUID from URLs like `https://zuul.example.com/t/tenant/build/abc123` — no manual extraction needed.
+
 **Token-efficient output** — All responses strip None values and use compact formatters. Designed for AI context windows, not human eyeballs.
 
 ## Tools
@@ -70,24 +72,24 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | Tool | What it does |
 |------|-------------|
 | `list_builds` | Search builds by project, pipeline, job, change, result. Includes `buildset_uuid` for cross-referencing. |
-| `get_build` | Full build details — nodeset, log URL, artifacts, error detail. |
-| `get_build_failures` | **Start here for failures.** Structured task-level data from `job-output.json` — failed play, task, host, msg, rc, stderr/stdout. |
-| `get_build_log` | Read and search log files. Modes: `summary` (tail + error lines), `full` (paginated), `grep` (regex + context), `start_line`/`end_line` (exact range). Supports `log_name` for any file. |
-| `browse_build_logs` | List log directory contents or fetch specific files (inventory, artifacts, must-gather). Max 512KB per file. |
+| `get_build` | Full build details — nodeset, log URL, artifacts, error detail. Accepts `url` or `uuid`. |
+| `get_build_failures` | **Start here for failures.** Structured task-level data from `job-output.json` — failed play, task, host, msg, rc, stderr/stdout. Accepts `url` or `uuid`. |
+| `get_build_log` | Read and search log files. Modes: `summary` (tail + error lines), `full` (paginated), `grep` (regex + context), `start_line`/`end_line` (exact range). Supports `log_name` for any file. Accepts `url` or `uuid`. |
+| `browse_build_logs` | List log directory contents or fetch specific files (inventory, artifacts, must-gather). Max 512KB per file. Accepts `url` or `uuid`. |
 
 ### Buildsets
 
 | Tool | What it does |
 |------|-------------|
 | `list_buildsets` | Search buildsets. Use `include_builds=true` to inline full build details (saves round-trips). |
-| `get_buildset` | Full buildset with all builds and events. Takes a **buildset UUID**, not a build UUID. |
+| `get_buildset` | Full buildset with all builds and events. Accepts `url` or `uuid`. |
 
 ### Pipeline & Status
 
 | Tool | What it does |
 |------|-------------|
 | `get_status` | Live pipeline status — what's queued, running, with job progress and ETA. Filterable by pipeline and project. |
-| `get_change_status` | Status for a change/PR/MR. In pipeline: live jobs with elapsed times. Not in pipeline: auto-fetches latest completed buildset. |
+| `get_change_status` | Status for a change/PR/MR. In pipeline: live jobs with elapsed times. Not in pipeline: auto-fetches latest completed buildset. Accepts `url` or `change`. |
 | `list_pipelines` | All pipelines with their trigger types. |
 
 ### Jobs & Projects
@@ -98,6 +100,37 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `list_jobs` | List jobs with optional name filter. |
 | `get_job` | Job configuration — parent, nodeset, timeout, variants, source project. |
 | `get_project` | Which pipelines and jobs are configured for a project. |
+| `list_projects` | List all projects in a tenant with optional name filter. |
+| `get_config_errors` | **Check this when jobs aren't running.** Configuration errors, missing refs, broken configs. Filterable by project. |
+
+### Infrastructure
+
+| Tool | What it does |
+|------|-------------|
+| `list_nodes` | Nodepool nodes with state (ready, in-use, building), provider, and label. Includes state summary. |
+| `list_labels` | Available nodepool labels — what node types jobs can request. |
+| `list_semaphores` | Resource locks with current holders and max capacity. Check when jobs wait unexpectedly. |
+| `list_autoholds` | Active autohold requests — nodes held after failure for debugging. |
+
+## Prompts
+
+Pre-built prompt templates that pre-load context and guide analysis:
+
+| Prompt | What it does |
+|--------|-------------|
+| `debug_build` | Fetches build details + structured failures in one action, then guides root cause analysis. |
+| `compare_builds` | Loads two builds side-by-side for differential analysis — "why did this start failing?" |
+| `check_change` | Determines live pipeline status or latest results for a change, with appropriate next steps. |
+
+## Resources
+
+Browsable context that clients can attach to conversations without tool calls:
+
+| Resource | URI Pattern |
+|----------|-------------|
+| Build details | `zuul://{tenant}/build/{uuid}` |
+| Job configuration | `zuul://{tenant}/job/{name}` |
+| Project configuration | `zuul://{tenant}/project/{name}` |
 
 ## Setup
 
@@ -242,6 +275,28 @@ Add separate entries per Zuul instance:
 ```
 → `list_builds` to get `buildset_uuid` → `get_buildset(uuid="...")` → all sibling builds with results and durations.
 
+### Paste a Zuul URL directly
+
+```
+"What went wrong with this build?
+ https://zuul.example.com/t/tenant/build/abc123def"
+```
+→ `get_build_failures(url="https://zuul.example.com/t/tenant/build/abc123def")` → tenant and UUID auto-extracted.
+
+### Debug why a job isn't running
+
+```
+"My project's check pipeline seems broken — jobs aren't triggering"
+```
+→ `get_config_errors(project="org/my-project")` → configuration errors, missing refs, or repo access issues.
+
+### Check node availability
+
+```
+"Jobs are stuck in queue — are there nodes available?"
+```
+→ `list_nodes()` → node states with by_state summary → `list_labels()` → available node types.
+
 ## Development
 
 ```bash
@@ -266,7 +321,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan), `helpers.py` (API client, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (14 tools). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (20 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 
