@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/mcp-zuul)](https://pypi.org/project/mcp-zuul/)
 [![License](https://img.shields.io/github/license/imatza-rh/mcp-zuul)](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE)
 [![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
+[![MCP](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badges/score.svg)](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul)
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
