@@ -10,7 +10,7 @@ import pytest
 from mcp_zuul.config import Config
 from mcp_zuul.errors import handle_errors
 from mcp_zuul.formatters import fmt_build, fmt_status_item
-from mcp_zuul.helpers import clean, error, safepath, strip_ansi, tenant
+from mcp_zuul.helpers import clean, error, parse_zuul_url, safepath, strip_ansi, tenant
 
 
 class TestClean:
@@ -75,6 +75,37 @@ class TestTenant:
         mock_ctx.request_context.lifespan_context.config.default_tenant = ""
         with pytest.raises(ValueError, match="tenant is required"):
             tenant(mock_ctx, "")
+
+
+class TestParseZuulUrl:
+    def test_build_url(self):
+        result = parse_zuul_url("https://zuul.example.com/t/my-tenant/build/abc123def")
+        assert result == ("my-tenant", "build", "abc123def")
+
+    def test_buildset_url(self):
+        result = parse_zuul_url("https://zuul.example.com/t/tenant-a/buildset/bs-uuid-456")
+        assert result == ("tenant-a", "buildset", "bs-uuid-456")
+
+    def test_change_status_url(self):
+        result = parse_zuul_url("https://zuul.example.com/t/tenant-a/status/change/12345,abc123")
+        assert result == ("tenant-a", "change", "12345,abc123")
+
+    def test_url_with_zuul_prefix(self):
+        result = parse_zuul_url("https://sf.example.com/zuul/t/components-integration/build/abc123")
+        assert result == ("components-integration", "build", "abc123")
+
+    def test_url_with_query_params(self):
+        result = parse_zuul_url("https://zuul.example.com/t/tenant/build/uuid123?tab=logs")
+        assert result == ("tenant", "build", "uuid123")
+
+    def test_invalid_url(self):
+        assert parse_zuul_url("https://zuul.example.com/api/tenants") is None
+
+    def test_empty_string(self):
+        assert parse_zuul_url("") is None
+
+    def test_not_a_url(self):
+        assert parse_zuul_url("just-a-string") is None
 
 
 class TestConfig:

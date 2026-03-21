@@ -72,6 +72,70 @@ class TestGetBuild:
         assert "nodeset" in result
 
 
+class TestGetBuildUrl:
+    @respx.mock
+    async def test_accepts_zuul_url(self, mock_ctx):
+        build = make_build(uuid="url-build-uuid")
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/build/url-build-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await get_build(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/build/url-build-uuid",
+            )
+        )
+        assert result["uuid"] == "url-build-uuid"
+
+    @respx.mock
+    async def test_url_with_zuul_prefix(self, mock_ctx):
+        build = make_build(uuid="abc123")
+        respx.get("https://zuul.example.com/api/tenant/comp-int/build/abc123").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await get_build(
+                mock_ctx,
+                url="https://sf.example.com/zuul/t/comp-int/build/abc123",
+            )
+        )
+        assert result["uuid"] == "abc123"
+
+    async def test_invalid_url_returns_error(self, mock_ctx):
+        result = json.loads(await get_build(mock_ctx, url="https://example.com/not-a-zuul-url"))
+        assert "error" in result
+        assert "Cannot parse" in result["error"]
+
+    async def test_wrong_url_type_returns_error(self, mock_ctx):
+        result = json.loads(
+            await get_build(
+                mock_ctx,
+                url="https://zuul.example.com/t/tenant/buildset/some-uuid",
+            )
+        )
+        assert "error" in result
+        assert "Expected build" in result["error"]
+
+    async def test_no_uuid_no_url_returns_error(self, mock_ctx):
+        result = json.loads(await get_build(mock_ctx))
+        assert "error" in result
+
+    @respx.mock
+    async def test_explicit_tenant_overrides_url_tenant(self, mock_ctx):
+        build = make_build(uuid="override-uuid")
+        respx.get("https://zuul.example.com/api/tenant/explicit/build/override-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await get_build(
+                mock_ctx,
+                url="https://zuul.example.com/t/url-tenant/build/override-uuid",
+                tenant="explicit",
+            )
+        )
+        assert result["uuid"] == "override-uuid"
+
+
 class TestGetBuildFailures:
     @respx.mock
     async def test_parses_failed_tasks(self, mock_ctx):

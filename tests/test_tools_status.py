@@ -170,3 +170,32 @@ class TestGetChangeStatus:
         result = json.loads(await get_change_status(mock_ctx, "12345"))
         assert "error" in result
         assert "tenant" in result["error"].lower()
+
+    @respx.mock
+    async def test_accepts_change_url(self, mock_ctx):
+        item = make_status_item(change=99999)
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/status/change/99999%2Cabc").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(
+            await get_change_status(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/status/change/99999,abc",
+            )
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    async def test_wrong_url_type_for_change(self, mock_ctx):
+        result = json.loads(
+            await get_change_status(
+                mock_ctx,
+                url="https://zuul.example.com/t/tenant/build/some-uuid",
+            )
+        )
+        assert "error" in result
+        assert "Expected change" in result["error"]
+
+    async def test_no_change_no_url_returns_error(self, mock_ctx):
+        result = json.loads(await get_change_status(mock_ctx))
+        assert "error" in result

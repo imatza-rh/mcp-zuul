@@ -246,3 +246,41 @@ class TestBrowseBuildLogs:
         respx.get(f"{build['log_url']}nonexistent/").mock(return_value=httpx.Response(404))
         result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="nonexistent/"))
         assert "error" in result
+
+    @respx.mock
+    async def test_accepts_url(self, mock_ctx):
+        build = make_build(uuid="browse-uuid")
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/build/browse-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        html = '<html><body><a href="logs/">logs/</a></body></html>'
+        respx.get(f"{build['log_url']}").mock(
+            return_value=httpx.Response(200, text=html, headers={"content-type": "text/html"})
+        )
+        result = json.loads(
+            await browse_build_logs(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/build/browse-uuid",
+            )
+        )
+        assert "logs/" in result["entries"]
+
+
+class TestGetBuildLogUrl:
+    @respx.mock
+    async def test_accepts_url(self, mock_ctx):
+        build = make_build(uuid="log-uuid")
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/build/log-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="line 1\nFAILED! error\nline 3\n")
+        )
+        result = json.loads(
+            await get_build_log(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/build/log-uuid",
+            )
+        )
+        assert result["total_lines"] == 3
+        assert len(result["error_lines"]) >= 1

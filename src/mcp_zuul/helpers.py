@@ -89,6 +89,36 @@ def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+_ZUUL_URL_RE = re.compile(r"/t/([^/]+)/(build|buildset)/([^/?#]+)")
+_ZUUL_CHANGE_URL_RE = re.compile(r"/t/([^/]+)/status/change/([^/?#]+)")
+
+
+def parse_zuul_url(url: str) -> tuple[str, str, str] | None:
+    """Parse a Zuul web URL into (tenant, resource_type, id).
+
+    Supports build, buildset, and change status URLs.
+    Returns None if the URL doesn't match any known pattern.
+
+    Examples::
+
+        parse_zuul_url("https://zuul.example.com/t/tenant/build/abc123")
+        # -> ("tenant", "build", "abc123")
+
+        parse_zuul_url("https://zuul.example.com/zuul/t/t1/buildset/def456")
+        # -> ("t1", "buildset", "def456")
+
+        parse_zuul_url("https://zuul.example.com/t/t1/status/change/12345,abc")
+        # -> ("t1", "change", "12345,abc")
+    """
+    m = _ZUUL_URL_RE.search(url)
+    if m:
+        return m.group(1), m.group(2), m.group(3)
+    m = _ZUUL_CHANGE_URL_RE.search(url)
+    if m:
+        return m.group(1), "change", m.group(2)
+    return None
+
+
 def clean(d: dict) -> dict:
     """Remove None values to save tokens."""
     return {k: v for k, v in d.items() if v is not None}
