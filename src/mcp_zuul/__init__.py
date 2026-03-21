@@ -792,7 +792,7 @@ async def get_build_log(
             await _kerberos_auth(app.client, app.config.base_url)
             async with http.stream("GET", txt_url) as resp2:
                 if resp2.status_code == 404:
-                    return _error(f"job-output.txt not found at {txt_url}")
+                    return _error(f"Log file not found at {txt_url}")
                 resp2.raise_for_status()
                 async for chunk in resp2.aiter_bytes():
                     size += len(chunk)
@@ -801,7 +801,7 @@ async def get_build_log(
                     chunks.append(chunk)
         else:
             if resp.status_code == 404:
-                return _error(f"job-output.txt not found at {txt_url}")
+                return _error(f"Log file not found at {txt_url}")
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():
                 size += len(chunk)
@@ -815,6 +815,8 @@ async def get_build_log(
 
     # Line range mode (start_line/end_line)
     if start_line > 0:
+        if start_line > total:
+            return _error(f"start_line {start_line} exceeds total {total} lines")
         s = start_line - 1  # convert to 0-based
         e = (end_line if end_line > 0 else start_line + _MAX_LOG_LINES) - 1
         e = min(e, total - 1)

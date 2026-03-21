@@ -108,6 +108,13 @@ class TestStartEndLine:
         assert result["count"] == 21
         assert result["lines"][0]["n"] == 10
 
+    def test_start_beyond_total_returns_empty(self):
+        """When start_line exceeds total, production code returns an error."""
+        # The production code returns _error() before reaching _extract_range,
+        # so this just documents the expected behavior
+        result = _extract_range(_SAMPLE_LOG, 200, 210)
+        assert result["count"] == 0
+
     def test_line_numbers_are_1_based(self):
         result = _extract_range(_SAMPLE_LOG, 1, 5)
         for i, line in enumerate(result["lines"]):
