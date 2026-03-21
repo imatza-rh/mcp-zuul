@@ -7,7 +7,10 @@ import respx
 
 from mcp_zuul.tools import (
     find_flaky_jobs,
+    get_build_times,
+    get_components,
     get_config_errors,
+    get_connections,
     get_freeze_jobs,
     get_job,
     get_project,
@@ -307,6 +310,22 @@ class TestListNodes:
         result = json.loads(await list_nodes(mock_ctx))
         assert result["count"] == 3
         assert result["by_state"] == {"in-use": 2, "ready": 1}
+        assert result["by_label"]["centos-9"] == {"in-use": 1, "ready": 1}
+        assert result["by_label"]["ubuntu-22"] == {"in-use": 1}
+        assert "nodes" not in result  # summary mode by default
+
+    @respx.mock
+    async def test_detail_includes_nodes(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"id": "001", "type": ["centos-9"], "state": "ready", "provider": "cloud-a"},
+                ],
+            )
+        )
+        result = json.loads(await list_nodes(mock_ctx, detail=True))
+        assert result["count"] == 1
         assert result["nodes"][0]["id"] == "001"
 
     @respx.mock
@@ -317,6 +336,7 @@ class TestListNodes:
         result = json.loads(await list_nodes(mock_ctx))
         assert result["count"] == 0
         assert result["by_state"] == {}
+        assert result["by_label"] == {}
 
 
 class TestListLabels:
@@ -469,3 +489,100 @@ class TestFindFlakyJobs:
         result = json.loads(await find_flaky_jobs(mock_ctx, job_name="broken-job"))
         assert result["flaky"] is False
         assert result["failure_rate"] == 100.0
+
+
+class TestGetBuildTimes:
+    @respx.mock
+    async def test_returns_durations_with_stats(self, mock_ctx):
+        builds = [
+            {
+                "uuid": "u1",
+                "job_name": "j",
+                "result": "SUCCESS",
+                "duration": 100.0,
+                "start_time": "2026-01-01T00:00:00",
+            },
+            {
+                "uuid": "u2",
+                "job_name": "j",
+                "result": "SUCCESS",
+                "duration": 200.0,
+                "start_time": "2026-01-02T00:00:00",
+            },
+            {
+                "uuid": "u3",
+                "job_name": "j",
+                "result": "FAILURE",
+                "duration": 300.0,
+                "start_time": "2026-01-03T00:00:00",
+            },
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build-times").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await get_build_times(mock_ctx, job_name="j"))
+        assert result["count"] == 3
+        assert result["stats"]["avg"] == 200.0
+        assert result["stats"]["min"] == 100.0
+        assert result["stats"]["max"] == 300.0
+
+    @respx.mock
+    async def test_empty_results(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build-times").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await get_build_times(mock_ctx))
+        assert result["count"] == 0
+        assert result["stats"] == {}
+
+
+class TestGetConnections:
+    @respx.mock
+    async def test_returns_connections(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/connections").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "gerrit",
+                        "driver": "gerrit",
+                        "baseurl": "https://review.example.com",
+                        "canonical_hostname": "review.example.com",
+                    },
+                    {
+                        "name": "github",
+                        "driver": "github",
+                        "baseurl": "https://github.com",
+                        "canonical_hostname": "github.com",
+                    },
+                ],
+            )
+        )
+        result = json.loads(await get_connections(mock_ctx))
+        assert result["count"] == 2
+        assert result["connections"][0]["driver"] == "gerrit"
+        assert result["connections"][1]["name"] == "github"
+
+
+class TestGetComponents:
+    @respx.mock
+    async def test_returns_components(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/components").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "scheduler": [
+                        {"hostname": "sched-01", "state": "running", "version": "11.0.0"}
+                    ],
+                    "executor": [
+                        {"hostname": "exec-01", "state": "running", "version": "11.0.0"},
+                        {"hostname": "exec-02", "state": "paused", "version": "11.0.0"},
+                    ],
+                },
+            )
+        )
+        result = json.loads(await get_components(mock_ctx))
+        assert len(result["scheduler"]) == 1
+        assert result["scheduler"][0]["state"] == "running"
+        assert len(result["executor"]) == 2
+        assert result["executor"][1]["state"] == "paused"

@@ -15,6 +15,7 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
         "duration": b.get("duration"),
         "voting": b.get("voting", True),
         "start_time": b.get("start_time"),
+        "log_url": b.get("log_url"),
     }
     ref = b.get("ref") or {}
     if ref:
@@ -27,7 +28,6 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
     if not brief:
         out["end_time"] = b.get("end_time")
         out["event_timestamp"] = b.get("event_timestamp")
-        out["log_url"] = b.get("log_url")
         out["nodeset"] = b.get("nodeset")
         out["error_detail"] = b.get("error_detail")
         out["artifacts"] = [a["name"] for a in b.get("artifacts", [])]

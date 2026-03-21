@@ -243,7 +243,7 @@ class TestFmtBuild:
         }
         result = fmt_build(build, brief=True)
         assert result["uuid"] == "u1"
-        assert "log_url" not in result  # brief excludes these
+        assert "nodeset" not in result  # brief excludes detailed fields
 
     def test_full_format(self):
         build = {

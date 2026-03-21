@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 23 read-only tools."""
+"""Zuul MCP tool implementations — 26 read-only tools."""
 
 import asyncio
 import json
@@ -51,7 +51,7 @@ _ERROR_PATTERNS = re.compile(
 _ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="List Tenants", annotations=_READ_ONLY)
 @handle_errors
 async def list_tenants(ctx: Context) -> str:
     """List all Zuul tenants with project and queue counts."""
@@ -63,7 +63,7 @@ async def list_tenants(ctx: Context) -> str:
     return json.dumps(result)
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Pipeline Status", annotations=_READ_ONLY)
 @handle_errors
 async def get_status(
     ctx: Context,
@@ -127,7 +127,7 @@ async def get_status(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Change Status", annotations=_READ_ONLY)
 @handle_errors
 async def get_change_status(
     ctx: Context,
@@ -210,7 +210,7 @@ async def get_change_status(
     return json.dumps(formatted)
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Search Builds", annotations=_READ_ONLY)
 @handle_errors
 async def list_builds(
     ctx: Context,
@@ -263,7 +263,7 @@ async def list_builds(
     return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more, "skip": skip})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Build Details", annotations=_READ_ONLY)
 @handle_errors
 async def get_build(
     ctx: Context,
@@ -284,7 +284,7 @@ async def get_build(
     return json.dumps(fmt_build(data, brief=False))
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Build Failure Analysis", annotations=_READ_ONLY)
 @handle_errors
 async def get_build_failures(
     ctx: Context,
@@ -336,18 +336,17 @@ async def get_build_failures(
         stats = pb.get("stats", {})
         has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
 
-        pb_summary = clean(
-            {
-                "phase": phase,
-                "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
-                "playbook_full": playbook,
-                "failed": has_failure,
-                "stats": stats,
-            }
-        )
-        playbooks.append(pb_summary)
-
+        # Only include playbooks that have failures to save tokens
         if has_failure:
+            pb_summary = clean(
+                {
+                    "phase": phase,
+                    "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+                    "playbook_full": playbook,
+                    "stats": stats,
+                }
+            )
+            playbooks.append(pb_summary)
             for play in pb.get("plays", []):
                 play_name = play.get("play", {}).get("name", "")
                 for task in play.get("tasks", []):
@@ -378,15 +377,15 @@ async def get_build_failures(
                 "result": build.get("result", ""),
                 "log_url": log_url,
                 "duration": build.get("duration"),
-                "playbook_count": len(playbooks),
-                "playbooks": playbooks,
+                "total_playbooks": len(data),
+                "failed_playbooks": playbooks,
                 "failed_tasks": failed_tasks,
             }
         )
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Read Build Log", annotations=_READ_ONLY)
 @handle_errors
 async def get_build_log(
     ctx: Context,
@@ -583,7 +582,7 @@ async def get_build_log(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Browse Log Files", annotations=_READ_ONLY)
 @handle_errors
 async def browse_build_logs(
     ctx: Context,
@@ -660,7 +659,7 @@ async def browse_build_logs(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Log Tail", annotations=_READ_ONLY)
 @handle_errors
 async def tail_build_log(
     ctx: Context,
@@ -743,7 +742,7 @@ async def tail_build_log(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Search Buildsets", annotations=_READ_ONLY)
 @handle_errors
 async def list_buildsets(
     ctx: Context,
@@ -819,7 +818,7 @@ async def list_buildsets(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Buildset Details", annotations=_READ_ONLY)
 @handle_errors
 async def get_buildset(
     ctx: Context,
@@ -839,7 +838,7 @@ async def get_buildset(
     return json.dumps(fmt_buildset(data, brief=False))
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="List Jobs", annotations=_READ_ONLY)
 @handle_errors
 async def list_jobs(
     ctx: Context,
@@ -870,7 +869,7 @@ async def list_jobs(
     return json.dumps({"jobs": result, "count": len(result)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Job Configuration", annotations=_READ_ONLY)
 @handle_errors
 async def get_job(
     ctx: Context,
@@ -902,7 +901,7 @@ async def get_job(
     return json.dumps({"name": name, "variants": variants})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Project Configuration", annotations=_READ_ONLY)
 @handle_errors
 async def get_project(
     ctx: Context,
@@ -942,7 +941,7 @@ async def get_project(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="List Pipelines", annotations=_READ_ONLY)
 @handle_errors
 async def list_pipelines(
     ctx: Context,
@@ -962,7 +961,7 @@ async def list_pipelines(
     return json.dumps({"pipelines": result, "count": len(result)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Configuration Errors", annotations=_READ_ONLY)
 @handle_errors
 async def get_config_errors(
     ctx: Context,
@@ -1003,7 +1002,7 @@ async def get_config_errors(
     return json.dumps({"errors": errors, "count": len(errors)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="List Projects", annotations=_READ_ONLY)
 @handle_errors
 async def list_projects(
     ctx: Context,
@@ -1035,45 +1034,61 @@ async def list_projects(
     return json.dumps({"projects": result, "count": len(result)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Nodepool Nodes", annotations=_READ_ONLY)
 @handle_errors
 async def list_nodes(
     ctx: Context,
     tenant: str = "",
+    detail: bool = False,
 ) -> str:
     """List nodepool nodes — shows what's available, in-use, or being provisioned.
 
-    Check this when jobs are stuck waiting for nodes. Shows node state
-    (ready, in-use, building, deleting), provider, and label.
+    Check this when jobs are stuck waiting for nodes. By default returns
+    a summary grouped by label and state. Set detail=true for individual nodes.
 
     Args:
         tenant: Tenant name (uses default if empty)
+        detail: Include individual node list (default false, summary only)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/nodes")
-    result = [
-        clean(
-            {
-                "id": n.get("id"),
-                "label": n.get("type", []),
-                "state": n.get("state"),
-                "provider": n.get("provider"),
-                "connection_type": n.get("connection_type"),
-                "external_id": n.get("external_id"),
-                "comment": n.get("comment"),
-            }
-        )
-        for n in data
-    ]
+
     # Summary by state
     states: dict[str, int] = {}
-    for n in result:
+    # Summary by label+state
+    by_label: dict[str, dict[str, int]] = {}
+    for n in data:
         s = n.get("state", "unknown")
         states[s] = states.get(s, 0) + 1
-    return json.dumps({"nodes": result, "count": len(result), "by_state": states})
+        for label in n.get("type", []):
+            if label not in by_label:
+                by_label[label] = {}
+            by_label[label][s] = by_label[label].get(s, 0) + 1
+
+    out: dict[str, Any] = {
+        "count": len(data),
+        "by_state": states,
+        "by_label": by_label,
+    }
+    if detail:
+        out["nodes"] = [
+            clean(
+                {
+                    "id": n.get("id"),
+                    "label": n.get("type", []),
+                    "state": n.get("state"),
+                    "provider": n.get("provider"),
+                    "connection_type": n.get("connection_type"),
+                    "external_id": n.get("external_id"),
+                    "comment": n.get("comment"),
+                }
+            )
+            for n in data
+        ]
+    return json.dumps(out)
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Nodepool Labels", annotations=_READ_ONLY)
 @handle_errors
 async def list_labels(
     ctx: Context,
@@ -1090,7 +1105,7 @@ async def list_labels(
     return json.dumps({"labels": names, "count": len(names)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Semaphores", annotations=_READ_ONLY)
 @handle_errors
 async def list_semaphores(
     ctx: Context,
@@ -1122,7 +1137,7 @@ async def list_semaphores(
     return json.dumps({"semaphores": result, "count": len(result)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Autohold Requests", annotations=_READ_ONLY)
 @handle_errors
 async def list_autoholds(
     ctx: Context,
@@ -1158,7 +1173,7 @@ async def list_autoholds(
     return json.dumps({"autoholds": result, "count": len(result)})
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Resolved Job Graph", annotations=_READ_ONLY)
 @handle_errors
 async def get_freeze_jobs(
     ctx: Context,
@@ -1205,7 +1220,7 @@ async def get_freeze_jobs(
     )
 
 
-@mcp.tool(annotations=_READ_ONLY)
+@mcp.tool(title="Flaky Job Detection", annotations=_READ_ONLY)
 @handle_errors
 async def find_flaky_jobs(
     ctx: Context,
@@ -1273,3 +1288,117 @@ async def find_flaky_jobs(
             }
         )
     )
+
+
+@mcp.tool(title="Build Duration Trends", annotations=_READ_ONLY)
+@handle_errors
+async def get_build_times(
+    ctx: Context,
+    tenant: str = "",
+    job_name: str = "",
+    project: str = "",
+    pipeline: str = "",
+    branch: str = "",
+    limit: int = 20,
+    skip: int = 0,
+) -> str:
+    """Build duration trends — is a job getting slower? Compute avg/min/max from results.
+
+    Returns build durations with timing data for trend analysis.
+    Use this to detect performance regressions or timeout-prone jobs.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+        job_name: Filter by job name
+        project: Filter by project name
+        pipeline: Filter by pipeline name
+        branch: Filter by branch name
+        limit: Max results, 1-100 (default 20)
+        skip: Offset for pagination
+    """
+    t = _tenant(ctx, tenant)
+    limit = max(1, min(limit, 100))
+    params: dict[str, Any] = {"limit": limit, "skip": skip}
+    for key, val in [
+        ("job_name", job_name),
+        ("project", project),
+        ("pipeline", pipeline),
+        ("branch", branch),
+    ]:
+        if val:
+            params[key] = val
+    data = await api(ctx, f"/tenant/{safepath(t)}/build-times", params)
+
+    durations = [b["duration"] for b in data if b.get("duration") is not None]
+    stats = {}
+    if durations:
+        stats = {
+            "avg": round(sum(durations) / len(durations), 1),
+            "min": min(durations),
+            "max": max(durations),
+            "count": len(durations),
+        }
+
+    builds = [
+        clean(
+            {
+                "uuid": b.get("uuid"),
+                "job": b.get("job_name"),
+                "result": b.get("result"),
+                "duration": b.get("duration"),
+                "start_time": b.get("start_time"),
+                "project": b.get("project"),
+                "pipeline": b.get("pipeline"),
+            }
+        )
+        for b in data
+    ]
+    return json.dumps({"stats": stats, "builds": builds, "count": len(builds)})
+
+
+@mcp.tool(title="Source Connections", annotations=_READ_ONLY)
+@handle_errors
+async def get_connections(ctx: Context) -> str:
+    """List configured source connections — Gerrit, GitHub, GitLab instances.
+
+    Shows what code review systems this Zuul instance talks to,
+    with connection type, hostname, and base URL.
+    """
+    data = await api(ctx, "/connections")
+    result = [
+        clean(
+            {
+                "name": c.get("name"),
+                "driver": c.get("driver"),
+                "baseurl": c.get("baseurl"),
+                "canonical_hostname": c.get("canonical_hostname"),
+                "server": c.get("server"),
+            }
+        )
+        for c in data
+    ]
+    return json.dumps({"connections": result, "count": len(result)})
+
+
+@mcp.tool(title="System Components", annotations=_READ_ONLY)
+@handle_errors
+async def get_components(ctx: Context) -> str:
+    """Show Zuul system components — schedulers, executors, mergers, web servers.
+
+    Check this to see if Zuul is healthy. Shows component state
+    (running/paused), version, and hostname.
+    """
+    data = await api(ctx, "/components")
+    result = {}
+    for kind, instances in data.items():
+        result[kind] = [
+            clean(
+                {
+                    "hostname": c.get("hostname"),
+                    "state": c.get("state"),
+                    "version": c.get("version"),
+                }
+            )
+            for c in instances
+        ]
+    return json.dumps(result)

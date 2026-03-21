@@ -152,6 +152,9 @@ class TestGetBuildFailures:
         assert result["failed_tasks"][0]["task"] == "Run deployment"
         assert result["failed_tasks"][0]["host"] == "controller-0"
         assert result["failed_tasks"][0]["rc"] == 1
+        # Only failed playbooks included (not passing ones)
+        assert len(result["failed_playbooks"]) == 1
+        assert result["total_playbooks"] == 1
 
     @respx.mock
     async def test_no_log_url(self, mock_ctx):
