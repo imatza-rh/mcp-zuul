@@ -42,6 +42,22 @@ async def lifespan(server: FastMCP):
     ):
         if config.use_kerberos:
             await kerberos_auth(client, config.base_url)
+
+        # Apply tool filtering
+        if config.enabled_tools:
+            all_tools = list(server._tool_manager._tools.keys())
+            for name in all_tools:
+                if name not in config.enabled_tools:
+                    server._tool_manager.remove_tool(name)
+            log.info("Tools enabled: %s", ", ".join(config.enabled_tools))
+        elif config.disabled_tools:
+            for name in config.disabled_tools:
+                try:
+                    server._tool_manager.remove_tool(name)
+                except KeyError:
+                    log.warning("Cannot disable unknown tool: %s", name)
+            log.info("Tools disabled: %s", ", ".join(config.disabled_tools))
+
         log.info("Zuul MCP connected to %s", config.base_url)
         yield AppContext(client=client, log_client=log_client, config=config)
 

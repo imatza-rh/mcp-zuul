@@ -18,6 +18,11 @@ class Config:
     timeout: int
     verify_ssl: bool
     use_kerberos: bool
+    transport: str
+    enabled_tools: list[str] | None
+    disabled_tools: list[str] | None
+    host: str
+    port: int
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -45,6 +50,25 @@ class Config:
                     "Install with: pip install mcp-zuul[kerberos]"
                 )
                 sys.exit(1)
+        transport = os.environ.get("MCP_TRANSPORT", "stdio")
+        if transport not in ("stdio", "sse", "streamable-http"):
+            log.error("MCP_TRANSPORT must be stdio, sse, or streamable-http, got: %s", transport)
+            sys.exit(1)
+        raw_port = os.environ.get("MCP_PORT", "8000")
+        try:
+            port = int(raw_port)
+        except ValueError:
+            log.error("MCP_PORT must be an integer, got: %s", raw_port)
+            sys.exit(1)
+
+        enabled_raw = os.environ.get("ZUUL_ENABLED_TOOLS", "")
+        disabled_raw = os.environ.get("ZUUL_DISABLED_TOOLS", "")
+        enabled_tools = [t.strip() for t in enabled_raw.split(",") if t.strip()] or None
+        disabled_tools = [t.strip() for t in disabled_raw.split(",") if t.strip()] or None
+        if enabled_tools and disabled_tools:
+            log.error("ZUUL_ENABLED_TOOLS and ZUUL_DISABLED_TOOLS are mutually exclusive")
+            sys.exit(1)
+
         return cls(
             base_url=base_url,
             default_tenant=os.environ.get("ZUUL_DEFAULT_TENANT", ""),
@@ -52,4 +76,9 @@ class Config:
             timeout=timeout,
             verify_ssl=os.environ.get("ZUUL_VERIFY_SSL", "true").lower() == "true",
             use_kerberos=use_kerberos,
+            transport=transport,
+            enabled_tools=enabled_tools,
+            disabled_tools=disabled_tools,
+            host=os.environ.get("MCP_HOST", "127.0.0.1"),
+            port=port,
         )

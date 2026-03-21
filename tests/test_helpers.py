@@ -138,6 +138,50 @@ class TestConfig:
         with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
             Config.from_env()
 
+    def test_from_env_transport_default(self):
+        with patch.dict(os.environ, {"ZUUL_URL": "https://x"}, clear=False):
+            config = Config.from_env()
+            assert config.transport == "stdio"
+
+    def test_from_env_transport_streamable_http(self):
+        env = {"ZUUL_URL": "https://x", "MCP_TRANSPORT": "streamable-http"}
+        with patch.dict(os.environ, env, clear=False):
+            config = Config.from_env()
+            assert config.transport == "streamable-http"
+
+    def test_from_env_invalid_transport_exits(self):
+        env = {"ZUUL_URL": "https://x", "MCP_TRANSPORT": "websocket"}
+        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+            Config.from_env()
+
+    def test_from_env_enabled_tools(self):
+        env = {"ZUUL_URL": "https://x", "ZUUL_ENABLED_TOOLS": "get_build,list_builds"}
+        with patch.dict(os.environ, env, clear=False):
+            config = Config.from_env()
+            assert config.enabled_tools == ["get_build", "list_builds"]
+            assert config.disabled_tools is None
+
+    def test_from_env_disabled_tools(self):
+        env = {"ZUUL_URL": "https://x", "ZUUL_DISABLED_TOOLS": "list_tenants"}
+        with patch.dict(os.environ, env, clear=False):
+            config = Config.from_env()
+            assert config.disabled_tools == ["list_tenants"]
+            assert config.enabled_tools is None
+
+    def test_from_env_enabled_and_disabled_exits(self):
+        env = {
+            "ZUUL_URL": "https://x",
+            "ZUUL_ENABLED_TOOLS": "get_build",
+            "ZUUL_DISABLED_TOOLS": "list_tenants",
+        }
+        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+            Config.from_env()
+
+    def test_from_env_invalid_port_exits(self):
+        env = {"ZUUL_URL": "https://x", "MCP_PORT": "not-a-number"}
+        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+            Config.from_env()
+
 
 class TestHandleErrors:
     async def test_wraps_http_status_error(self):
