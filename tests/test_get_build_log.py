@@ -1,13 +1,11 @@
 """Tests for get_build_log improvements: log_name, start_line/end_line, grep auto-fix."""
 
-import json
 import re
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Test grep \| auto-fix (unit — no network needed)
 # ---------------------------------------------------------------------------
+
 
 def _auto_fix_grep(grep: str) -> str:
     """Reproduce the auto-fix logic from get_build_log."""
@@ -58,7 +56,9 @@ class TestGrepAutoFix:
 _SAMPLE_LOG = [f"line {i}: content for line {i}" for i in range(1, 101)]
 
 
-def _extract_range(all_lines: list[str], start_line: int, end_line: int, max_lines: int = 200) -> dict:
+def _extract_range(
+    all_lines: list[str], start_line: int, end_line: int, max_lines: int = 200
+) -> dict:
     """Reproduce the range extraction logic from get_build_log."""
     total = len(all_lines)
     s = start_line - 1  # 1-based to 0-based
@@ -70,7 +70,7 @@ def _extract_range(all_lines: list[str], start_line: int, end_line: int, max_lin
         "start_line": start_line,
         "end_line": e + 1,
         "count": len(chunk),
-        "lines": [{"n": s + i + 1, "text": l[:500]} for i, l in enumerate(chunk)],
+        "lines": [{"n": s + i + 1, "text": line[:500]} for i, line in enumerate(chunk)],
     }
 
 
@@ -104,7 +104,9 @@ class TestStartEndLine:
     def test_end_defaults_to_max_lines(self):
         """When end_line=0, should default to start_line + MAX_LOG_LINES."""
         result = _extract_range(_SAMPLE_LOG, 10, 0, max_lines=20)
-        # start=10, end=10+20-1=29, so 21 lines (10..29 inclusive + line 30 from 0-based math)
+        # start=10 (1-based) -> index 9 (0-based)
+        # end = (10 + 20) - 1 = 29 (0-based index)
+        # slice [9:30] = 21 lines (indices 9-29 inclusive)
         assert result["count"] == 21
         assert result["lines"][0]["n"] == 10
 
@@ -124,6 +126,7 @@ class TestStartEndLine:
 # ---------------------------------------------------------------------------
 # Test log_name path sanitization (unit)
 # ---------------------------------------------------------------------------
+
 
 class TestLogNameSanitization:
     """Verify log_name rejects path traversal."""
@@ -145,7 +148,10 @@ class TestLogNameSanitization:
         log_url = "https://example.com/logs/build123/"
         log_name = "controller/ci-framework-data/logs/ci_script_008_run.log"
         result = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-        assert result == "https://example.com/logs/build123/controller/ci-framework-data/logs/ci_script_008_run.log"
+        assert (
+            result
+            == "https://example.com/logs/build123/controller/ci-framework-data/logs/ci_script_008_run.log"
+        )
 
     def test_leading_slash_stripped(self):
         log_url = "https://example.com/logs/build123/"
@@ -158,34 +164,41 @@ class TestLogNameSanitization:
 # Test _strip_ansi helper
 # ---------------------------------------------------------------------------
 
+
 class TestStripAnsi:
     """Verify ANSI escape code removal."""
 
     def test_strips_color_codes(self):
-        from mcp_zuul import _strip_ansi
-        assert _strip_ansi("\x1b[31mERROR\x1b[0m") == "ERROR"
+        from mcp_zuul import strip_ansi
+
+        assert strip_ansi("\x1b[31mERROR\x1b[0m") == "ERROR"
 
     def test_strips_bold(self):
-        from mcp_zuul import _strip_ansi
-        assert _strip_ansi("\x1b[1mBOLD\x1b[0m") == "BOLD"
+        from mcp_zuul import strip_ansi
+
+        assert strip_ansi("\x1b[1mBOLD\x1b[0m") == "BOLD"
 
     def test_no_ansi_unchanged(self):
-        from mcp_zuul import _strip_ansi
-        assert _strip_ansi("plain text") == "plain text"
+        from mcp_zuul import strip_ansi
+
+        assert strip_ansi("plain text") == "plain text"
 
 
 # ---------------------------------------------------------------------------
 # Test _clean helper
 # ---------------------------------------------------------------------------
 
+
 class TestClean:
     """Verify None removal from dicts."""
 
     def test_removes_none(self):
-        from mcp_zuul import _clean
-        assert _clean({"a": 1, "b": None, "c": "x"}) == {"a": 1, "c": "x"}
+        from mcp_zuul import clean
+
+        assert clean({"a": 1, "b": None, "c": "x"}) == {"a": 1, "c": "x"}
 
     def test_keeps_falsy_non_none(self):
-        from mcp_zuul import _clean
-        result = _clean({"a": 0, "b": "", "c": False, "d": None})
+        from mcp_zuul import clean
+
+        result = clean({"a": 0, "b": "", "c": False, "d": None})
         assert result == {"a": 0, "b": "", "c": False}
