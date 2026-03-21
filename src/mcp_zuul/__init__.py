@@ -737,19 +737,29 @@ async def get_build_log(
     ctx: Context,
     uuid: str,
     tenant: str = "",
+    log_name: str = "job-output.txt",
     mode: str = "summary",
     lines: int = 0,
+    start_line: int = 0,
+    end_line: int = 0,
     grep: str = "",
     context: int = 0,
 ) -> str:
-    """Fetch and parse build log (job-output.txt).
+    """Fetch and parse a build log file.
 
     Args:
         uuid: Build UUID
         tenant: Tenant name (uses default if empty)
+        log_name: Log file to read (default "job-output.txt"). For other files,
+                  use the path relative to the build's log_url, e.g.
+                  "logs/controller/ci-framework-data/logs/ci_script_008_run.log"
         mode: "summary" (default: tail + error lines) or "full" (paginated chunks)
         lines: For summary: tail line count (default 100). For full: offset start line.
-        grep: Regex pattern to filter log lines (overrides mode)
+        start_line: Read from this line number (1-based). If set with end_line,
+                    returns exactly that range (overrides mode).
+        end_line: Read up to this line number (1-based, inclusive).
+        grep: Python regex pattern to filter log lines (overrides mode).
+              Use | for OR: "error|failed|timeout". Do NOT use backslash-pipe.
         context: Lines of context before/after each grep match (default 0, max 10)
     """
     t = _tenant(ctx, tenant)
@@ -763,9 +773,12 @@ async def get_build_log(
     if parsed.scheme not in ("http", "https"):
         return _error(f"Invalid log URL scheme: {parsed.scheme}")
 
-    # Fetch job-output.txt — use authenticated client when log host matches API host
+    # Fetch log file — use authenticated client when log host matches API host
     app = _app(ctx)
-    txt_url = log_url.rstrip("/") + "/job-output.txt"
+    # Sanitize log_name to prevent path traversal
+    if ".." in log_name.split("/"):
+        return _error(f"Invalid log_name: {log_name!r}")
+    txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
     api_host = urlparse(app.config.base_url).hostname
     log_host = urlparse(txt_url).hostname
     http = app.client if log_host == api_host else app.log_client
@@ -800,8 +813,26 @@ async def get_build_log(
     all_lines = raw.splitlines()
     total = len(all_lines)
 
+    # Line range mode (start_line/end_line)
+    if start_line > 0:
+        s = start_line - 1  # convert to 0-based
+        e = (end_line if end_line > 0 else start_line + _MAX_LOG_LINES) - 1
+        e = min(e, total - 1)
+        chunk = all_lines[s : e + 1]
+        return json.dumps({
+            "total_lines": total,
+            "log_url": txt_url,
+            "start_line": start_line,
+            "end_line": e + 1,
+            "count": len(chunk),
+            "lines": [{"n": s + i + 1, "text": l[:500]} for i, l in enumerate(chunk)],
+        })
+
     # Grep mode
     if grep:
+        # Auto-fix common shell-grep-to-python-regex mistake: \| → |
+        if r"\|" in grep and "|" not in grep.replace(r"\|", ""):
+            grep = grep.replace(r"\|", "|")
         try:
             pat = re.compile(grep, re.IGNORECASE)
         except re.error as e:
