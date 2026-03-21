@@ -3,8 +3,8 @@
 import httpx
 import respx
 
-from mcp_zuul.prompts import debug_build
-from tests.conftest import make_build, make_job_output_json
+from mcp_zuul.prompts import check_change, compare_builds, debug_build
+from tests.conftest import make_build, make_buildset, make_job_output_json, make_status_item
 
 
 class TestDebugBuild:
@@ -66,3 +66,61 @@ class TestDebugBuild:
         respx.get(f"{build['log_url']}job-output.json").mock(return_value=httpx.Response(404))
         result = await debug_build(uuid="t-uuid", tenant="custom", ctx=mock_ctx)
         assert 'tenant="custom"' in result
+
+
+class TestCompareBuilds:
+    @respx.mock
+    async def test_includes_both_builds(self, mock_ctx):
+        b1 = make_build(uuid="b1", result="SUCCESS")
+        b2 = make_build(uuid="b2", result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=b1)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b2").mock(
+            return_value=httpx.Response(200, json=b2)
+        )
+        result = await compare_builds(uuid1="b1", uuid2="b2", ctx=mock_ctx)
+        assert "Build A" in result
+        assert "Build B" in result
+        assert "SUCCESS" in result
+        assert "FAILURE" in result
+
+
+class TestCheckChange:
+    @respx.mock
+    async def test_live_pipeline(self, mock_ctx):
+        item = make_status_item(change=12345)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/12345").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = await check_change(change="12345", ctx=mock_ctx)
+        assert "Live pipeline status" in result
+        assert "12345" in result
+
+    @respx.mock
+    async def test_not_in_pipeline_with_buildset(self, mock_ctx):
+        bs = make_buildset(uuid="bs-1")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/99999").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-1"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-1").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = await check_change(change="99999", ctx=mock_ctx)
+        assert "not currently in any pipeline" in result
+        assert "Latest buildset" in result
+
+    @respx.mock
+    async def test_no_history(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/00000").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = await check_change(change="00000", ctx=mock_ctx)
+        assert "no build history" in result
+        assert "get_config_errors" in result
