@@ -6,3 +6,5 @@ build/
 .venv/
 .env
 uv.lock
+CLAUDE.md
+.claude/

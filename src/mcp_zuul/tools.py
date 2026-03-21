@@ -28,7 +28,7 @@ _ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
 @mcp.tool()
 @handle_errors
 async def list_tenants(ctx: Context) -> str:
-    """List all Zuul tenants with project counts."""
+    """List all Zuul tenants with project and queue counts."""
     data = await api(ctx, "/tenants")
     result = [
         clean({"name": t["name"], "projects": t.get("projects", 0), "queue": t.get("queue", 0)})
@@ -231,7 +231,7 @@ async def get_build(
     uuid: str,
     tenant: str = "",
 ) -> str:
-    """Get full details for a single build by UUID.
+    """Get full build details — log URL, nodeset, artifacts, timing, error detail.
 
     Args:
         uuid: Build UUID (full or prefix from list_builds)
@@ -249,10 +249,10 @@ async def get_build_failures(
     uuid: str,
     tenant: str = "",
 ) -> str:
-    """Analyze build failures using structured job-output.json.
+    """Analyze a failed build — returns exactly which task failed, on which host, with error message and return code.
 
-    Returns failed playbooks and tasks with error messages, rc, stderr.
-    Much more accurate than text log parsing.
+    Parses Zuul's structured job-output.json for precise failure data.
+    Start here when investigating build failures — much more accurate than log parsing.
 
     Args:
         uuid: Build UUID
@@ -356,7 +356,7 @@ async def get_build_log(
     grep: str = "",
     context: int = 0,
 ) -> str:
-    """Fetch and parse a build log file.
+    """Read, search, and navigate build log files with grep, line ranges, and error summary.
 
     Args:
         uuid: Build UUID
@@ -695,7 +695,7 @@ async def get_buildset(
     uuid: str,
     tenant: str = "",
 ) -> str:
-    """Get buildset details including all builds and events.
+    """Get full buildset details — all builds, results, events, and timing.
 
     Args:
         uuid: Buildset UUID
@@ -744,7 +744,7 @@ async def get_job(
     name: str,
     tenant: str = "",
 ) -> str:
-    """Get job configuration and variants.
+    """Get job configuration — parent, nodeset, timeout, branches, and all variants.
 
     Args:
         name: Job name

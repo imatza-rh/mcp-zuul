@@ -46,4 +46,4 @@ async def lifespan(server: FastMCP):
         yield AppContext(client=client, log_client=log_client, config=config)
 
 
-mcp = FastMCP("zuul", lifespan=lifespan)
+mcp = FastMCP("zuul-ci", lifespan=lifespan)

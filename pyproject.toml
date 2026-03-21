@@ -10,12 +10,15 @@ authors = [
 ]
 keywords = ["mcp", "zuul", "ci", "zuul-ci", "model-context-protocol"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
     "mcp>=1.26.0",
@@ -39,6 +42,7 @@ mcp-zuul = "mcp_zuul:main"
 Homepage = "https://github.com/imatza-rh/mcp-zuul"
 Repository = "https://github.com/imatza-rh/mcp-zuul"
 Issues = "https://github.com/imatza-rh/mcp-zuul/issues"
+Changelog = "https://github.com/imatza-rh/mcp-zuul/releases"
 
 [build-system]
 requires = ["hatchling"]
