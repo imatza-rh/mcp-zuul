@@ -2,7 +2,7 @@
   "$schema": "https://registry.modelcontextprotocol.io/schemas/server.json",
   "name": "io.github.imatza-rh/mcp-zuul",
   "version": "0.1.1",
-  "description": "MCP server for Zuul CI — read-only access to builds, logs, pipeline status, and jobs. Structured failure analysis, smart log search, and Kerberos auth.",
+  "description": "Zuul CI — build failure analysis, log search, pipeline status, and job configuration",
   "repository": {
     "url": "https://github.com/imatza-rh/mcp-zuul",
     "source": "github"
