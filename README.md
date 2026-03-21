@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-20 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+23 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -63,7 +63,15 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **URL-based input** — Paste a Zuul build URL directly. Tools auto-parse the tenant and UUID from URLs like `https://zuul.example.com/t/tenant/build/abc123` — no manual extraction needed.
 
-**Token-efficient output** — All responses strip None values and use compact formatters. Designed for AI context windows, not human eyeballs.
+**Flaky job detection** — `find_flaky_jobs` analyzes recent build history and computes pass/fail statistics to identify intermittent failures automatically.
+
+**Job dependency graph** — `get_freeze_jobs` returns the fully-resolved job graph for a pipeline/project/branch, showing all jobs with their dependencies after inheritance resolution.
+
+**Streamable HTTP transport** — Run as a persistent HTTP server with `MCP_TRANSPORT=streamable-http` for remote/shared deployment. Supports stdio (default), SSE, and streamable-http.
+
+**Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs.
+
+**Token-efficient output** — All responses strip None values and use compact formatters. `tail_build_log` returns just the last N lines — the fastest way to check why a build failed.
 
 ## Tools
 
@@ -75,6 +83,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `get_build` | Full build details — nodeset, log URL, artifacts, error detail. Accepts `url` or `uuid`. |
 | `get_build_failures` | **Start here for failures.** Structured task-level data from `job-output.json` — failed play, task, host, msg, rc, stderr/stdout. Accepts `url` or `uuid`. |
 | `get_build_log` | Read and search log files. Modes: `summary` (tail + error lines), `full` (paginated), `grep` (regex + context), `start_line`/`end_line` (exact range). Supports `log_name` for any file. Accepts `url` or `uuid`. |
+| `tail_build_log` | **Fastest failure check.** Last N lines of a log (default 50, max 500). More token-efficient than `get_build_log` summary mode. Accepts `url` or `uuid`. |
 | `browse_build_logs` | List log directory contents or fetch specific files (inventory, artifacts, must-gather). Max 512KB per file. Accepts `url` or `uuid`. |
 
 ### Buildsets
@@ -102,6 +111,8 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `get_project` | Which pipelines and jobs are configured for a project. |
 | `list_projects` | List all projects in a tenant with optional name filter. |
 | `get_config_errors` | **Check this when jobs aren't running.** Configuration errors, missing refs, broken configs. Filterable by project. |
+| `get_freeze_jobs` | Resolved job dependency graph for a pipeline/project/branch. Shows exactly which jobs will run with inheritance resolved. |
+| `find_flaky_jobs` | Analyze recent build history for intermittent failures. Computes pass/fail rate and flags jobs as flaky (>20% failure with mixed results). |
 
 ### Infrastructure
 
@@ -173,6 +184,11 @@ claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
 | `ZUUL_USE_KERBEROS` | No | `false` | Enable Kerberos/SPNEGO authentication |
 | `ZUUL_TIMEOUT` | No | `30` | HTTP timeout in seconds |
 | `ZUUL_VERIFY_SSL` | No | `true` | SSL certificate verification |
+| `MCP_TRANSPORT` | No | `stdio` | Transport: `stdio`, `sse`, or `streamable-http` |
+| `MCP_HOST` | No | `127.0.0.1` | HTTP server bind address (non-stdio transports) |
+| `MCP_PORT` | No | `8000` | HTTP server port (non-stdio transports) |
+| `ZUUL_ENABLED_TOOLS` | No | — | Comma-separated list of tools to enable (disables all others) |
+| `ZUUL_DISABLED_TOOLS` | No | — | Comma-separated list of tools to disable (mutually exclusive with above) |
 
 ### Token authentication
 
@@ -297,6 +313,27 @@ Add separate entries per Zuul instance:
 ```
 → `list_nodes()` → node states with by_state summary → `list_labels()` → available node types.
 
+### Detect flaky jobs
+
+```
+"Is this job flaky? It keeps failing intermittently"
+```
+→ `find_flaky_jobs(job_name="my-deploy-job", limit=30)` → pass/fail stats, failure rate, flaky=true/false.
+
+### See what jobs run for a project
+
+```
+"What jobs are configured for openstack-operator in the check pipeline?"
+```
+→ `get_freeze_jobs(pipeline="check", project="openstack-k8s-operators/openstack-operator")` → resolved job graph with dependencies.
+
+### Quick log tail
+
+```
+"Show me the last 30 lines of the build log"
+```
+→ `tail_build_log(uuid="...", lines=30)` → just the tail, minimal tokens.
+
 ## Development
 
 ```bash
@@ -321,7 +358,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (20 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (23 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 

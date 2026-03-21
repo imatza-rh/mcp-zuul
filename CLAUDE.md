@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-MCP server for Zuul CI — 20 read-only tools, 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Uses stdio transport.
+MCP server for Zuul CI — 23 read-only tools, 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
 
 ## Commands
 
@@ -38,11 +38,11 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 ```
 __init__.py   →  imports tools, prompts, resources (registers decorators), exports main()
 server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients)
-tools.py      →  20 @mcp.tool() functions with ToolAnnotations(readOnlyHint=True)
+tools.py      →  23 @mcp.tool() functions with ToolAnnotations(readOnlyHint=True)
 prompts.py    →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
 resources.py  →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
 helpers.py    →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
-config.py     →  Config dataclass loaded from env vars (ZUUL_URL, ZUUL_DEFAULT_TENANT, etc.)
+config.py     →  Config dataclass loaded from env vars (ZUUL_URL, MCP_TRANSPORT, ZUUL_ENABLED_TOOLS, etc.)
 auth.py       →  Kerberos/SPNEGO authentication (drives OIDC redirect chain)
 formatters.py →  Token-efficient response formatters (fmt_build, fmt_buildset, fmt_status_item)
 errors.py     →  @handle_errors decorator wrapping all tools with uniform error→JSON handling
@@ -59,6 +59,8 @@ errors.py     →  @handle_errors decorator wrapping all tools with uniform erro
 - **`clean()`**: Strips `None` values from dicts to minimize token usage in responses.
 - **All tools return JSON strings**, never raw dicts. Errors also return JSON via `helpers.error()`.
 - **ToolAnnotations**: All tools annotated with `readOnlyHint=True`, `destructiveHint=False`, `idempotentHint=True`, `openWorldHint=True`.
+- **Transport**: Configurable via `MCP_TRANSPORT` env var — `stdio` (default), `sse`, or `streamable-http`. HTTP transport enables remote/shared deployment.
+- **Tool filtering**: `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS` (mutually exclusive) remove tools at startup via `ToolManager.remove_tool()`. Reduces LLM tool-selection noise.
 
 ### Testing
 
