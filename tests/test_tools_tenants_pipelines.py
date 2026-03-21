@@ -11,9 +11,11 @@ from mcp_zuul.tools import (
     get_components,
     get_config_errors,
     get_connections,
+    get_freeze_job,
     get_freeze_jobs,
     get_job,
     get_project,
+    get_tenant_info,
     list_autoholds,
     list_jobs,
     list_labels,
@@ -586,3 +588,78 @@ class TestGetComponents:
         assert result["scheduler"][0]["state"] == "running"
         assert len(result["executor"]) == 2
         assert result["executor"][1]["state"] == "paused"
+
+
+class TestGetFreezeJob:
+    @respx.mock
+    async def test_returns_resolved_config(self, mock_ctx):
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant"
+            "/pipeline/check/project/org%2Frepo/branch/main"
+            "/freeze-job/my-job"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "job": "my-job",
+                    "timeout": 3600,
+                    "post_timeout": 600,
+                    "nodeset": {
+                        "name": "centos-9-stream",
+                        "nodes": [{"name": "controller", "label": "cloud-centos-9"}],
+                    },
+                    "playbooks": [
+                        {
+                            "project": "org/ci-framework",
+                            "path": "playbooks/run.yml",
+                            "branch": "main",
+                            "trusted": False,
+                        }
+                    ],
+                    "pre_playbooks": [{"project": "org/ci-framework", "path": "playbooks/pre.yml"}],
+                    "post_playbooks": [],
+                    "vars": {"cifmw_target": "controller"},
+                    "extra_vars": {},
+                    "ansible_version": "2.16",
+                },
+            )
+        )
+        result = json.loads(
+            await get_freeze_job(mock_ctx, pipeline="check", project="org/repo", job_name="my-job")
+        )
+        assert result["job"] == "my-job"
+        assert result["timeout"] == 3600
+        assert result["nodeset"]["name"] == "centos-9-stream"
+        assert result["nodeset"]["nodes"][0]["label"] == "cloud-centos-9"
+        assert len(result["playbooks"]) == 1
+        assert result["playbooks"][0]["path"] == "playbooks/run.yml"
+        assert result["vars"] == {"cifmw_target": "controller"}
+        assert result["ansible_version"] == "2.16"
+
+
+class TestGetTenantInfo:
+    @respx.mock
+    async def test_returns_tenant_info(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/info").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "info": {
+                        "capabilities": {
+                            "job_history": True,
+                            "auth": {
+                                "realms": {"SF": {"type": "JWT"}, "local": {"type": "HS256"}},
+                                "read_protected": False,
+                            },
+                        },
+                        "websocket_url": "wss://zuul.example.com/console",
+                        "tenant": "test-tenant",
+                    }
+                },
+            )
+        )
+        result = json.loads(await get_tenant_info(mock_ctx))
+        assert result["tenant"] == "test-tenant"
+        assert result["job_history"] is True
+        assert "SF" in result["auth_realms"]
+        assert result["websocket_url"] == "wss://zuul.example.com/console"

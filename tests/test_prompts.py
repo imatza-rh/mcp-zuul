@@ -85,6 +85,23 @@ class TestCompareBuilds:
         assert "SUCCESS" in result
         assert "FAILURE" in result
 
+    @respx.mock
+    async def test_includes_failure_data(self, mock_ctx):
+        b1 = make_build(uuid="b1", result="SUCCESS")
+        b2 = make_build(uuid="b2", result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=b1)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b2").mock(
+            return_value=httpx.Response(200, json=b2)
+        )
+        respx.get(f"{b2['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        result = await compare_builds(uuid1="b1", uuid2="b2", ctx=mock_ctx)
+        assert "Build B Failures" in result
+        assert "Run deployment" in result
+
 
 class TestCheckChange:
     @respx.mock

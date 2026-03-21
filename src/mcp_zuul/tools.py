@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 26 read-only tools."""
+"""Zuul MCP tool implementations — 28 read-only tools."""
 
 import asyncio
 import json
@@ -1344,3 +1344,109 @@ async def get_components(ctx: Context) -> str:
             for c in instances
         ]
     return json.dumps(result)
+
+
+@mcp.tool(title="Resolved Job Configuration", annotations=_READ_ONLY)
+@handle_errors
+async def get_freeze_job(
+    ctx: Context,
+    pipeline: str,
+    project: str,
+    job_name: str,
+    branch: str = "main",
+    tenant: str = "",
+) -> str:
+    """Get the fully-resolved configuration for a specific job after inheritance.
+
+    Shows the final merged nodeset, timeout, playbooks, and variables
+    after all parent job inheritance is applied. Use this to understand
+    exactly what a job will do — resolves "what nodeset will it use?"
+    and "which playbooks run?" questions.
+
+    Args:
+        pipeline: Pipeline name (e.g. "check", "gate")
+        project: Project name (e.g. "openstack-k8s-operators/openstack-operator")
+        job_name: Job name to resolve
+        branch: Branch name (default "main")
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    path = (
+        f"/tenant/{safepath(t)}/pipeline/{safepath(pipeline)}"
+        f"/project/{safepath(project)}/branch/{safepath(branch)}"
+        f"/freeze-job/{safepath(job_name)}"
+    )
+    data = await api(ctx, path)
+
+    nodeset = data.get("nodeset") or {}
+    nodes = nodeset.get("nodes", [])
+    playbooks = [
+        clean({"project": pb.get("project"), "path": pb.get("path"), "trusted": pb.get("trusted")})
+        for pb in data.get("playbooks", [])
+    ]
+    pre_playbooks = [
+        clean({"project": pb.get("project"), "path": pb.get("path")})
+        for pb in data.get("pre_playbooks", [])
+    ]
+    post_playbooks = [
+        clean({"project": pb.get("project"), "path": pb.get("path")})
+        for pb in data.get("post_playbooks", [])
+    ]
+
+    return json.dumps(
+        clean(
+            {
+                "job": data.get("job"),
+                "timeout": data.get("timeout"),
+                "post_timeout": data.get("post_timeout"),
+                "nodeset": clean(
+                    {
+                        "name": nodeset.get("name"),
+                        "nodes": [{"name": n.get("name"), "label": n.get("label")} for n in nodes]
+                        or None,
+                    }
+                )
+                if nodeset
+                else None,
+                "playbooks": playbooks or None,
+                "pre_playbooks": pre_playbooks or None,
+                "post_playbooks": post_playbooks or None,
+                "vars": data.get("vars") or None,
+                "extra_vars": data.get("extra_vars") or None,
+                "host_vars": data.get("host_vars") or None,
+                "group_vars": data.get("group_vars") or None,
+                "ansible_version": data.get("ansible_version"),
+            }
+        )
+    )
+
+
+@mcp.tool(title="Tenant Information", annotations=_READ_ONLY)
+@handle_errors
+async def get_tenant_info(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """Get tenant capabilities, auth config, and websocket URL.
+
+    Shows what features are available for this tenant (job history,
+    auth realms) and the tenant name.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/info")
+    info = data.get("info", data)
+    caps = info.get("capabilities", {})
+    return json.dumps(
+        clean(
+            {
+                "tenant": info.get("tenant"),
+                "job_history": caps.get("job_history"),
+                "auth_realms": list(caps.get("auth", {}).get("realms", {}).keys()) or None,
+                "read_protected": caps.get("auth", {}).get("read_protected"),
+                "websocket_url": info.get("websocket_url"),
+            }
+        )
+    )
