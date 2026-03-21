@@ -1,8 +1,15 @@
+<!-- mcp-name: io.github.imatza-rh/mcp-zuul -->
+
 # mcp-zuul
 
-Debug Zuul CI failures by asking questions, not clicking through web UIs.
+[![PyPI](https://img.shields.io/pypi/v/mcp-zuul)](https://pypi.org/project/mcp-zuul/)
+[![Python](https://img.shields.io/pypi/pyversions/mcp-zuul)](https://pypi.org/project/mcp-zuul/)
+[![License](https://img.shields.io/github/license/imatza-rh/mcp-zuul)](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE)
+[![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants read-only access to any [Zuul CI](https://zuul-ci.org/) instance — builds, logs, pipelines, jobs, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+**The first [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/).** Debug build failures by asking questions, not clicking through web UIs.
+
+Read-only access to any Zuul instance — builds, logs, pipelines, jobs, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -259,6 +266,21 @@ docker build -t mcp-zuul .
 ```
 
 **Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan), `helpers.py` (API client, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (14 tools). See `CLAUDE.md` for full architecture description.
+
+## Contributing
+
+Contributions welcome. Please open an issue first to discuss significant changes.
+
+```bash
+# Fork, clone, and install dev dependencies
+uv sync --extra dev
+
+# Make changes, then verify
+uv run pytest tests/ -v
+uv run ruff check src/ tests/
+uv run ruff format src/ tests/
+uv run mypy src/mcp_zuul/
+```
 
 ## License
 
