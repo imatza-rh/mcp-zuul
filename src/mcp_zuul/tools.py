@@ -1644,9 +1644,10 @@ async def get_build_anomalies(
     # Build the Zuul build URL for LogJuicer
     build_url = f"{a.config.base_url}/t/{quote(t, safe='/')}/build/{quote(uuid)}"
 
-    # Request a LogJuicer report
+    # Request a LogJuicer report — use log_client (no auth headers)
+    # to avoid leaking Zuul tokens to the LogJuicer host
     report_url = f"{a.config.logjuicer_url}/api/report/new"
-    resp = await a.client.put(
+    resp = await a.log_client.put(
         report_url,
         params={"target": build_url, "errors": "true"},
         follow_redirects=True,
@@ -1660,7 +1661,7 @@ async def get_build_anomalies(
         return error("LogJuicer returned no report ID")
 
     # Fetch the report JSON
-    report_resp = await a.client.get(
+    report_resp = await a.log_client.get(
         f"{a.config.logjuicer_url}/api/report/{report_id}/json",
         follow_redirects=True,
     )
