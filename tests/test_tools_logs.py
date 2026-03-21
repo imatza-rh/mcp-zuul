@@ -5,7 +5,7 @@ import json
 import httpx
 import respx
 
-from mcp_zuul.tools import browse_build_logs, get_build_log
+from mcp_zuul.tools import browse_build_logs, get_build_log, tail_build_log
 from tests.conftest import make_build
 
 _SAMPLE_LOG = "\n".join([f"line {i}: content for line {i}" for i in range(1, 201)])
@@ -284,3 +284,54 @@ class TestGetBuildLogUrl:
         )
         assert result["total_lines"] == 3
         assert len(result["error_lines"]) >= 1
+
+
+class TestTailBuildLog:
+    @respx.mock
+    async def test_returns_last_n_lines(self, mock_ctx):
+        build = make_build()
+        log_text = "\n".join([f"line {i}" for i in range(1, 101)])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=10))
+        assert result["total_lines"] == 100
+        assert result["count"] == 10
+        assert result["tail_from"] == 91
+        assert "line 100" in result["lines"][-1]
+        assert result["job"] == "test-job"
+
+    @respx.mock
+    async def test_lines_clamped_to_500(self, mock_ctx):
+        build = make_build()
+        log_text = "\n".join([f"line {i}" for i in range(1, 11)])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        # Request more lines than available — should return all
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=1000))
+        assert result["count"] == 10
+        assert result["tail_from"] == 1
+
+    @respx.mock
+    async def test_accepts_url(self, mock_ctx):
+        build = make_build(uuid="tail-uuid")
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/build/tail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="last line\n")
+        )
+        result = json.loads(
+            await tail_build_log(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/build/tail-uuid",
+            )
+        )
+        assert result["count"] == 1

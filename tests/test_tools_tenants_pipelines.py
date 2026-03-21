@@ -6,7 +6,9 @@ import httpx
 import respx
 
 from mcp_zuul.tools import (
+    find_flaky_jobs,
     get_config_errors,
+    get_freeze_jobs,
     get_job,
     get_project,
     list_autoholds,
@@ -395,3 +397,75 @@ class TestListAutoholds:
         )
         result = json.loads(await list_autoholds(mock_ctx))
         assert result["count"] == 0
+
+
+class TestGetFreezeJobs:
+    @respx.mock
+    async def test_returns_job_graph(self, mock_ctx):
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant"
+            "/pipeline/check/project/org%2Frepo/branch/main/freeze-jobs"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"name": "content-provider", "dependencies": []},
+                    {
+                        "name": "deploy-job",
+                        "dependencies": [{"name": "content-provider", "soft": False}],
+                    },
+                ],
+            )
+        )
+        result = json.loads(await get_freeze_jobs(mock_ctx, pipeline="check", project="org/repo"))
+        assert result["count"] == 2
+        assert result["pipeline"] == "check"
+        assert result["jobs"][0]["name"] == "content-provider"
+        assert result["jobs"][1]["dependencies"] == [{"name": "content-provider", "soft": False}]
+
+    @respx.mock
+    async def test_custom_branch(self, mock_ctx):
+        route = respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant"
+            "/pipeline/gate/project/org%2Frepo/branch/release-1.0/freeze-jobs"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        await get_freeze_jobs(mock_ctx, pipeline="gate", project="org/repo", branch="release-1.0")
+        assert route.called
+
+
+class TestFindFlakyJobs:
+    @respx.mock
+    async def test_detects_flaky_job(self, mock_ctx):
+        builds = [
+            {"uuid": f"u{i}", "result": "SUCCESS" if i % 3 else "FAILURE", "duration": 100 + i}
+            for i in range(10)
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="test-job"))
+        assert result["analyzed"] == 10
+        assert result["flaky"] is True
+        assert result["failure_rate"] > 0
+        assert "SUCCESS" in result["results"]
+        assert "FAILURE" in result["results"]
+
+    @respx.mock
+    async def test_stable_job_not_flaky(self, mock_ctx):
+        builds = [{"uuid": f"u{i}", "result": "SUCCESS", "duration": 100} for i in range(10)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="stable-job"))
+        assert result["flaky"] is False
+        assert result["failure_rate"] == 0.0
+
+    @respx.mock
+    async def test_consistently_failing_not_flaky(self, mock_ctx):
+        builds = [{"uuid": f"u{i}", "result": "FAILURE", "duration": 50} for i in range(5)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="broken-job"))
+        assert result["flaky"] is False
+        assert result["failure_rate"] == 100.0

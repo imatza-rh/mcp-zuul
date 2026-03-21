@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 20 read-only tools."""
+"""Zuul MCP tool implementations — 23 read-only tools."""
 
 import asyncio
 import json
@@ -662,6 +662,89 @@ async def browse_build_logs(
 
 @mcp.tool(annotations=_READ_ONLY)
 @handle_errors
+async def tail_build_log(
+    ctx: Context,
+    uuid: str = "",
+    tenant: str = "",
+    lines: int = 50,
+    log_name: str = "job-output.txt",
+    url: str = "",
+) -> str:
+    """Get the last N lines of a build log — fastest way to see why a build failed.
+
+    More token-efficient than get_build_log(mode="summary") when you just
+    need the tail. Use this as the first step when investigating failures.
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant name (uses default if empty)
+        lines: Number of lines from the end (default 50, max 500)
+        log_name: Log file to read (default "job-output.txt")
+        url: Zuul build URL (alternative to uuid + tenant)
+    """
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+    log_url = build.get("log_url")
+    if not log_url:
+        return error(f"No log_url for build {uuid}")
+    if ".." in log_name.split("/"):
+        return error(f"Invalid log_name: {log_name!r}")
+
+    a = app(ctx)
+    txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
+    api_host = urlparse(a.config.base_url).hostname
+    log_host = urlparse(txt_url).hostname
+    http = a.client if log_host == api_host else a.log_client
+
+    chunks: list[bytes] = []
+    size = 0
+    async with http.stream("GET", txt_url) as resp:
+        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
+            await resp.aclose()
+            from .auth import kerberos_auth
+
+            await kerberos_auth(a.client, a.config.base_url)
+            async with http.stream("GET", txt_url) as resp2:
+                if resp2.status_code == 404:
+                    return error(f"Log file not found at {txt_url}")
+                resp2.raise_for_status()
+                async for chunk in resp2.aiter_bytes():
+                    size += len(chunk)
+                    if size > _MAX_LOG_BYTES:
+                        break
+                    chunks.append(chunk)
+        else:
+            if resp.status_code == 404:
+                return error(f"Log file not found at {txt_url}")
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes():
+                size += len(chunk)
+                if size > _MAX_LOG_BYTES:
+                    break
+                chunks.append(chunk)
+
+    raw = strip_ansi(b"".join(chunks).decode("utf-8", errors="replace"))
+    all_lines = raw.splitlines()
+    total = len(all_lines)
+    n = max(1, min(lines, 500))
+    tail_start = max(0, total - n)
+    tail = all_lines[tail_start:]
+
+    return json.dumps(
+        {
+            "total_lines": total,
+            "log_url": txt_url,
+            "job": build.get("job_name", ""),
+            "result": build.get("result", ""),
+            "tail_from": tail_start + 1,
+            "count": len(tail),
+            "lines": [line[:500] for line in tail],
+        }
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
 async def list_buildsets(
     ctx: Context,
     tenant: str = "",
@@ -1073,3 +1156,120 @@ async def list_autoholds(
         for a in data
     ]
     return json.dumps({"autoholds": result, "count": len(result)})
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def get_freeze_jobs(
+    ctx: Context,
+    pipeline: str,
+    project: str,
+    branch: str = "main",
+    tenant: str = "",
+) -> str:
+    """Get the resolved job graph for a pipeline/project/branch.
+
+    Shows exactly which jobs will run with all inheritance resolved,
+    including dependencies between jobs. Use this to understand job
+    ordering and why a job is (or isn't) in a pipeline.
+
+    Args:
+        pipeline: Pipeline name (e.g. "check", "gate")
+        project: Project name (e.g. "openstack-k8s-operators/openstack-operator")
+        branch: Branch name (default "main")
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    path = (
+        f"/tenant/{safepath(t)}/pipeline/{safepath(pipeline)}"
+        f"/project/{safepath(project)}/branch/{safepath(branch)}/freeze-jobs"
+    )
+    data = await api(ctx, path)
+    jobs = [
+        clean(
+            {
+                "name": j.get("name"),
+                "dependencies": j.get("dependencies") or None,
+            }
+        )
+        for j in data
+    ]
+    return json.dumps(
+        {
+            "pipeline": pipeline,
+            "project": project,
+            "branch": branch,
+            "jobs": jobs,
+            "count": len(jobs),
+        }
+    )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@handle_errors
+async def find_flaky_jobs(
+    ctx: Context,
+    job_name: str,
+    tenant: str = "",
+    project: str = "",
+    pipeline: str = "",
+    limit: int = 20,
+) -> str:
+    """Detect flaky jobs by analyzing recent build history for intermittent failures.
+
+    Fetches recent builds for a job and computes pass/fail statistics.
+    A job with mixed SUCCESS/FAILURE results and >20% failure rate is
+    likely flaky. Returns per-result counts and the failure rate.
+
+    Args:
+        job_name: Job name to analyze
+        tenant: Tenant name (uses default if empty)
+        project: Filter to a specific project
+        pipeline: Filter to a specific pipeline
+        limit: Number of recent builds to analyze (default 20, max 100)
+    """
+    t = _tenant(ctx, tenant)
+    limit = max(1, min(limit, 100))
+    params: dict[str, Any] = {"job_name": job_name, "limit": limit}
+    if project:
+        params["project"] = project
+    if pipeline:
+        params["pipeline"] = pipeline
+    data = await api(ctx, f"/tenant/{safepath(t)}/builds", params)
+
+    results: dict[str, int] = {}
+    for b in data:
+        r = b.get("result") or "IN_PROGRESS"
+        results[r] = results.get(r, 0) + 1
+
+    total = len(data)
+    failures = results.get("FAILURE", 0)
+    rate = round(failures / total * 100, 1) if total > 0 else 0.0
+    flaky = total >= 3 and 0 < failures < total and rate > 20
+
+    builds = [
+        clean(
+            {
+                "uuid": b.get("uuid"),
+                "result": b.get("result"),
+                "duration": b.get("duration"),
+                "start_time": b.get("start_time"),
+                "pipeline": b.get("pipeline"),
+                "ref": b.get("ref"),
+            }
+        )
+        for b in data
+    ]
+
+    return json.dumps(
+        clean(
+            {
+                "job": job_name,
+                "analyzed": total,
+                "results": results,
+                "failure_rate": rate,
+                "flaky": flaky,
+                "builds": builds,
+            }
+        )
+    )

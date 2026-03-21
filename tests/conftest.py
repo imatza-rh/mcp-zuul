@@ -19,6 +19,11 @@ def config():
         timeout=30,
         verify_ssl=True,
         use_kerberos=False,
+        transport="stdio",
+        enabled_tools=None,
+        disabled_tools=None,
+        host="127.0.0.1",
+        port=8000,
     )
 
 
