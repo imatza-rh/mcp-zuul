@@ -94,7 +94,7 @@ class TestProjectResource:
             )
         )
         result = json.loads(
-            await project_resource(tenant="my-tenant", name="org/repo", ctx=mock_ctx)
+            await project_resource(tenant="my-tenant", org="org", repo="repo", ctx=mock_ctx)
         )
         assert result["project"] == "org/repo"
         assert result["pipelines"]["check"] == ["lint", "test"]

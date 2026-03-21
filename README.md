@@ -141,7 +141,7 @@ Browsable context that clients can attach to conversations without tool calls:
 |----------|-------------|
 | Build details | `zuul://{tenant}/build/{uuid}` |
 | Job configuration | `zuul://{tenant}/job/{name}` |
-| Project configuration | `zuul://{tenant}/project/{name}` |
+| Project configuration | `zuul://{tenant}/project/{org}/{repo}` |
 
 ## Setup
 

@@ -44,11 +44,12 @@ async def job_resource(tenant: str, name: str, ctx: Context | None = None) -> st
     return json.dumps({"name": name, "variants": variants}, indent=2)
 
 
-@mcp.resource("zuul://{tenant}/project/{name}")
-async def project_resource(tenant: str, name: str, ctx: Context | None = None) -> str:
+@mcp.resource("zuul://{tenant}/project/{org}/{repo}")
+async def project_resource(tenant: str, org: str, repo: str, ctx: Context | None = None) -> str:
     """Project configuration — pipelines and jobs."""
     assert ctx is not None
     t = _tenant(ctx, tenant)
+    name = f"{org}/{repo}"
     data = await api(ctx, f"/tenant/{safepath(t)}/project/{safepath(name)}")
     configs: dict[str, list[str]] = {}
     for cfg in data.get("configs", []):
