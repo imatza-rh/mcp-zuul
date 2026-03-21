@@ -5,7 +5,7 @@ import json
 from mcp.server.fastmcp import Context
 
 from .formatters import fmt_build
-from .helpers import api, safepath
+from .helpers import api, clean, safepath
 from .helpers import tenant as _tenant
 from .server import mcp
 
@@ -29,15 +29,17 @@ async def job_resource(tenant: str, name: str, ctx: Context | None = None) -> st
     for v in data:
         sc = v.get("source_context") or {}
         variants.append(
-            {
-                "parent": v.get("parent"),
-                "branches": v.get("branches", []) or None,
-                "nodeset": v.get("nodeset"),
-                "timeout": v.get("timeout"),
-                "voting": v.get("voting", True),
-                "description": (v.get("description") or "")[:500] or None,
-                "source_project": sc.get("project"),
-            }
+            clean(
+                {
+                    "parent": v.get("parent"),
+                    "branches": v.get("branches", []) or None,
+                    "nodeset": v.get("nodeset"),
+                    "timeout": v.get("timeout"),
+                    "voting": v.get("voting", True),
+                    "description": (v.get("description") or "")[:500] or None,
+                    "source_project": sc.get("project"),
+                }
+            )
         )
     return json.dumps({"name": name, "variants": variants}, indent=2)
 
@@ -61,12 +63,14 @@ async def project_resource(tenant: str, name: str, ctx: Context | None = None) -
             if jobs:
                 configs[pname] = jobs
     return json.dumps(
-        {
-            "project": name,
-            "canonical_name": data.get("canonical_name"),
-            "connection": data.get("connection_name"),
-            "type": data.get("type"),
-            "pipelines": configs,
-        },
+        clean(
+            {
+                "project": name,
+                "canonical_name": data.get("canonical_name"),
+                "connection": data.get("connection_name"),
+                "type": data.get("type"),
+                "pipelines": configs,
+            }
+        ),
         indent=2,
     )

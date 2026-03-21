@@ -46,6 +46,32 @@ class TestJobResource:
         assert len(result["variants"]) == 1
         assert result["variants"][0]["parent"] == "base"
 
+    @respx.mock
+    async def test_strips_none_values(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/job/sparse-job").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "parent": None,
+                        "branches": [],
+                        "nodeset": None,
+                        "timeout": None,
+                        "voting": True,
+                        "description": None,
+                        "source_context": {},
+                    }
+                ],
+            )
+        )
+        result = json.loads(await job_resource(tenant="my-tenant", name="sparse-job", ctx=mock_ctx))
+        variant = result["variants"][0]
+        assert "parent" not in variant
+        assert "nodeset" not in variant
+        assert "timeout" not in variant
+        assert "description" not in variant
+        assert variant["voting"] is True
+
 
 class TestProjectResource:
     @respx.mock
