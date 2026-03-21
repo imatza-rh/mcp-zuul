@@ -1,67 +1,103 @@
 # mcp-zuul
 
-MCP server for [Zuul CI](https://zuul-ci.org/) — read-only access to builds, logs, status, and jobs.
+Debug Zuul CI failures by asking questions, not clicking through web UIs.
 
-Works with any Zuul instance (Software Factory, OpenDev, etc.) via the [Zuul REST API](https://zuul-ci.org/docs/zuul/latest/rest-api.html).
+An [MCP](https://modelcontextprotocol.io/) server that gives AI assistants read-only access to any [Zuul CI](https://zuul-ci.org/) instance — builds, logs, pipelines, jobs, and live status. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
-## Tools
+```
+You:   "Why did the latest gate job fail?"
+Claude: → get_build_failures(uuid="abc123")
+        → get_build_log(uuid="abc123", log_name="controller/logs/ci_script_008_run.log",
+                        grep="error|failed|timed out", context=2)
 
-| Tool | Description |
-|------|-------------|
-| `list_tenants` | List tenants with project counts |
-| `get_status` | Live pipeline status (filtered to active items) |
-| `get_change_status` | Status for a specific change/PR/MR. Returns live jobs with elapsed times when in pipeline, or the latest completed buildset with all builds when not |
-| `list_builds` | Search builds by project, job, result, change, etc. |
-| `get_build` | Full build details |
-| `get_build_failures` | Analyze failures from structured `job-output.json` — failed tasks with error messages, rc, stderr/stdout |
-| `get_build_log` | Fetch + parse logs (summary/full/grep modes with context) |
-| `browse_build_logs` | Browse or fetch files from a build's log directory |
-| `list_buildsets` | Search buildsets (with optional `include_builds` to inline full details) |
-| `get_buildset` | Buildset with all builds and events |
-| `list_jobs` | List/filter jobs |
-| `get_job` | Job config and variants |
-| `get_project` | Project pipeline and job config |
-| `list_pipelines` | Pipelines with trigger types |
+        Root cause: cert-manager pod in Completed state blocked oc wait.
+        Confidence: Confirmed — verified in ci_script_008_run.log:325-329.
+```
 
-## Configuration
+## Quick Start
 
-| Environment Variable | Required | Description |
-|---------------------|----------|-------------|
-| `ZUUL_URL` | Yes | Zuul base URL (e.g. `https://softwarefactory-project.io/zuul`) |
-| `ZUUL_DEFAULT_TENANT` | No | Default tenant name (e.g. `rdoproject.org`) |
-| `ZUUL_AUTH_TOKEN` | No | Bearer token for authenticated instances |
-| `ZUUL_USE_KERBEROS` | No | Enable Kerberos/SPNEGO authentication (default: `false`) |
-| `ZUUL_TIMEOUT` | No | HTTP timeout in seconds (default: 30) |
-| `ZUUL_VERIFY_SSL` | No | SSL verification (default: `true`) |
+**uvx** (no install, recommended):
+```bash
+claude mcp add zuul -- uvx mcp-zuul
+```
+Then set the required env var:
+```bash
+claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
+               -e ZUUL_DEFAULT_TENANT=rdoproject.org \
+               zuul -- uvx mcp-zuul
+```
 
-## Setup
+**pip**:
+```bash
+pip install mcp-zuul
+```
 
-### Docker (recommended)
-
-Build:
+**Docker**:
 ```bash
 docker build -t mcp-zuul .
 ```
 
-Add to Claude Code, Claude Desktop, or any MCP client:
+See [Setup](#setup) for full configuration options including Kerberos and multi-instance.
 
-```json
-{
-  "mcpServers": {
-    "zuul": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-e", "ZUUL_URL=https://softwarefactory-project.io/zuul",
-        "-e", "ZUUL_DEFAULT_TENANT=rdoproject.org",
-        "mcp-zuul"
-      ]
-    }
-  }
-}
-```
+## Features
 
-### uvx (no install needed)
+**Structured failure analysis** — `get_build_failures` parses Zuul's `job-output.json` and returns exactly which Ansible task failed, on which host, with error message, return code, and stderr. No log scrolling needed.
 
+**Read any log file** — `get_build_log` isn't limited to `job-output.txt`. Pass `log_name` to read any file in the build's log directory (ci_script logs, ansible.log, deployment logs) with full grep, tail, and line-range support.
+
+**Precise log navigation** — Jump to exact line ranges with `start_line`/`end_line`. After finding an error at line 6148, read lines 6130-6160 instead of scrolling through 200-line chunks.
+
+**Smart grep** — Regex search with context lines. Auto-converts common shell-grep `\|` syntax to Python regex `|` so patterns like `error\|failed\|timeout` just work.
+
+**Live pipeline awareness** — `get_change_status` returns live job progress with elapsed times, estimated completion, and pre-failure detection (`pre_fail` field). When the change isn't in pipeline, automatically fetches the latest completed buildset.
+
+**Kerberos/SPNEGO auth** — First-class support for Zuul instances behind OIDC + Kerberos. Drives the full SPNEGO redirect chain automatically. Session cookies persist and re-authenticate transparently on expiry.
+
+**Token-efficient output** — All responses strip None values and use compact formatters. Designed for AI context windows, not human eyeballs.
+
+## Tools
+
+### Builds & Failures
+
+| Tool | What it does |
+|------|-------------|
+| `list_builds` | Search builds by project, pipeline, job, change, result. Includes `buildset_uuid` for cross-referencing. |
+| `get_build` | Full build details — nodeset, log URL, artifacts, error detail. |
+| `get_build_failures` | **Start here for failures.** Structured task-level data from `job-output.json` — failed play, task, host, msg, rc, stderr/stdout. |
+| `get_build_log` | Read and search log files. Modes: `summary` (tail + error lines), `full` (paginated), `grep` (regex + context), `start_line`/`end_line` (exact range). Supports `log_name` for any file. |
+| `browse_build_logs` | List log directory contents or fetch specific files (inventory, artifacts, must-gather). Max 512KB per file. |
+
+### Buildsets
+
+| Tool | What it does |
+|------|-------------|
+| `list_buildsets` | Search buildsets. Use `include_builds=true` to inline full build details (saves round-trips). |
+| `get_buildset` | Full buildset with all builds and events. Takes a **buildset UUID**, not a build UUID. |
+
+### Pipeline & Status
+
+| Tool | What it does |
+|------|-------------|
+| `get_status` | Live pipeline status — what's queued, running, with job progress and ETA. Filterable by pipeline and project. |
+| `get_change_status` | Status for a change/PR/MR. In pipeline: live jobs with elapsed times. Not in pipeline: auto-fetches latest completed buildset. |
+| `list_pipelines` | All pipelines with their trigger types. |
+
+### Jobs & Projects
+
+| Tool | What it does |
+|------|-------------|
+| `list_tenants` | All tenants with project counts. |
+| `list_jobs` | List jobs with optional name filter. |
+| `get_job` | Job configuration — parent, nodeset, timeout, variants, source project. |
+| `get_project` | Which pipelines and jobs are configured for a project. |
+
+## Setup
+
+### MCP client configuration
+
+All clients use the same JSON structure. Add to your client's MCP config file:
+
+**Claude Code** (`~/.claude.json` → `mcpServers`):
 ```json
 {
   "mcpServers": {
@@ -77,209 +113,126 @@ Add to Claude Code, Claude Desktop, or any MCP client:
 }
 ```
 
-### pip install
+**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`), and other MCP clients use the same format.
 
+Or via CLI:
 ```bash
-pip install mcp-zuul
+claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
+               -e ZUUL_DEFAULT_TENANT=rdoproject.org \
+               zuul -- uvx mcp-zuul
 ```
 
-```json
-{
-  "mcpServers": {
-    "zuul": {
-      "command": "mcp-zuul",
-      "env": {
-        "ZUUL_URL": "https://softwarefactory-project.io/zuul",
-        "ZUUL_DEFAULT_TENANT": "rdoproject.org"
-      }
-    }
-  }
-}
-```
+### Environment variables
 
-### Claude Code CLI
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ZUUL_URL` | Yes | — | Zuul base URL (e.g. `https://softwarefactory-project.io/zuul`) |
+| `ZUUL_DEFAULT_TENANT` | No | — | Default tenant (saves passing `tenant` on every call) |
+| `ZUUL_AUTH_TOKEN` | No | — | Bearer token for authenticated instances |
+| `ZUUL_USE_KERBEROS` | No | `false` | Enable Kerberos/SPNEGO authentication |
+| `ZUUL_TIMEOUT` | No | `30` | HTTP timeout in seconds |
+| `ZUUL_VERIFY_SSL` | No | `true` | SSL certificate verification |
 
-```bash
-claude mcp add -t stdio \
-  -e ZUUL_URL=https://softwarefactory-project.io/zuul \
-  -e ZUUL_DEFAULT_TENANT=rdoproject.org \
-  zuul -- mcp-zuul
-```
+### Token authentication
 
-### Authenticated instances
+Pass `ZUUL_AUTH_TOKEN` via host environment — **never hardcode tokens in config files** (visible in `ps` output):
 
-For Zuul instances behind SSO or token auth, pass `ZUUL_AUTH_TOKEN` via the
-host environment — **never hardcode tokens in config files or Docker args**
-(they are visible in `ps` output).
-
-Set the token in your shell environment first:
 ```bash
 export ZUUL_AUTH_TOKEN=<your-token>
 ```
 
-Then reference it in your MCP config:
+For Docker, forward without a value to inherit from host:
+```json
+"args": ["run", "-i", "--rm", "-e", "ZUUL_AUTH_TOKEN", "mcp-zuul"]
+```
+
+### Kerberos / SPNEGO
+
+For Zuul behind OIDC + Kerberos. Requires a valid Kerberos ticket (`kinit`) and the `gssapi` package:
+
+```bash
+pip install mcp-zuul[kerberos]    # or: uvx --with "mcp-zuul[kerberos]" mcp-zuul
+```
 
 ```json
 {
-  "mcpServers": {
-    "zuul-internal": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
-        "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
-        "-e", "ZUUL_AUTH_TOKEN",
-        "mcp-zuul"
-      ]
+  "zuul-internal": {
+    "command": "mcp-zuul",
+    "env": {
+      "ZUUL_URL": "https://internal-zuul.example.com/zuul",
+      "ZUUL_USE_KERBEROS": "true",
+      "ZUUL_VERIFY_SSL": "false"
     }
   }
 }
 ```
 
-> When `-e ZUUL_AUTH_TOKEN` is passed without `=value`, Docker forwards the
-> variable from the host environment.
-
-### Kerberos / SPNEGO authentication
-
-For Zuul instances behind OIDC + Kerberos (SPNEGO), authenticate using your
-existing Kerberos ticket instead of a short-lived bearer token.
-
-**Prerequisites:** a valid Kerberos ticket (`kinit` first) and the `gssapi`
-Python package (`pip install mcp-zuul[kerberos]`).
-
-```json
-{
-  "mcpServers": {
-    "zuul-internal": {
-      "command": "mcp-zuul",
-      "env": {
-        "ZUUL_URL": "https://my-internal-zuul.example.com/zuul",
-        "ZUUL_DEFAULT_TENANT": "my-tenant",
-        "ZUUL_USE_KERBEROS": "true",
-        "ZUUL_VERIFY_SSL": "false"
-      }
-    }
-  }
-}
+For Docker, mount the Kerberos ticket cache:
+```bash
+docker run -i --rm \
+  -v /etc/krb5.conf:/etc/krb5.conf:ro \
+  -v /tmp/krb5cc_$(id -u):/tmp/krb5cc_$(id -u):ro \
+  -e KRB5CCNAME=/tmp/krb5cc_$(id -u) \
+  -e ZUUL_URL=https://internal-zuul.example.com/zuul \
+  -e ZUUL_USE_KERBEROS=true \
+  mcp-zuul
 ```
 
-For Docker, mount your Kerberos ticket cache and `krb5.conf`:
+### Multiple instances
 
-```json
-{
-  "mcpServers": {
-    "zuul-internal": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-v", "/etc/krb5.conf:/etc/krb5.conf:ro",
-        "-v", "/tmp/krb5cc_1000:/tmp/krb5cc_1000:ro",
-        "-e", "KRB5CCNAME=/tmp/krb5cc_1000",
-        "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
-        "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
-        "-e", "ZUUL_USE_KERBEROS=true",
-        "-e", "ZUUL_VERIFY_SSL=false",
-        "mcp-zuul"
-      ]
-    }
-  }
-}
-```
-
-### Multiple Zuul instances
-
-Configure separate MCP server entries for each instance:
-
+Add separate entries per Zuul instance:
 ```json
 {
   "mcpServers": {
     "zuul-rdo": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-e", "ZUUL_URL=https://softwarefactory-project.io/zuul",
-        "-e", "ZUUL_DEFAULT_TENANT=rdoproject.org",
-        "mcp-zuul"
-      ]
+      "command": "uvx", "args": ["mcp-zuul"],
+      "env": { "ZUUL_URL": "https://softwarefactory-project.io/zuul", "ZUUL_DEFAULT_TENANT": "rdoproject.org" }
     },
     "zuul-internal": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm",
-        "-e", "ZUUL_URL=https://my-internal-zuul.example.com/zuul",
-        "-e", "ZUUL_DEFAULT_TENANT=my-tenant",
-        "-e", "ZUUL_AUTH_TOKEN",
-        "mcp-zuul"
-      ]
+      "command": "mcp-zuul",
+      "env": { "ZUUL_URL": "https://internal.example.com/zuul", "ZUUL_USE_KERBEROS": "true" }
     }
   }
 }
 ```
 
-## Usage examples
+## Usage Examples
 
-Once connected, ask your AI assistant naturally:
-
-```
-"List all Zuul tenants"
-"What's currently running in the check pipeline?"
-"Show me the last 5 failed builds for project rdoproject.org/rdoinfo"
-"Get the log for build <uuid> and find the error"
-"What jobs are configured for project rdoproject.org/rdoinfo?"
-"Show me the status of change 12345"
-```
-
-Example interactions:
-
-**Find failing builds and debug them:**
-```
-> "Show me recent failed builds in rdoproject.org"
-
-→ list_builds(tenant="rdoproject.org", result="FAILURE", limit=5)
-
-> "Get the log for the first one and find the error"
-
-→ get_build_log(uuid="abc123...", mode="summary")
-
-> "Grep the log for 'UNREACHABLE'"
-
-→ get_build_log(uuid="abc123...", grep="UNREACHABLE")
-```
-
-**Check live pipeline status:**
-```
-> "What's running in the gate pipeline right now?"
-
-→ get_status(tenant="rdoproject.org", pipeline="gate")
-
-> "Is change 54321 in any pipeline?"
-
-→ get_change_status(change="54321")
-```
-
-**Explore jobs and project config:**
-```
-> "List all jobs with 'tempest' in the name"
-
-→ list_jobs(filter="tempest")
-
-> "What pipelines and jobs does rdoproject.org/rdoinfo have?"
-
-→ get_project(name="rdoproject.org/rdoinfo")
-```
-
-## Failure analysis
-
-Two complementary tools for debugging build failures:
-
-- **`get_build_failures`**: Parses structured `job-output.json` — returns failed playbooks and tasks with error messages, return codes, stderr/stdout (up to 1000 chars each). Start here.
-- **`get_build_log`**: Raw log analysis with three modes:
-  - **summary** (default): Last 100 lines + all ERROR/FAILURE/UNREACHABLE lines
-  - **full**: Paginated 200-line chunks with offset
-  - **grep**: Regex filter with optional context lines (`context=3` shows surrounding lines)
-- **`browse_build_logs`**: Browse the log directory tree or fetch specific artifact files (e.g. inventory, must-gather).
+### Debug a build failure
 
 ```
-"What failed in build <uuid>?"           → get_build_failures
-"Grep the log for 'UNREACHABLE'"         → get_build_log (grep mode)
-"Show me the collected artifacts"        → browse_build_logs
+"Why did the latest build of my-project fail?"
 ```
+→ `list_builds(project="my-project", result="FAILURE", limit=1)` → `get_build_failures(uuid="...")` → root cause with task name, error, and return code.
+
+### Deep-dive into logs
+
+```
+"The structured data says 'non-zero return code' but no error detail.
+ Check the ci_script logs."
+```
+→ `browse_build_logs(uuid="...", path="controller/ci-framework-data/logs/")` → finds `ci_script_008_run.log` → `get_build_log(uuid="...", log_name="controller/ci-framework-data/logs/ci_script_008_run.log", grep="error|timed out|Error 1", context=2)` → exact error with surrounding context.
+
+### Navigate to a specific error
+
+```
+"Show me lines 6478-6484 of the job output"
+```
+→ `get_build_log(uuid="...", start_line=6478, end_line=6484)` → exactly those 7 lines.
+
+### Check live pipeline status
+
+```
+"Is change 54321 in any pipeline?"
+```
+→ `get_change_status(change="54321")` → live jobs with elapsed times and ETA, or latest completed buildset if not in pipeline.
+
+### Compare build results across a pipeline
+
+```
+"Show me all builds from the latest buildset"
+```
+→ `list_builds` to get `buildset_uuid` → `get_buildset(uuid="...")` → all sibling builds with results and durations.
 
 ## Development
 
@@ -287,8 +240,18 @@ Two complementary tools for debugging build failures:
 git clone https://github.com/imatza-rh/mcp-zuul.git
 cd mcp-zuul
 uv sync
+
+# Run locally
 ZUUL_URL=https://softwarefactory-project.io/zuul uv run mcp-zuul
+
+# Run tests
+uv run --with pytest pytest tests/ -v
+
+# Build Docker image
+docker build -t mcp-zuul .
 ```
+
+**Architecture:** Single-module implementation in `src/mcp_zuul/__init__.py` (~1200 lines). Config → Lifespan → Helpers → Formatters → Error handler → 14 tools → Entry point. See `CLAUDE.md` for full architecture description.
 
 ## License
 
