@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-28 read-only tools, 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+33 tools (28 read-only + 4 write + 1 LogJuicer), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -71,6 +71,10 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs.
 
+**Write operations** — Enqueue/dequeue changes and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
+
+**LogJuicer integration** — `get_build_anomalies` uses ML-based log analysis to find unusual lines by comparing failed logs against successful baselines. Optional — requires `LOGJUICER_URL`.
+
 **Token-efficient output** — All responses strip None values and use compact formatters. `tail_build_log` returns just the last N lines — the fastest way to check why a build failed.
 
 ## Tools
@@ -127,6 +131,23 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `list_autoholds` | Active autohold requests — nodes held after failure for debugging. |
 | `get_connections` | Configured source connections — Gerrit, GitHub, GitLab instances with driver and hostname. |
 | `get_components` | System components — schedulers, executors, mergers, web servers with state and version. |
+
+### Write Operations
+
+Disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enable. Requires auth token or Kerberos.
+
+| Tool | What it does |
+|------|-------------|
+| `enqueue` | Enqueue a change or ref into a pipeline for testing. |
+| `dequeue` | Remove a change or ref from a pipeline. **Destructive.** |
+| `autohold_create` | Create an autohold request — hold nodes after failure for debugging. |
+| `autohold_delete` | Delete an autohold request. **Destructive.** |
+
+### Log Analysis
+
+| Tool | What it does |
+|------|-------------|
+| `get_build_anomalies` | ML-based log anomaly detection via [LogJuicer](https://github.com/logjuicer/logjuicer). Compares failed logs against successful baselines. Requires `LOGJUICER_URL`. |
 
 ## Prompts
 
@@ -194,6 +215,8 @@ claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
 | `MCP_PORT` | No | `8000` | HTTP server port (non-stdio transports) |
 | `ZUUL_ENABLED_TOOLS` | No | — | Comma-separated list of tools to enable (disables all others) |
 | `ZUUL_DISABLED_TOOLS` | No | — | Comma-separated list of tools to disable (mutually exclusive with above) |
+| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, dequeue, autohold) |
+| `LOGJUICER_URL` | No | — | LogJuicer base URL for ML-based log anomaly detection |
 
 ### Token authentication
 
@@ -370,7 +393,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering), `helpers.py` (API client, URL parsing, utilities), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (28 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (33 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 

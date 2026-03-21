@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-MCP server for Zuul CI — 28 read-only tools, 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
+MCP server for Zuul CI — 33 tools (28 read-only + 4 write + 1 LogJuicer), 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
 
 ## Commands
 
@@ -38,7 +38,7 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 ```
 __init__.py   →  imports tools, prompts, resources (registers decorators), exports main()
 server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients)
-tools.py      →  28 @mcp.tool() functions with ToolAnnotations(readOnlyHint=True, title=...)
+tools.py      →  33 @mcp.tool() functions (28 read-only + 4 write + 1 LogJuicer) with titles
 prompts.py    →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
 resources.py  →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
 helpers.py    →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
@@ -58,9 +58,11 @@ errors.py     →  @handle_errors decorator wrapping all tools with uniform erro
 - **`safepath()`**: URL path sanitization — preserves slashes for Zuul project names (e.g., `org/repo`) but blocks `..` traversal.
 - **`clean()`**: Strips `None` values from dicts to minimize token usage in responses.
 - **All tools return JSON strings**, never raw dicts. Errors also return JSON via `helpers.error()`.
-- **ToolAnnotations**: All tools annotated with `readOnlyHint=True`, `destructiveHint=False`, `idempotentHint=True`, `openWorldHint=True`.
+- **ToolAnnotations**: Read-only tools: `readOnlyHint=True`. Write tools: `readOnlyHint=False`, with `destructiveHint=True` for dequeue/autohold_delete.
+- **Read-only mode**: `ZUUL_READ_ONLY=true` (default) removes write tools at startup. Set to `false` to enable enqueue/dequeue/autohold operations.
 - **Transport**: Configurable via `MCP_TRANSPORT` env var — `stdio` (default), `sse`, or `streamable-http`. HTTP transport enables remote/shared deployment.
 - **Tool filtering**: `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS` (mutually exclusive) remove tools at startup via `ToolManager.remove_tool()`. Reduces LLM tool-selection noise.
+- **LogJuicer**: Optional ML-based log anomaly detection via `LOGJUICER_URL`. Uses `log_client` (no auth headers) to avoid leaking Zuul tokens to external services.
 
 ### Testing
 
