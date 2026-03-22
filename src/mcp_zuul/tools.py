@@ -446,8 +446,12 @@ async def get_build_failures(
                                     "host": host,
                                     "msg": str(res.get("msg", ""))[:4000],
                                     "rc": res.get("rc"),
+                                    "cmd": res.get("cmd"),
                                     "stderr": str(res.get("stderr", ""))[:4000] or None,
                                     "stdout": str(res.get("stdout", ""))[:4000] or None,
+                                    "invocation": _truncate_invocation(
+                                        res.get("invocation", {}).get("module_args")
+                                    ),
                                     "duration": duration.get("end", ""),
                                     "playbook": playbook,
                                 }

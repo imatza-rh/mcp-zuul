@@ -270,6 +270,48 @@ class TestGetBuildFailures:
         assert len(result["failed_tasks"]) == 1
 
     @respx.mock
+    async def test_extracts_cmd_from_command_task(self, mock_ctx):
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert ft["cmd"] == "ansible-playbook playbooks/deploy.yaml -i /home/zuul/inventory.yaml -e @/home/zuul/vars.yaml"
+        assert ft["invocation"]["chdir"] == "/home/zuul/src/repo"
+        assert ft["invocation"]["cmd"] == ft["cmd"]
+
+    @respx.mock
+    async def test_no_cmd_for_non_command_task(self, mock_ctx):
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        job_output = [{
+            "phase": "run",
+            "playbook": "/path/to/deploy.yaml",
+            "stats": {"controller-0": {"failures": 1, "ok": 5}},
+            "plays": [{"play": {"name": "Deploy"}, "tasks": [{
+                "task": {"name": "Copy file", "duration": {"end": "2025-01-01T00:04:00"}},
+                "hosts": {"controller-0": {
+                    "failed": True,
+                    "msg": "file not found",
+                    "rc": None,
+                }},
+            }]}],
+        }]
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert "cmd" not in ft
+        assert "invocation" not in ft
+
+    @respx.mock
     async def test_stdout_truncation_increased(self, mock_ctx):
         """stdout/stderr should be truncated to 4000 chars, not 1000."""
         build = make_build(result="FAILURE")
