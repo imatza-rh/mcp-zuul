@@ -179,6 +179,15 @@ def make_job_output_json(failed: bool = False) -> list:
                         "rc": 1,
                         "stderr": "Error: connection refused",
                         "stdout": "",
+                        "cmd": "ansible-playbook playbooks/deploy.yaml -i /home/zuul/inventory.yaml -e @/home/zuul/vars.yaml",
+                        "invocation": {
+                            "module_args": {
+                                "cmd": "ansible-playbook playbooks/deploy.yaml -i /home/zuul/inventory.yaml -e @/home/zuul/vars.yaml",
+                                "chdir": "/home/zuul/src/repo",
+                                "creates": None,
+                                "removes": None,
+                            }
+                        },
                     }
                 },
             }
