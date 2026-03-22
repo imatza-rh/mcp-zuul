@@ -87,8 +87,10 @@ def fmt_status_item(item: dict) -> dict:
         for j in jobs:
             elapsed = j.get("elapsed_time")
             start = j.get("start_time")
-            # Compute elapsed server-side when Zuul doesn't provide it
-            if elapsed is None and start and not j.get("result"):
+            # Always compute elapsed from start_time for running jobs.
+            # Zuul's elapsed_time is a snapshot from the scheduler's last
+            # status update and can be stale by minutes.
+            if start and not j.get("result"):
                 elapsed = int((now - start) * 1000)  # ms
             formatted_jobs.append(
                 clean(

@@ -10,6 +10,7 @@ from mcp_zuul.tools import (
     get_build,
     get_build_failures,
     get_buildset,
+    get_job_durations,
     list_builds,
     list_buildsets,
 )
@@ -458,6 +459,53 @@ class TestListBuildsets:
         )
         result = json.loads(await list_buildsets(mock_ctx, include_builds=True))
         assert "builds" in result["buildsets"][0]
+
+
+class TestGetJobDurations:
+    @respx.mock
+    async def test_batch_returns_stats_for_multiple_jobs(self, mock_ctx):
+        """Should return avg/min/max for each job with >= 3 builds."""
+        for name in ["deploy-infra", "deploy-ocp"]:
+            builds = [
+                make_build(uuid=f"{name}-{i}", duration=300 + i * 100)
+                for i in range(5)
+            ]
+            respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+                return_value=httpx.Response(200, json=builds)
+            )
+        result = json.loads(
+            await get_job_durations(mock_ctx, job_names=["deploy-infra", "deploy-ocp"])
+        )
+        assert result["count"] == 2
+        for job in result["jobs"]:
+            assert job["builds"] == 5
+            assert "avg" in job
+            assert "min" in job
+            assert "max" in job
+            assert "avg_formatted" in job
+
+    @respx.mock
+    async def test_fewer_than_3_builds_returns_no_stats(self, mock_ctx):
+        """Jobs with < 3 builds should not have avg/min/max."""
+        builds = [make_build(duration=300), make_build(uuid="u2", duration=600)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await get_job_durations(mock_ctx, job_names=["rare-job"])
+        )
+        assert result["jobs"][0]["builds"] == 2
+        assert "avg" not in result["jobs"][0]
+
+    async def test_empty_job_names_returns_error(self, mock_ctx):
+        result = json.loads(await get_job_durations(mock_ctx, job_names=[]))
+        assert "error" in result
+
+    async def test_too_many_jobs_returns_error(self, mock_ctx):
+        result = json.loads(
+            await get_job_durations(mock_ctx, job_names=[f"job-{i}" for i in range(25)])
+        )
+        assert "error" in result
 
 
 class TestGetBuildset:

@@ -220,6 +220,39 @@ class TestGetChangeStatus:
         assert isinstance(result, list)
         assert len(result) == 1
 
+    @respx.mock
+    async def test_elapsed_computed_from_start_time_for_running_jobs(self, mock_ctx):
+        """Zuul's elapsed_time can be stale. Verify we recompute from start_time."""
+        import time
+
+        now = time.time()
+        # Job started 600 seconds (10 min) ago, but Zuul reports stale 60s elapsed
+        item = make_status_item(change=55555)
+        item["jobs"][0]["start_time"] = now - 600
+        item["jobs"][0]["elapsed_time"] = 60000  # Stale: 60s
+        item["jobs"][0]["result"] = None  # Still running
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55555").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "55555"))
+        elapsed_ms = result[0]["jobs"][0]["elapsed"]
+        # Should be ~600000ms (10 min), not the stale 60000ms
+        assert elapsed_ms > 500000, f"Expected ~600000ms, got {elapsed_ms} (stale value used)"
+
+    @respx.mock
+    async def test_elapsed_preserved_for_completed_jobs(self, mock_ctx):
+        """For completed jobs (with result), keep Zuul's elapsed value."""
+        item = make_status_item(change=44444)
+        item["jobs"][0]["start_time"] = 1704067200
+        item["jobs"][0]["elapsed_time"] = 300000  # 5 min — Zuul's final value
+        item["jobs"][0]["result"] = "SUCCESS"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/44444").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "44444"))
+        elapsed_ms = result[0]["jobs"][0]["elapsed"]
+        assert elapsed_ms == 300000, "Completed job should keep Zuul's elapsed value"
+
     async def test_no_change_no_url_returns_error(self, mock_ctx):
         result = json.loads(await get_change_status(mock_ctx))
         assert "error" in result

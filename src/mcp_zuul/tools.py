@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 35 tools (30 read-only + 4 write + 1 LogJuicer)."""
+"""Zuul MCP tool implementations — 36 tools (31 read-only + 4 write + 1 LogJuicer)."""
 
 import asyncio
 import contextlib
@@ -1496,6 +1496,10 @@ async def get_build_times(
     Returns build durations with timing data for trend analysis.
     Use this to detect performance regressions or timeout-prone jobs.
 
+    Note: This endpoint returns ALL results (SUCCESS, FAILURE, etc.) and does
+    not support result filtering. For filtered averages (e.g. SUCCESS-only),
+    use get_job_durations instead.
+
     Args:
         tenant: Tenant name (uses default if empty)
         job_name: Filter by job name
@@ -1543,6 +1547,73 @@ async def get_build_times(
         for b in data
     ]
     return json.dumps({"stats": stats, "builds": builds, "count": len(builds)})
+
+
+@mcp.tool(title="Batch Job Duration Stats", annotations=_READ_ONLY)
+@handle_errors
+async def get_job_durations(
+    ctx: Context,
+    job_names: list[str],
+    tenant: str = "",
+    result: str = "SUCCESS",
+    limit: int = 10,
+) -> str:
+    """Get avg/min/max duration for multiple jobs in a single call.
+
+    Fetches build history for each job in parallel and computes
+    duration statistics. Designed for monitoring tools that need
+    avg durations for an entire pipeline chain without making N
+    separate API calls.
+
+    Args:
+        job_names: List of job names to get stats for
+        tenant: Tenant name (uses default if empty)
+        result: Filter by result (default "SUCCESS" for clean averages)
+        limit: Builds per job to analyze (default 10, max 50)
+    """
+    if not job_names:
+        return error("job_names list is required")
+    if len(job_names) > 20:
+        return error("Maximum 20 job names per call")
+
+    t = _tenant(ctx, tenant)
+    limit = max(1, min(limit, 50))
+    sem = asyncio.Semaphore(10)
+
+    async def _fetch_stats(name: str) -> dict:
+        async with sem:
+            params: dict[str, Any] = {"job_name": name, "limit": limit}
+            if result:
+                params["result"] = result
+            data = await api(ctx, f"/tenant/{safepath(t)}/builds", params)
+            durations = [b["duration"] for b in data if b.get("duration") is not None]
+            stats: dict[str, Any] = {"job": name, "builds": len(durations)}
+            if len(durations) >= 3:
+                avg = sum(durations) / len(durations)
+                stats["avg"] = round(avg, 1)
+                stats["min"] = min(durations)
+                stats["max"] = max(durations)
+                # Human-readable avg
+                mins = int(avg // 60)
+                stats["avg_formatted"] = f"{mins // 60}h {mins % 60:02d}m"
+            return stats
+
+    results = await asyncio.gather(
+        *[_fetch_stats(name) for name in job_names],
+        return_exceptions=True,
+    )
+    job_stats = []
+    fetch_errors = 0
+    for r in results:
+        if isinstance(r, Exception):
+            fetch_errors += 1
+        else:
+            job_stats.append(r)
+
+    out: dict[str, Any] = {"jobs": job_stats, "count": len(job_stats)}
+    if fetch_errors:
+        out["fetch_errors"] = fetch_errors
+    return json.dumps(out)
 
 
 @mcp.tool(title="Source Connections", annotations=_READ_ONLY)

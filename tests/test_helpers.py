@@ -2,6 +2,7 @@
 
 import json
 import os
+import time as _time
 from unittest.mock import patch
 
 import httpx
@@ -326,7 +327,7 @@ class TestFmtStatusItem:
                     "result": None,
                     "voting": True,
                     "elapsed_time": 60000,
-                    "start_time": 1704067200,
+                    "start_time": _time.time() - 120,  # Started 120s ago
                 }
             ],
             "failing_reasons": [],
@@ -334,7 +335,8 @@ class TestFmtStatusItem:
         result = fmt_status_item(item)
         assert result["buildset_uuid"] == "bs-uuid"
         assert result["jobs"][0]["name"] == "test-job"
-        assert result["jobs"][0]["elapsed"] == 60000
+        # elapsed is computed from start_time for running jobs (not Zuul's stale value)
+        assert 100000 < result["jobs"][0]["elapsed"] < 200000  # ~120s = ~120000ms
 
 
 class TestApiRetry:
