@@ -208,13 +208,20 @@ def fmt_status_item(item: dict) -> dict:
 
             # Always compute elapsed from start_time for running jobs.
             # Zuul's elapsed_time is a snapshot from the scheduler's last
-            # status update and can be stale by minutes.
+            # status update and can be stale by minutes.  Remaining is
+            # also stale (estimated*1000 - stale_elapsed), so recompute
+            # both from start_time for consistency.
             if start and not j.get("result"):
                 elapsed = max(0, int(now - start))  # seconds, clamped for clock skew
-            elif elapsed is not None:
-                elapsed = elapsed // 1000  # ms → seconds
-            if remaining is not None:
-                remaining = max(0, remaining // 1000)  # ms → seconds, clamped for overruns
+                if estimated is not None:
+                    remaining = max(0, estimated - elapsed)  # fresh remaining
+                else:
+                    remaining = None
+            else:
+                if elapsed is not None:
+                    elapsed = elapsed // 1000  # ms → seconds
+                if remaining is not None:
+                    remaining = max(0, remaining // 1000)  # ms → seconds
 
             status = _job_status(j)
 

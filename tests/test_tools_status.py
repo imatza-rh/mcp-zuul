@@ -228,22 +228,28 @@ class TestGetChangeStatus:
         assert len(result) == 1
 
     @respx.mock
-    async def test_elapsed_computed_from_start_time_for_running_jobs(self, mock_ctx):
-        """Zuul's elapsed_time can be stale. Verify we recompute from start_time."""
+    async def test_elapsed_and_remaining_recomputed_for_running_jobs(self, mock_ctx):
+        """Zuul's elapsed/remaining are stale snapshots. Verify we recompute both."""
         now = time.time()
-        # Job started 600 seconds (10 min) ago, but Zuul reports stale 60s elapsed
+        # Job started 600s (10 min) ago, but Zuul reports stale 60s elapsed
+        # estimated_time=300s, so stale remaining = 300*1000-60000 = 240000ms
         item = make_status_item(change=55555)
         item["jobs"][0]["start_time"] = now - 600
         item["jobs"][0]["elapsed_time"] = 60000  # Stale: 60s in ms
+        item["jobs"][0]["remaining_time"] = 240000  # Stale: 240s in ms
+        item["jobs"][0]["estimated_time"] = 300  # 5 min in seconds
         item["jobs"][0]["result"] = None  # Still running
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55555").mock(
             return_value=httpx.Response(200, json=[item])
         )
         result = json.loads(await get_change_status(mock_ctx, "55555"))
-        elapsed = result[0]["jobs"][0]["elapsed"]
-        # Should be ~600s (10 min), not the stale 60s
-        assert elapsed > 500, f"Expected ~600s, got {elapsed} (stale value used)"
-        assert "elapsed_str" in result[0]["jobs"][0]
+        job = result[0]["jobs"][0]
+        # elapsed should be ~600s (recomputed from start_time)
+        assert job["elapsed"] > 500, f"Expected ~600s, got {job['elapsed']}"
+        assert "elapsed_str" in job
+        # remaining should be ~0 (estimated 300s - elapsed 600s, clamped to 0)
+        # NOT the stale 240s from Zuul
+        assert job["remaining"] == 0, f"Expected 0 (overdue), got {job['remaining']}"
 
     @respx.mock
     async def test_elapsed_preserved_for_completed_jobs(self, mock_ctx):
@@ -492,3 +498,22 @@ class TestChainSummary:
         formatted = fmt_status_item(item)
         assert formatted["jobs"][0]["elapsed"] == 0
         assert formatted["jobs"][0]["elapsed_str"] == "0s"
+
+    def test_remaining_recomputed_for_running_jobs(self):
+        """Running jobs get fresh remaining from estimated - elapsed, not stale Zuul value."""
+        from mcp_zuul.formatters import fmt_status_item
+
+        now = time.time()
+        item = make_status_item(change=90002)
+        # Job started 60m ago, estimated 109m, Zuul says remaining=96m (stale from 13m ago)
+        item["jobs"][0]["start_time"] = now - 3600  # 60m ago
+        item["jobs"][0]["elapsed_time"] = 780000  # Stale: 13m in ms
+        item["jobs"][0]["remaining_time"] = 5760000  # Stale: 96m in ms
+        item["jobs"][0]["estimated_time"] = 6540  # 109m in seconds
+        item["jobs"][0]["result"] = None
+        formatted = fmt_status_item(item)
+        job = formatted["jobs"][0]
+        # Fresh remaining = estimated(6540) - elapsed(3600) = 2940s = 49m
+        # NOT the stale 5760s (96m)
+        assert 2800 < job["remaining"] < 3100, f"Expected ~2940s, got {job['remaining']}"
+        assert job["remaining_str"] == "49m 0s"
