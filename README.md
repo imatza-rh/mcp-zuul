@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-35 tools (30 read-only + 4 write + 1 LogJuicer), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+36 tools (31 read-only + 4 write + 1 LogJuicer), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -120,6 +120,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `get_freeze_job` | **Resolved job config after inheritance.** Final merged nodeset, playbooks, variables, and timeout for a specific job. Answers "what will this job actually do?" |
 | `find_flaky_jobs` | Analyze recent build history for intermittent failures. Computes pass/fail rate and flags jobs as flaky (>20% failure with mixed results). |
 | `get_build_times` | Build duration trends with avg/min/max stats. Detect performance regressions or timeout-prone jobs. |
+| `get_job_durations` | Batch avg/min/max duration for multiple jobs in one call. Designed for monitoring an entire pipeline chain without N separate calls. |
 | `get_tenant_info` | Tenant capabilities — auth realms, job history support, websocket URL. |
 
 ### Infrastructure
@@ -395,7 +396,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (35 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (36 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 

@@ -92,8 +92,6 @@ def _job_status(j: dict) -> str:
         return "WAITING"
     if j.get("start_time"):
         return "RUNNING"
-    if j.get("queued"):
-        return "QUEUED"
     return "QUEUED"
 
 
@@ -105,8 +103,12 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     """
     if not jobs:
         return {
-            "completed": 0, "total": 0, "running": 0, "waiting": 0,
-            "progress_pct": 0, "critical_path_remaining": 0,
+            "completed": 0,
+            "total": 0,
+            "running": 0,
+            "waiting": 0,
+            "progress_pct": 0,
+            "critical_path_remaining": 0,
             "critical_path_remaining_str": "0s",
         }
 

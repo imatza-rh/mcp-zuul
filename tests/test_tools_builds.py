@@ -465,24 +465,34 @@ class TestGetJobDurations:
     @respx.mock
     async def test_batch_returns_stats_for_multiple_jobs(self, mock_ctx):
         """Should return avg/min/max for each job with >= 3 builds."""
-        for name in ["deploy-infra", "deploy-ocp"]:
+
+        # Route responses by job_name query param so each job gets distinct data
+        def _mock_builds(request):
+            name = dict(request.url.params).get("job_name", "")
+            base_dur = 300 if name == "deploy-infra" else 600
             builds = [
-                make_build(uuid=f"{name}-{i}", duration=300 + i * 100)
+                make_build(uuid=f"{name}-{i}", job_name=name, duration=base_dur + i * 100)
                 for i in range(5)
             ]
-            respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
-                return_value=httpx.Response(200, json=builds)
-            )
+            return httpx.Response(200, json=builds)
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            side_effect=_mock_builds
+        )
         result = json.loads(
             await get_job_durations(mock_ctx, job_names=["deploy-infra", "deploy-ocp"])
         )
         assert result["count"] == 2
-        for job in result["jobs"]:
+        by_job = {j["job"]: j for j in result["jobs"]}
+        for name in ["deploy-infra", "deploy-ocp"]:
+            job = by_job[name]
             assert job["builds"] == 5
             assert "avg" in job
             assert "min" in job
             assert "max" in job
             assert "avg_formatted" in job
+        # Verify distinct stats: deploy-ocp (base 600) has higher avg than deploy-infra (base 300)
+        assert by_job["deploy-ocp"]["avg"] > by_job["deploy-infra"]["avg"]
 
     @respx.mock
     async def test_fewer_than_3_builds_returns_no_stats(self, mock_ctx):
@@ -491,9 +501,7 @@ class TestGetJobDurations:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
             return_value=httpx.Response(200, json=builds)
         )
-        result = json.loads(
-            await get_job_durations(mock_ctx, job_names=["rare-job"])
-        )
+        result = json.loads(await get_job_durations(mock_ctx, job_names=["rare-job"]))
         assert result["jobs"][0]["builds"] == 2
         assert "avg" not in result["jobs"][0]
 

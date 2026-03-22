@@ -112,7 +112,9 @@ class TestResponseSizes:
         parsed = json.loads(result)
         assert "failed_tasks" in parsed, f"Expected failure data, got: {list(parsed.keys())}"
         size = len(result.encode())
-        assert size < int(1.5 * KB), f"get_build_failures bloat: {size} bytes (limit: {int(1.5 * KB)})"
+        assert size < int(1.5 * KB), (
+            f"get_build_failures bloat: {size} bytes (limit: {int(1.5 * KB)})"
+        )
 
     @respx.mock
     async def test_clean_strips_none_at_all_levels(self, mock_ctx):

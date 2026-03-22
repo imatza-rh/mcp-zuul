@@ -12,7 +12,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from .errors import handle_errors
-from .formatters import fmt_build, fmt_buildset, fmt_status_item
+from .formatters import _format_duration, fmt_build, fmt_buildset, fmt_status_item
 from .helpers import (
     api,
     api_delete,
@@ -1598,9 +1598,7 @@ async def get_job_durations(
                 stats["avg"] = round(avg, 1)
                 stats["min"] = min(durations)
                 stats["max"] = max(durations)
-                # Human-readable avg
-                mins = int(avg // 60)
-                stats["avg_formatted"] = f"{mins // 60}h {mins % 60:02d}m"
+                stats["avg_formatted"] = _format_duration(avg)
             return stats
 
     results = await asyncio.gather(

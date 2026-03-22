@@ -281,16 +281,19 @@ class TestGetChangeStatus:
 
     @respx.mock
     async def test_waiting_job_has_status_waiting(self, mock_ctx):
-        item = make_status_item(change=22222, jobs=[
-            {
-                "name": "deploy-ocp",
-                "result": None,
-                "voting": True,
-                "waiting_status": "dependencies: deploy-infra",
-                "queued": False,
-                "tries": 0,
-            }
-        ])
+        item = make_status_item(
+            change=22222,
+            jobs=[
+                {
+                    "name": "deploy-ocp",
+                    "result": None,
+                    "voting": True,
+                    "waiting_status": "dependencies: deploy-infra",
+                    "queued": False,
+                    "tries": 0,
+                }
+            ],
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/22222").mock(
             return_value=httpx.Response(200, json=[item])
         )
@@ -299,18 +302,21 @@ class TestGetChangeStatus:
 
     @respx.mock
     async def test_queued_job_has_status_queued(self, mock_ctx):
-        item = make_status_item(change=33333, jobs=[
-            {
-                "name": "test-job",
-                "uuid": "job-uuid-q",
-                "result": None,
-                "voting": True,
-                "queued": True,
-                "tries": 1,
-                "start_time": None,
-                "waiting_status": None,
-            }
-        ])
+        item = make_status_item(
+            change=33333,
+            jobs=[
+                {
+                    "name": "test-job",
+                    "uuid": "job-uuid-q",
+                    "result": None,
+                    "voting": True,
+                    "queued": True,
+                    "tries": 1,
+                    "start_time": None,
+                    "waiting_status": None,
+                }
+            ],
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/33333").mock(
             return_value=httpx.Response(200, json=[item])
         )
@@ -469,10 +475,20 @@ class TestChainSummary:
     def test_cycle_detection(self):
         """Circular dependencies don't cause infinite recursion."""
         jobs = [
-            {"name": "a", "status": "WAITING", "estimated": 100,
-             "dependencies": ["b"], "waiting_status": "b"},
-            {"name": "b", "status": "WAITING", "estimated": 200,
-             "dependencies": ["a"], "waiting_status": "a"},
+            {
+                "name": "a",
+                "status": "WAITING",
+                "estimated": 100,
+                "dependencies": ["b"],
+                "waiting_status": "b",
+            },
+            {
+                "name": "b",
+                "status": "WAITING",
+                "estimated": 200,
+                "dependencies": ["a"],
+                "waiting_status": "a",
+            },
         ]
         summary = _compute_chain_summary(jobs)
         # Should not hang or raise RecursionError
@@ -482,8 +498,13 @@ class TestChainSummary:
     def test_negative_remaining_clamped(self):
         """Overdue RUNNING jobs (negative remaining) don't produce negative ETA."""
         jobs = [
-            {"name": "overdue", "status": "RUNNING", "remaining": -60,
-             "elapsed": 7200, "estimated": 7140},
+            {
+                "name": "overdue",
+                "status": "RUNNING",
+                "remaining": -60,
+                "elapsed": 7200,
+                "estimated": 7140,
+            },
         ]
         summary = _compute_chain_summary(jobs)
         assert summary["critical_path_remaining"] == 0
