@@ -280,7 +280,10 @@ class TestGetBuildFailures:
         )
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
         ft = result["failed_tasks"][0]
-        assert ft["cmd"] == "ansible-playbook playbooks/deploy.yaml -i /home/zuul/inventory.yaml -e @/home/zuul/vars.yaml"
+        assert (
+            ft["cmd"]
+            == "ansible-playbook playbooks/deploy.yaml -i /home/zuul/inventory.yaml -e @/home/zuul/vars.yaml"
+        )
         assert ft["invocation"]["chdir"] == "/home/zuul/src/repo"
         assert ft["invocation"]["cmd"] == ft["cmd"]
 
@@ -290,19 +293,33 @@ class TestGetBuildFailures:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
             return_value=httpx.Response(200, json=build)
         )
-        job_output = [{
-            "phase": "run",
-            "playbook": "/path/to/deploy.yaml",
-            "stats": {"controller-0": {"failures": 1, "ok": 5}},
-            "plays": [{"play": {"name": "Deploy"}, "tasks": [{
-                "task": {"name": "Copy file", "duration": {"end": "2025-01-01T00:04:00"}},
-                "hosts": {"controller-0": {
-                    "failed": True,
-                    "msg": "file not found",
-                    "rc": None,
-                }},
-            }]}],
-        }]
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/deploy.yaml",
+                "stats": {"controller-0": {"failures": 1, "ok": 5}},
+                "plays": [
+                    {
+                        "play": {"name": "Deploy"},
+                        "tasks": [
+                            {
+                                "task": {
+                                    "name": "Copy file",
+                                    "duration": {"end": "2025-01-01T00:04:00"},
+                                },
+                                "hosts": {
+                                    "controller-0": {
+                                        "failed": True,
+                                        "msg": "file not found",
+                                        "rc": None,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
         respx.get(f"{build['log_url']}job-output.json.gz").mock(
             return_value=httpx.Response(200, json=job_output)
         )
@@ -398,6 +415,25 @@ class TestDiagnoseBuild:
         ]
         assert len(fatal_lines) >= 1
         assert "fatal" in fatal_lines[0]["text"]
+
+    @respx.mock
+    async def test_diagnose_includes_cmd_and_invocation(self, mock_ctx):
+        """diagnose_build must include cmd/invocation like get_build_failures."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"some log\nFAILED! task\nmore log")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, uuid="build-uuid-1"))
+        assert len(result["failed_tasks"]) == 1
+        ft = result["failed_tasks"][0]
+        # These fields exist in get_build_failures but are currently MISSING from diagnose_build
+        assert "cmd" in ft, "diagnose_build should extract cmd field"
 
 
 class TestListBuildsets:

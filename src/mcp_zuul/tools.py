@@ -330,6 +330,68 @@ def _truncate_invocation(module_args: dict | None, max_size: int = 4000) -> dict
     return relevant
 
 
+def _parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
+    """Parse job-output.json into playbook summaries and failed task details.
+
+    Returns (playbooks, failed_tasks). Passing playbooks are compact;
+    failed playbooks include stats and full path.
+    """
+    playbooks = []
+    failed_tasks = []
+    for pb in data:
+        phase = pb.get("phase", "")
+        playbook = pb.get("playbook", "")
+        stats = pb.get("stats", {})
+        has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
+
+        if has_failure:
+            pb_summary = clean(
+                {
+                    "phase": phase,
+                    "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+                    "playbook_full": playbook,
+                    "failed": True,
+                    "stats": stats,
+                }
+            )
+        else:
+            pb_summary = {
+                "phase": phase,
+                "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+                "failed": False,
+            }
+        playbooks.append(pb_summary)
+
+        if has_failure:
+            for play in pb.get("plays", []):
+                play_name = play.get("play", {}).get("name", "")
+                for task in play.get("tasks", []):
+                    task_info = task.get("task", {})
+                    task_name = task_info.get("name", "")
+                    duration = task_info.get("duration", {})
+                    for host, res in task.get("hosts", {}).items():
+                        if res.get("failed"):
+                            ft = clean(
+                                {
+                                    "play": play_name,
+                                    "task": task_name,
+                                    "host": host,
+                                    "msg": str(res.get("msg", ""))[:4000],
+                                    "rc": res.get("rc"),
+                                    "cmd": res.get("cmd"),
+                                    "stderr": str(res.get("stderr", ""))[:4000] or None,
+                                    "stdout": str(res.get("stdout", ""))[:4000] or None,
+                                    "invocation": _truncate_invocation(
+                                        res.get("invocation", {}).get("module_args")
+                                    ),
+                                    "duration": duration.get("end", ""),
+                                    "playbook": playbook,
+                                }
+                            )
+                            failed_tasks.append(ft)
+    return playbooks, failed_tasks
+
+
 @mcp.tool(title="Build Failure Analysis", annotations=_READ_ONLY)
 @handle_errors
 async def get_build_failures(
@@ -400,63 +462,7 @@ async def get_build_failures(
     if not isinstance(data, list):
         return error("Unexpected job-output.json format")
 
-    playbooks = []
-    failed_tasks = []
-    for pb in data:
-        phase = pb.get("phase", "")
-        playbook = pb.get("playbook", "")
-        stats = pb.get("stats", {})
-        has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
-
-        # Include all playbooks for pipeline progression context.
-        # Passing playbooks: compact (phase/name/failed only).
-        # Failed playbooks: full detail (stats + full path for diagnosis).
-        if has_failure:
-            pb_summary = clean(
-                {
-                    "phase": phase,
-                    "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
-                    "playbook_full": playbook,
-                    "failed": True,
-                    "stats": stats,
-                }
-            )
-        else:
-            pb_summary = {
-                "phase": phase,
-                "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
-                "failed": False,
-            }
-        playbooks.append(pb_summary)
-
-        # Extract individual failed tasks only from failed playbooks
-        if has_failure:
-            for play in pb.get("plays", []):
-                play_name = play.get("play", {}).get("name", "")
-                for task in play.get("tasks", []):
-                    task_info = task.get("task", {})
-                    task_name = task_info.get("name", "")
-                    duration = task_info.get("duration", {})
-                    for host, res in task.get("hosts", {}).items():
-                        if res.get("failed"):
-                            ft = clean(
-                                {
-                                    "play": play_name,
-                                    "task": task_name,
-                                    "host": host,
-                                    "msg": str(res.get("msg", ""))[:4000],
-                                    "rc": res.get("rc"),
-                                    "cmd": res.get("cmd"),
-                                    "stderr": str(res.get("stderr", ""))[:4000] or None,
-                                    "stdout": str(res.get("stdout", ""))[:4000] or None,
-                                    "invocation": _truncate_invocation(
-                                        res.get("invocation", {}).get("module_args")
-                                    ),
-                                    "duration": duration.get("end", ""),
-                                    "playbook": playbook,
-                                }
-                            )
-                            failed_tasks.append(ft)
+    playbooks, failed_tasks = _parse_playbooks(data)
 
     return json.dumps(
         clean(
@@ -524,67 +530,13 @@ async def diagnose_build(
         json_url = log_url.rstrip("/") + "/job-output.json"
         resp = await fetch_log_url(a, json_url)
 
-    playbooks = []
-    failed_tasks = []
+    playbooks: list[dict] = []
+    failed_tasks: list[dict] = []
     if resp.status_code == 200:
         try:
             data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
             if isinstance(data, list):
-                for pb in data:
-                    phase = pb.get("phase", "")
-                    playbook = pb.get("playbook", "")
-                    stats = pb.get("stats", {})
-                    has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
-                    if has_failure:
-                        playbooks.append(
-                            clean(
-                                {
-                                    "phase": phase,
-                                    "playbook": (
-                                        playbook.split("/")[-1] if "/" in playbook else playbook
-                                    ),
-                                    "playbook_full": playbook,
-                                    "failed": True,
-                                    "stats": stats,
-                                }
-                            )
-                        )
-                    else:
-                        playbooks.append(
-                            {
-                                "phase": phase,
-                                "playbook": (
-                                    playbook.split("/")[-1] if "/" in playbook else playbook
-                                ),
-                                "failed": False,
-                            }
-                        )
-                    if has_failure:
-                        for play in pb.get("plays", []):
-                            play_name = play.get("play", {}).get("name", "")
-                            for task in play.get("tasks", []):
-                                task_info = task.get("task", {})
-                                task_name = task_info.get("name", "")
-                                duration = task_info.get("duration", {})
-                                for host, res in task.get("hosts", {}).items():
-                                    if res.get("failed"):
-                                        failed_tasks.append(
-                                            clean(
-                                                {
-                                                    "play": play_name,
-                                                    "task": task_name,
-                                                    "host": host,
-                                                    "msg": str(res.get("msg", ""))[:4000],
-                                                    "rc": res.get("rc"),
-                                                    "stderr": str(res.get("stderr", ""))[:4000]
-                                                    or None,
-                                                    "stdout": str(res.get("stdout", ""))[:4000]
-                                                    or None,
-                                                    "duration": duration.get("end", ""),
-                                                    "playbook": playbook,
-                                                }
-                                            )
-                                        )
+                playbooks, failed_tasks = _parse_playbooks(data)
         except (json.JSONDecodeError, KeyError):
             pass  # Fall through to log-based diagnosis
 
