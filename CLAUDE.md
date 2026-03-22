@@ -38,7 +38,7 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 ```
 __init__.py   →  imports tools, prompts, resources (registers decorators), exports main()
 server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients)
-tools.py      →  33 @mcp.tool() functions (28 read-only + 4 write + 1 LogJuicer) with titles
+tools.py      →  34 @mcp.tool() functions (29 read-only + 4 write + 1 LogJuicer) with titles
 prompts.py    →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
 resources.py  →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
 helpers.py    →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
