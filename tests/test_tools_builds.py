@@ -6,6 +6,7 @@ import httpx
 import respx
 
 from mcp_zuul.tools import (
+    diagnose_build,
     get_build,
     get_build_failures,
     get_buildset,
@@ -152,9 +153,10 @@ class TestGetBuildFailures:
         assert result["failed_tasks"][0]["task"] == "Run deployment"
         assert result["failed_tasks"][0]["host"] == "controller-0"
         assert result["failed_tasks"][0]["rc"] == 1
-        # Only failed playbooks included (not passing ones)
-        assert len(result["failed_playbooks"]) == 1
-        assert result["total_playbooks"] == 1
+        # All playbooks included with failed flag
+        assert len(result["playbooks"]) == 1
+        assert result["playbooks"][0]["failed"] is True
+        assert result["playbook_count"] == 1
 
     @respx.mock
     async def test_success_build_short_circuits(self, mock_ctx):
@@ -213,6 +215,138 @@ class TestGetBuildFailures:
         result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
         assert "error" in result
         assert "not found" in result["error"]
+
+    @respx.mock
+    async def test_includes_passing_playbooks(self, mock_ctx):
+        """Passing playbooks should be included with failed=False."""
+        build = make_build(result="FAILURE")
+        # Two playbooks: one passing pre-run, one failing run
+        job_output = [
+            {
+                "phase": "pre",
+                "playbook": "/path/to/pre.yaml",
+                "stats": {"controller": {"failures": 0, "ok": 5}},
+                "plays": [],
+            },
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"controller": {"failures": 1, "ok": 2}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Deploy", "duration": {}},
+                                "hosts": {"ctrl": {"failed": True, "msg": "err", "rc": 1}},
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        assert result["playbook_count"] == 2
+        assert len(result["playbooks"]) == 2
+        assert result["playbooks"][0]["failed"] is False
+        assert result["playbooks"][0]["phase"] == "pre"
+        assert result["playbooks"][1]["failed"] is True
+        assert result["playbooks"][1]["phase"] == "run"
+        assert len(result["failed_tasks"]) == 1
+
+    @respx.mock
+    async def test_stdout_truncation_increased(self, mock_ctx):
+        """stdout/stderr should be truncated to 4000 chars, not 1000."""
+        build = make_build(result="FAILURE")
+        long_output = "x" * 5000
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Task", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "err",
+                                        "stdout": long_output,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        stdout = result["failed_tasks"][0]["stdout"]
+        assert len(stdout) == 4000
+
+
+class TestDiagnoseBuild:
+    @respx.mock
+    async def test_success_short_circuits(self, mock_ctx):
+        build = make_build(result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1"))
+        assert result["result"] == "SUCCESS"
+        assert "nothing to diagnose" in result["message"]
+
+    @respx.mock
+    async def test_returns_failures_and_log_context(self, mock_ctx):
+        build = make_build(result="FAILURE")
+        log_text = "\n".join(
+            [
+                "line 1 ok",
+                "line 2 ok",
+                "line 3 ok",
+                "line 4 ok",
+                "line 5 ok",
+                "fatal: [host]: FAILED! => msg",
+                "line 7 after",
+                "line 8 after",
+                "line 9 after",
+            ]
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log_text.encode())
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        assert result["result"] == "FAILURE"
+        assert len(result["failed_tasks"]) == 1
+        assert result["failed_tasks"][0]["task"] == "Run deployment"
+        assert len(result["log_context"]) >= 1
+        # The fatal line should be in the context block
+        fatal_lines = [
+            line for block in result["log_context"] for line in block if line.get("match")
+        ]
+        assert len(fatal_lines) >= 1
+        assert "fatal" in fatal_lines[0]["text"]
 
 
 class TestListBuildsets:

@@ -189,6 +189,53 @@ class TestGetBuildLog:
         # Verify content is preserved after stripping
         assert any("ERROR" in t for t in result.get("tail", []))
 
+    @respx.mock
+    async def test_grep_context_deduplication(self, mock_ctx):
+        """Adjacent matches should produce merged context blocks, not duplicates."""
+        # Two matches on consecutive lines — their context blocks overlap
+        log = "\n".join(
+            [
+                "line 1",
+                "line 2",
+                "line 3 ERROR first",
+                "line 4 ERROR second",
+                "line 5",
+                "line 6",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log.encode())
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="ERROR", context=2))
+        assert result["matched"] == 2
+        # Should be 1 merged block instead of 2 overlapping blocks
+        assert len(result["blocks"]) == 1
+        # The merged block should contain all lines from 1 to 6
+        block_lines = [entry["n"] for entry in result["blocks"][0]]
+        assert 1 in block_lines
+        assert 6 in block_lines
+
+    @respx.mock
+    async def test_grep_context_non_overlapping(self, mock_ctx):
+        """Distant matches should produce separate context blocks."""
+        log = "\n".join([f"line {i}" for i in range(1, 21)])
+        log = log.replace("line 3", "line 3 ERROR").replace("line 18", "line 18 ERROR")
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log.encode())
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="ERROR", context=2))
+        assert result["matched"] == 2
+        # Should be 2 separate blocks (lines 1-5 and 16-20)
+        assert len(result["blocks"]) == 2
+
 
 class TestBrowseBuildLogs:
     @respx.mock

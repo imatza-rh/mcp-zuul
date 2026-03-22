@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 34 tools (29 read-only + 4 write + 1 LogJuicer)."""
+"""Zuul MCP tool implementations — 35 tools (30 read-only + 4 write + 1 LogJuicer)."""
 
 import asyncio
 import contextlib
@@ -389,17 +389,20 @@ async def get_build_failures(
         stats = pb.get("stats", {})
         has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
 
-        # Only include playbooks that have failures to save tokens
+        # Include all playbooks with phase/name/stats for pipeline progression
+        pb_summary = clean(
+            {
+                "phase": phase,
+                "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+                "playbook_full": playbook,
+                "failed": has_failure,
+                "stats": stats,
+            }
+        )
+        playbooks.append(pb_summary)
+
+        # Extract individual failed tasks only from failed playbooks
         if has_failure:
-            pb_summary = clean(
-                {
-                    "phase": phase,
-                    "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
-                    "playbook_full": playbook,
-                    "stats": stats,
-                }
-            )
-            playbooks.append(pb_summary)
             for play in pb.get("plays", []):
                 play_name = play.get("play", {}).get("name", "")
                 for task in play.get("tasks", []):
@@ -413,10 +416,10 @@ async def get_build_failures(
                                     "play": play_name,
                                     "task": task_name,
                                     "host": host,
-                                    "msg": str(res.get("msg", ""))[:1000],
+                                    "msg": str(res.get("msg", ""))[:4000],
                                     "rc": res.get("rc"),
-                                    "stderr": str(res.get("stderr", ""))[:1000] or None,
-                                    "stdout": str(res.get("stdout", ""))[:1000] or None,
+                                    "stderr": str(res.get("stderr", ""))[:4000] or None,
+                                    "stdout": str(res.get("stdout", ""))[:4000] or None,
                                     "duration": duration.get("end", ""),
                                     "playbook": playbook,
                                 }
@@ -430,9 +433,162 @@ async def get_build_failures(
                 "result": build.get("result", ""),
                 "log_url": log_url,
                 "duration": build.get("duration"),
-                "total_playbooks": len(data),
-                "failed_playbooks": playbooks,
+                "playbook_count": len(data),
+                "playbooks": playbooks,
                 "failed_tasks": failed_tasks,
+            }
+        )
+    )
+
+
+@mcp.tool(title="Diagnose Build Failure", annotations=_READ_ONLY)
+@handle_errors
+async def diagnose_build(
+    ctx: Context,
+    uuid: str = "",
+    tenant: str = "",
+    url: str = "",
+) -> str:
+    """One-call failure diagnosis — structured failures + relevant log context.
+
+    Combines get_build_failures (which task failed, error message) with
+    targeted log grep (surrounding context from job-output.txt). Returns
+    everything needed to understand a failure in a single call.
+
+    Use this instead of calling get_build_failures + get_build_log separately.
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant name (uses default if empty)
+        url: Zuul build URL (alternative to uuid + tenant)
+    """
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+    result = build.get("result", "")
+    log_url = build.get("log_url")
+
+    if result in ("SUCCESS", "SKIPPED"):
+        return json.dumps(
+            clean(
+                {
+                    "job": build.get("job_name", ""),
+                    "result": result,
+                    "message": "Build succeeded — nothing to diagnose."
+                    if result == "SUCCESS"
+                    else "Build was skipped.",
+                }
+            )
+        )
+
+    if not log_url:
+        return error(f"No log_url for build {uuid}")
+
+    a = app(ctx)
+
+    # --- 1. Parse job-output.json for structured failures ---
+    json_url = log_url.rstrip("/") + "/job-output.json.gz"
+    resp = await fetch_log_url(a, json_url)
+    if resp.status_code == 404:
+        json_url = log_url.rstrip("/") + "/job-output.json"
+        resp = await fetch_log_url(a, json_url)
+
+    playbooks = []
+    failed_tasks = []
+    if resp.status_code == 200:
+        try:
+            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+            if isinstance(data, list):
+                for pb in data:
+                    phase = pb.get("phase", "")
+                    playbook = pb.get("playbook", "")
+                    stats = pb.get("stats", {})
+                    has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
+                    playbooks.append(
+                        clean(
+                            {
+                                "phase": phase,
+                                "playbook": (
+                                    playbook.split("/")[-1] if "/" in playbook else playbook
+                                ),
+                                "playbook_full": playbook,
+                                "failed": has_failure,
+                                "stats": stats,
+                            }
+                        )
+                    )
+                    if has_failure:
+                        for play in pb.get("plays", []):
+                            play_name = play.get("play", {}).get("name", "")
+                            for task in play.get("tasks", []):
+                                task_info = task.get("task", {})
+                                task_name = task_info.get("name", "")
+                                duration = task_info.get("duration", {})
+                                for host, res in task.get("hosts", {}).items():
+                                    if res.get("failed"):
+                                        failed_tasks.append(
+                                            clean(
+                                                {
+                                                    "play": play_name,
+                                                    "task": task_name,
+                                                    "host": host,
+                                                    "msg": str(res.get("msg", ""))[:4000],
+                                                    "rc": res.get("rc"),
+                                                    "stderr": str(res.get("stderr", ""))[:4000]
+                                                    or None,
+                                                    "stdout": str(res.get("stdout", ""))[:4000]
+                                                    or None,
+                                                    "duration": duration.get("end", ""),
+                                                    "playbook": playbook,
+                                                }
+                                            )
+                                        )
+        except (json.JSONDecodeError, KeyError):
+            pass  # Fall through to log-based diagnosis
+
+    # --- 2. Grep job-output.txt for fatal/FAILED context ---
+    log_context = []
+    txt_url = log_url.rstrip("/") + "/job-output.txt"
+    try:
+        raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
+        all_lines = raw.splitlines()
+        total = len(all_lines)
+        pat = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
+        matched = [(i + 1, line) for i, line in enumerate(all_lines) if pat.search(line)]
+        # Build merged context blocks (5 lines before/after each match)
+        ctx_n = 5
+        if matched:
+            ranges: list[tuple[int, int]] = []
+            for n, _text in matched[:30]:
+                start = max(0, n - 1 - ctx_n)
+                end = min(total, n + ctx_n)
+                if ranges and start <= ranges[-1][1]:
+                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+                else:
+                    ranges.append((start, end))
+            for start, end in ranges[:10]:  # Max 10 blocks
+                block = [
+                    {
+                        "n": i + 1,
+                        "text": all_lines[i][:500],
+                        "match": pat.search(all_lines[i]) is not None,
+                    }
+                    for i in range(start, end)
+                ]
+                log_context.append(block)
+    except Exception:
+        pass  # Log unavailable — structured data still useful
+
+    return json.dumps(
+        clean(
+            {
+                "job": build.get("job_name", ""),
+                "result": result,
+                "log_url": log_url,
+                "duration": build.get("duration"),
+                "playbook_count": len(playbooks),
+                "playbooks": playbooks,
+                "failed_tasks": failed_tasks,
+                "log_context": log_context or None,
             }
         )
     )
@@ -529,11 +685,18 @@ async def get_build_log(
             return error("Regex search timed out (pattern may be too complex)")
         ctx_n = max(0, min(context, 10))
         if ctx_n > 0 and matched:
-            # Build context blocks around each match
-            blocks = []
+            # Build merged context blocks — deduplicate overlapping ranges
+            ranges: list[tuple[int, int]] = []
             for n, _text in matched[:50]:
                 start = max(0, n - 1 - ctx_n)
                 end = min(total, n + ctx_n)
+                # Merge with previous range if overlapping or adjacent
+                if ranges and start <= ranges[-1][1]:
+                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+                else:
+                    ranges.append((start, end))
+            blocks = []
+            for start, end in ranges:
                 block = [
                     {
                         "n": i + 1,
