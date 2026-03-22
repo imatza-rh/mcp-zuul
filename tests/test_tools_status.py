@@ -196,6 +196,30 @@ class TestGetChangeStatus:
         assert "error" in result
         assert "Expected change" in result["error"]
 
+    @respx.mock
+    async def test_github_ref_extracts_change_number(self, mock_ctx):
+        """refs/pull/123/head should be normalized to change number 123."""
+        item = make_status_item(change=123)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/123").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, change="refs/pull/123/head"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @respx.mock
+    async def test_gitlab_mr_ref_extracts_change_number(self, mock_ctx):
+        """refs/merge-requests/456/head should be normalized to change number 456."""
+        item = make_status_item(change=456)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/456").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(
+            await get_change_status(mock_ctx, change="refs/merge-requests/456/head")
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+
     async def test_no_change_no_url_returns_error(self, mock_ctx):
         result = json.loads(await get_change_status(mock_ctx))
         assert "error" in result

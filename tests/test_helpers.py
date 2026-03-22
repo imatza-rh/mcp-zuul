@@ -9,7 +9,7 @@ import pytest
 import respx
 
 from mcp_zuul.config import Config
-from mcp_zuul.errors import handle_errors
+from mcp_zuul.errors import _clean_body, handle_errors
 from mcp_zuul.formatters import fmt_build, fmt_status_item
 from mcp_zuul.helpers import api, clean, error, parse_zuul_url, safepath, strip_ansi, tenant
 
@@ -184,6 +184,25 @@ class TestConfig:
             Config.from_env()
 
 
+class TestCleanBody:
+    def test_strips_html_tags(self):
+        html = "<!DOCTYPE html><html><head><title>404 Not Found</title></head><body><h1>Not Found</h1></body></html>"
+        assert _clean_body(html) == "404 Not Found Not Found"
+
+    def test_collapses_whitespace(self):
+        html = "<h1>Internal  \n  Server   Error</h1>\n<p>Something broke</p>"
+        assert _clean_body(html) == "Internal Server Error Something broke"
+
+    def test_truncates_at_limit(self):
+        assert len(_clean_body("x" * 500)) <= 200
+
+    def test_empty_string(self):
+        assert _clean_body("") == ""
+
+    def test_plain_text_unchanged(self):
+        assert _clean_body("simple error message") == "simple error message"
+
+
 class TestHandleErrors:
     async def test_wraps_http_status_error(self):
         @handle_errors
@@ -195,6 +214,22 @@ class TestHandleErrors:
 
         result = json.loads(await failing())
         assert "403" in result["error"]
+
+    async def test_html_stripped_from_error(self):
+        @handle_errors
+        async def failing():
+            resp = httpx.Response(
+                500,
+                text="<!DOCTYPE html><html><head><title>500 Internal Server Error</title></head></html>",
+            )
+            raise httpx.HTTPStatusError(
+                "", request=httpx.Request("GET", "https://x"), response=resp
+            )
+
+        result = json.loads(await failing())
+        assert "500" in result["error"]
+        assert "Internal Server Error" in result["error"]
+        assert "<" not in result["error"]  # no HTML tags
 
     async def test_wraps_connect_error(self):
         @handle_errors

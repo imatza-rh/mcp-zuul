@@ -2,6 +2,7 @@
 
 import functools
 import logging
+import re
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -10,6 +11,21 @@ import httpx
 from .helpers import error
 
 log = logging.getLogger("zuul-mcp")
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_body(text: str, limit: int = 200) -> str:
+    """Extract a clean error message from an HTTP response body.
+
+    Strips HTML tags and collapses whitespace so error messages
+    are useful for LLM consumers instead of containing raw markup.
+    """
+    if not text:
+        return ""
+    cleaned = _HTML_TAG_RE.sub(" ", text)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:limit].strip()
 
 
 def handle_errors(
@@ -22,7 +38,7 @@ def handle_errors(
         try:
             return await func(*args, **kwargs)
         except httpx.HTTPStatusError as e:
-            body = e.response.text[:200] if e.response.text else ""
+            body = _clean_body(e.response.text)
             return error(f"API returned {e.response.status_code}: {body}")
         except httpx.ConnectError:
             return error("Cannot connect to Zuul API")

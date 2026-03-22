@@ -492,6 +492,44 @@ class TestFindFlakyJobs:
         assert result["flaky"] is False
         assert result["failure_rate"] == 100.0
 
+    @respx.mock
+    async def test_infra_failures_tracked_separately(self, mock_ctx):
+        """NODE_FAILURE/RETRY_LIMIT should be reported as infra_failure_rate."""
+        builds = [
+            {"uuid": "u0", "result": "SUCCESS", "duration": 100},
+            {"uuid": "u1", "result": "SUCCESS", "duration": 100},
+            {"uuid": "u2", "result": "NODE_FAILURE", "duration": 0},
+            {"uuid": "u3", "result": "NODE_FAILURE", "duration": 0},
+            {"uuid": "u4", "result": "RETRY_LIMIT", "duration": 0},
+            {"uuid": "u5", "result": "SUCCESS", "duration": 100},
+            {"uuid": "u6", "result": "SKIPPED", "duration": 0},
+            {"uuid": "u7", "result": "ABORTED", "duration": 50},
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="infra-flaky"))
+        assert result["analyzed"] == 8
+        assert result["completed"] == 6  # excludes SKIPPED + ABORTED
+        assert result["failure_rate"] == 0.0  # no FAILURE results
+        assert result["infra_failure_rate"] == 50.0  # 3/6
+        assert result["flaky"] is False  # no FAILURE results, so not flaky
+
+    @respx.mock
+    async def test_all_skipped_no_division_error(self, mock_ctx):
+        """All SKIPPED/ABORTED builds should not cause division by zero."""
+        builds = [
+            {"uuid": "u0", "result": "SKIPPED", "duration": 0},
+            {"uuid": "u1", "result": "ABORTED", "duration": 0},
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="all-skipped"))
+        assert result["completed"] == 0
+        assert result["failure_rate"] == 0.0
+        assert result["flaky"] is False
+
 
 class TestGetBuildTimes:
     @respx.mock

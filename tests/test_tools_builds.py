@@ -157,8 +157,30 @@ class TestGetBuildFailures:
         assert result["total_playbooks"] == 1
 
     @respx.mock
+    async def test_success_build_short_circuits(self, mock_ctx):
+        build = make_build(result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
+        assert result["result"] == "SUCCESS"
+        assert "succeeded" in result["message"]
+        assert "failed_tasks" not in result
+
+    @respx.mock
+    async def test_skipped_build_short_circuits_with_correct_message(self, mock_ctx):
+        build = make_build(result="SKIPPED")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
+        assert result["result"] == "SKIPPED"
+        assert "skipped" in result["message"]
+        assert "succeeded" not in result["message"]
+
+    @respx.mock
     async def test_no_log_url(self, mock_ctx):
-        build = make_build(log_url=None)
+        build = make_build(result="FAILURE", log_url=None)
         build["log_url"] = None
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/no-log").mock(
             return_value=httpx.Response(200, json=build)
@@ -168,7 +190,7 @@ class TestGetBuildFailures:
 
     @respx.mock
     async def test_fallback_to_uncompressed(self, mock_ctx):
-        build = make_build()
+        build = make_build(result="FAILURE")
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
             return_value=httpx.Response(200, json=build)
         )
@@ -177,12 +199,12 @@ class TestGetBuildFailures:
             return_value=httpx.Response(200, json=make_job_output_json(failed=False))
         )
         result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
-        assert result["result"] == "SUCCESS"
+        assert result["result"] == "FAILURE"
         assert len(result["failed_tasks"]) == 0
 
     @respx.mock
     async def test_json_not_found(self, mock_ctx):
-        build = make_build()
+        build = make_build(result="FAILURE")
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
             return_value=httpx.Response(200, json=build)
         )

@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations — 33 tools (28 read-only + 4 write + 1 LogJuicer)."""
+"""Zuul MCP tool implementations — 34 tools (29 read-only + 4 write + 1 LogJuicer)."""
 
 import asyncio
 import contextlib
@@ -186,6 +186,11 @@ async def get_change_status(
         tenant = tenant or url_tenant
     if not change:
         raise ValueError("change or url is required")
+    # Extract change number from GitHub/GitLab ref patterns so callers can
+    # pass "refs/pull/123/head" or "refs/merge-requests/456/head" directly.
+    ref_match = re.match(r"refs/(?:pull|merge-requests)/(\d+)/head", change)
+    if ref_match:
+        change = ref_match.group(1)
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
     if not data and change.isdigit():
@@ -331,7 +336,28 @@ async def get_build_failures(
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+    result = build.get("result", "")
     log_url = build.get("log_url")
+
+    # Short-circuit for non-failure builds — no need to download job-output.json
+    if result in ("SUCCESS", "SKIPPED"):
+        msg = (
+            "Build succeeded — no failures to analyze."
+            if result == "SUCCESS"
+            else "Build was skipped — no failures to analyze."
+        )
+        return json.dumps(
+            clean(
+                {
+                    "job": build.get("job_name", ""),
+                    "result": result,
+                    "log_url": log_url,
+                    "duration": build.get("duration"),
+                    "message": msg,
+                }
+            )
+        )
+
     if not log_url:
         return error(f"No log_url for build {uuid}")
 
@@ -1219,8 +1245,18 @@ async def find_flaky_jobs(
 
     total = len(data)
     failures = results.get("FAILURE", 0)
-    rate = round(failures / total * 100, 1) if total > 0 else 0.0
-    flaky = total >= 3 and 0 < failures < total and rate > 20
+    infra_results = ("NODE_FAILURE", "RETRY_LIMIT", "TIMED_OUT", "DISK_FULL")
+    infra_failures = sum(results.get(r, 0) for r in infra_results)
+    # Completed builds = total minus non-conclusive results
+    completed = (
+        total
+        - results.get("IN_PROGRESS", 0)
+        - results.get("SKIPPED", 0)
+        - results.get("ABORTED", 0)
+    )
+    rate = round(failures / completed * 100, 1) if completed > 0 else 0.0
+    infra_rate = round(infra_failures / completed * 100, 1) if completed > 0 else 0.0
+    flaky = completed >= 3 and 0 < failures < completed and rate > 20
 
     builds = [
         clean(
@@ -1241,8 +1277,10 @@ async def find_flaky_jobs(
             {
                 "job": job_name,
                 "analyzed": total,
+                "completed": completed,
                 "results": results,
                 "failure_rate": rate,
+                "infra_failure_rate": infra_rate if infra_failures > 0 else None,
                 "flaky": flaky,
                 "builds": builds,
             }
