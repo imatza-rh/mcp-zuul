@@ -10,6 +10,8 @@ from mcp_zuul.helpers import (
     AppContext,
     _pick_client,
     api,
+    api_delete,
+    api_post,
     fetch_log_url,
     parse_zuul_url,
     stream_log,
@@ -103,6 +105,51 @@ class TestApiNonJsonResponse:
             await api(mock_ctx, "/tenants")
 
 
+class TestApiPostNonJsonResponse:
+    @respx.mock
+    async def test_non_json_200_raises_value_error(self, mock_ctx):
+        """Reverse proxy returning HTML 200 on POST should give a clear error."""
+        respx.post("https://zuul.example.com/api/tenant/test-tenant/project/org/repo/enqueue").mock(
+            return_value=httpx.Response(
+                200,
+                text="<html>Maintenance</html>",
+                headers={"content-type": "text/html"},
+            )
+        )
+        with pytest.raises(ValueError, match="non-JSON response"):
+            await api_post(
+                mock_ctx,
+                "/tenant/test-tenant/project/org/repo/enqueue",
+                {"pipeline": "check", "change": "123,1"},
+            )
+
+    @respx.mock
+    async def test_empty_response_returns_empty_dict(self, mock_ctx):
+        respx.post("https://zuul.example.com/api/tenant/test-tenant/project/org/repo/enqueue").mock(
+            return_value=httpx.Response(200, text="")
+        )
+        result = await api_post(
+            mock_ctx,
+            "/tenant/test-tenant/project/org/repo/enqueue",
+            {"pipeline": "check", "change": "123,1"},
+        )
+        assert result == {}
+
+
+class TestApiDeleteNonJsonResponse:
+    @respx.mock
+    async def test_non_json_200_raises_value_error(self, mock_ctx):
+        respx.delete("https://zuul.example.com/api/tenant/test-tenant/autohold/ah-1").mock(
+            return_value=httpx.Response(
+                200,
+                text="<html>Error</html>",
+                headers={"content-type": "text/html"},
+            )
+        )
+        with pytest.raises(ValueError, match="non-JSON response"):
+            await api_delete(mock_ctx, "/tenant/test-tenant/autohold/ah-1")
+
+
 # -- _pick_client --
 
 
@@ -146,7 +193,7 @@ class TestStreamLogTruncation:
         )
         content, truncated = await stream_log(a, "https://logs.example.com/build/log.txt")
         assert truncated is True
-        assert len(content) < len(large_content)
+        assert len(content) == 10 * 1024 * 1024  # exactly 10 MB
 
     @respx.mock
     async def test_404_raises_file_not_found(self, mock_ctx):
@@ -181,7 +228,7 @@ class TestFetchLogUrlStreaming:
         )
         resp = await fetch_log_url(a, "https://logs.example.com/build/huge.json")
         assert resp.status_code == 200
-        assert len(resp.content) < len(large_content)
+        assert len(resp.content) == 20 * 1024 * 1024  # exactly 20 MB
 
     @respx.mock
     async def test_404_returns_empty_content(self, mock_ctx):

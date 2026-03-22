@@ -99,7 +99,13 @@ async def api_post(ctx: Context, path: str, body: dict) -> Any:
             await kerberos_auth(a.client, a.config.base_url)
         resp = await a.client.post(f"/api{path}", json=body)
     resp.raise_for_status()
-    return resp.json() if resp.text else {}
+    if not resp.text:
+        return {}
+    try:
+        return resp.json()
+    except json.JSONDecodeError as exc:
+        ct = resp.headers.get("content-type", "")
+        raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
 
 
 async def api_delete(ctx: Context, path: str) -> Any:
@@ -113,7 +119,13 @@ async def api_delete(ctx: Context, path: str) -> Any:
             await kerberos_auth(a.client, a.config.base_url)
         resp = await a.client.delete(f"/api{path}")
     resp.raise_for_status()
-    return resp.json() if resp.text else {}
+    if not resp.text:
+        return {}
+    try:
+        return resp.json()
+    except json.JSONDecodeError as exc:
+        ct = resp.headers.get("content-type", "")
+        raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
 
 
 _MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -151,6 +163,9 @@ async def _stream_with_limit(a: AppContext, url: str, max_bytes: int) -> tuple[b
                 async for chunk in resp2.aiter_bytes():
                     size += len(chunk)
                     if size > max_bytes:
+                        # Include partial chunk up to the limit
+                        overshoot = size - max_bytes
+                        chunks.append(chunk[: len(chunk) - overshoot])
                         truncated = True
                         break
                     chunks.append(chunk)
@@ -161,6 +176,8 @@ async def _stream_with_limit(a: AppContext, url: str, max_bytes: int) -> tuple[b
             async for chunk in resp.aiter_bytes():
                 size += len(chunk)
                 if size > max_bytes:
+                    overshoot = size - max_bytes
+                    chunks.append(chunk[: len(chunk) - overshoot])
                     truncated = True
                     break
                 chunks.append(chunk)
@@ -193,6 +210,8 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
                     async for chunk in resp2.aiter_bytes():
                         size += len(chunk)
                         if size > _MAX_FETCH_BYTES:
+                            overshoot = size - _MAX_FETCH_BYTES
+                            chunks.append(chunk[: len(chunk) - overshoot])
                             break
                         chunks.append(chunk)
             return httpx.Response(
@@ -211,6 +230,8 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
             async for chunk in resp.aiter_bytes():
                 size += len(chunk)
                 if size > _MAX_FETCH_BYTES:
+                    overshoot = size - _MAX_FETCH_BYTES
+                    chunks.append(chunk[: len(chunk) - overshoot])
                     break
                 chunks.append(chunk)
 
