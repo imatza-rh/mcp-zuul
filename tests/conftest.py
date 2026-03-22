@@ -165,6 +165,113 @@ def make_status_item(
     }
 
 
+def make_chained_status_item(change: int = 12345) -> dict:
+    """Create a status item with a realistic adoption chain.
+
+    Chain topology::
+
+                         +-> deploy-ocp (RUNNING, ~13m elapsed, est 109m)
+                         |       +-> install-operators (WAITING, est 54m)
+        deploy-infra --> |                                                +--> run-adoption (WAITING, est 179m)
+        (SUCCESS, 49m)   |                                                |        +-> run-after (WAITING, est 40m)
+                         +-> deploy-osp (RUNNING, ~13m elapsed, est 142m)
+                                 +-> install-shiftstack (WAITING, est 94m)
+    """
+    import time as _t
+
+    now = _t.time()
+    return {
+        "id": f"{change},1",
+        "active": True,
+        "live": True,
+        "refs": [
+            {
+                "project": "ci-framework/ci-framework-testproject",
+                "change": change,
+                "ref": f"refs/merge-requests/{change}/head",
+                "id": f"{change},abc123",
+                "url": f"https://gitlab.example.com/merge_requests/{change}",
+            }
+        ],
+        "zuul_ref": "Zbuildset-chain-uuid",
+        "enqueue_time": int((now - 3600) * 1000),
+        "jobs": [
+            {
+                "name": "deploy-infra",
+                "uuid": "uuid-infra",
+                "result": "SUCCESS",
+                "voting": True,
+                "elapsed_time": 2940000,  # 49m in ms
+                "start_time": now - 3600,
+                "dependencies": [],
+            },
+            {
+                "name": "deploy-ocp",
+                "uuid": "uuid-ocp",
+                "result": None,
+                "voting": True,
+                "elapsed_time": 780000,  # stale
+                "remaining_time": 5760000,  # 96m in ms
+                "estimated_time": 6540,  # 109m in seconds
+                "start_time": now - 780,
+                "dependencies": ["deploy-infra"],
+            },
+            {
+                "name": "deploy-osp",
+                "uuid": "uuid-osp",
+                "result": None,
+                "voting": True,
+                "elapsed_time": 780000,
+                "remaining_time": 7740000,  # 129m in ms
+                "estimated_time": 8520,  # 142m in seconds
+                "start_time": now - 780,
+                "dependencies": ["deploy-infra"],
+            },
+            {
+                "name": "install-operators",
+                "result": None,
+                "voting": True,
+                "estimated_time": 3240,  # 54m
+                "dependencies": ["deploy-ocp"],
+                "waiting_status": "dependencies: deploy-ocp",
+                "queued": False,
+                "tries": 0,
+            },
+            {
+                "name": "install-shiftstack",
+                "result": None,
+                "voting": True,
+                "estimated_time": 5640,  # 94m
+                "dependencies": ["deploy-osp"],
+                "waiting_status": "dependencies: deploy-osp",
+                "queued": False,
+                "tries": 0,
+            },
+            {
+                "name": "run-adoption",
+                "result": None,
+                "voting": True,
+                "estimated_time": 10740,  # 179m
+                "dependencies": ["install-operators", "install-shiftstack"],
+                "waiting_status": "dependencies: install-operators, install-shiftstack",
+                "queued": False,
+                "tries": 0,
+            },
+            {
+                "name": "run-after",
+                "result": None,
+                "voting": True,
+                "estimated_time": 2400,  # 40m
+                "dependencies": ["run-adoption"],
+                "waiting_status": "dependencies: run-adoption",
+                "queued": False,
+                "tries": 0,
+            },
+        ],
+        "failing_reasons": [],
+    }
+
+
 def make_job_output_json(failed: bool = False) -> list:
     """Create a sample job-output.json structure."""
     tasks = []

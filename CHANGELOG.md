@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-03-23
+
+### Changed
+- **BREAKING**: `elapsed`, `remaining`, `enqueue_time` in `get_change_status` now in seconds (were milliseconds)
+- Jobs in `get_change_status` now include always-present `status` field: SUCCESS, FAILURE, RUNNING, WAITING, QUEUED
+- Relative `stream_url` values are absolutified with the Zuul base URL in `get_change_status`
+
+### Added
+- `elapsed_str`, `remaining_str` — human-readable duration strings ("1h 23m") per job
+- `chain_summary` at the item level — pipeline progress counts, critical-path remaining time via dependency-graph walk
+- `_format_duration()` helper for seconds-to-human conversion
+- Cycle detection in chain summary dependency traversal
+
 ## [0.3.2] - 2026-03-22
 
 ### Security

@@ -239,6 +239,11 @@ async def get_change_status(
                 fmt["status_url"] = (
                     f"{base}/t/{safepath(t)}/status/change/{quote(ref_id, safe='/,')}"
                 )
+        # Make relative stream_urls absolute
+        for job in fmt.get("jobs", []):
+            su = job.get("stream_url", "")
+            if su and not su.startswith(("http://", "https://", "ws://", "wss://")):
+                job["stream_url"] = f"{base}/t/{safepath(t)}/{su}"
     return json.dumps(formatted)
 
 

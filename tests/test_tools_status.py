@@ -1,12 +1,19 @@
 """Integration tests for status tools."""
 
 import json
+import time
 
 import httpx
 import respx
 
+from mcp_zuul.formatters import _compute_chain_summary, _format_duration
 from mcp_zuul.tools import get_change_status, get_status
-from tests.conftest import make_buildset, make_status_item, make_status_pipeline
+from tests.conftest import (
+    make_buildset,
+    make_chained_status_item,
+    make_status_item,
+    make_status_pipeline,
+)
 
 
 class TestGetStatus:
@@ -223,36 +230,265 @@ class TestGetChangeStatus:
     @respx.mock
     async def test_elapsed_computed_from_start_time_for_running_jobs(self, mock_ctx):
         """Zuul's elapsed_time can be stale. Verify we recompute from start_time."""
-        import time
-
         now = time.time()
         # Job started 600 seconds (10 min) ago, but Zuul reports stale 60s elapsed
         item = make_status_item(change=55555)
         item["jobs"][0]["start_time"] = now - 600
-        item["jobs"][0]["elapsed_time"] = 60000  # Stale: 60s
+        item["jobs"][0]["elapsed_time"] = 60000  # Stale: 60s in ms
         item["jobs"][0]["result"] = None  # Still running
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55555").mock(
             return_value=httpx.Response(200, json=[item])
         )
         result = json.loads(await get_change_status(mock_ctx, "55555"))
-        elapsed_ms = result[0]["jobs"][0]["elapsed"]
-        # Should be ~600000ms (10 min), not the stale 60000ms
-        assert elapsed_ms > 500000, f"Expected ~600000ms, got {elapsed_ms} (stale value used)"
+        elapsed = result[0]["jobs"][0]["elapsed"]
+        # Should be ~600s (10 min), not the stale 60s
+        assert elapsed > 500, f"Expected ~600s, got {elapsed} (stale value used)"
+        assert "elapsed_str" in result[0]["jobs"][0]
 
     @respx.mock
     async def test_elapsed_preserved_for_completed_jobs(self, mock_ctx):
-        """For completed jobs (with result), keep Zuul's elapsed value."""
+        """For completed jobs (with result), keep Zuul's elapsed value (converted to seconds)."""
         item = make_status_item(change=44444)
         item["jobs"][0]["start_time"] = 1704067200
-        item["jobs"][0]["elapsed_time"] = 300000  # 5 min — Zuul's final value
+        item["jobs"][0]["elapsed_time"] = 300000  # 5 min in ms
         item["jobs"][0]["result"] = "SUCCESS"
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/44444").mock(
             return_value=httpx.Response(200, json=[item])
         )
         result = json.loads(await get_change_status(mock_ctx, "44444"))
-        elapsed_ms = result[0]["jobs"][0]["elapsed"]
-        assert elapsed_ms == 300000, "Completed job should keep Zuul's elapsed value"
+        elapsed = result[0]["jobs"][0]["elapsed"]
+        assert elapsed == 300, "Completed job elapsed should be 300s (300000ms / 1000)"
 
     async def test_no_change_no_url_returns_error(self, mock_ctx):
         result = json.loads(await get_change_status(mock_ctx))
         assert "error" in result
+
+    @respx.mock
+    async def test_running_job_has_status_running(self, mock_ctx):
+        item = make_status_item(change=11111)
+        # Default: result=None, start_time set, waiting_status=None → RUNNING
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/11111").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "11111"))
+        assert result[0]["jobs"][0]["status"] == "RUNNING"
+
+    @respx.mock
+    async def test_waiting_job_has_status_waiting(self, mock_ctx):
+        item = make_status_item(change=22222, jobs=[
+            {
+                "name": "deploy-ocp",
+                "result": None,
+                "voting": True,
+                "waiting_status": "dependencies: deploy-infra",
+                "queued": False,
+                "tries": 0,
+            }
+        ])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/22222").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "22222"))
+        assert result[0]["jobs"][0]["status"] == "WAITING"
+
+    @respx.mock
+    async def test_queued_job_has_status_queued(self, mock_ctx):
+        item = make_status_item(change=33333, jobs=[
+            {
+                "name": "test-job",
+                "uuid": "job-uuid-q",
+                "result": None,
+                "voting": True,
+                "queued": True,
+                "tries": 1,
+                "start_time": None,
+                "waiting_status": None,
+            }
+        ])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/33333").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "33333"))
+        assert result[0]["jobs"][0]["status"] == "QUEUED"
+
+    @respx.mock
+    async def test_completed_job_has_result_as_status(self, mock_ctx):
+        item = make_status_item(change=44400)
+        item["jobs"][0]["result"] = "FAILURE"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/44400").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "44400"))
+        assert result[0]["jobs"][0]["status"] == "FAILURE"
+
+    @respx.mock
+    async def test_relative_stream_url_made_absolute(self, mock_ctx):
+        item = make_status_item(change=70001)
+        item["jobs"][0]["url"] = "stream/job-uuid-1?logfile=console.log"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/70001").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "70001"))
+        stream_url = result[0]["jobs"][0]["stream_url"]
+        assert stream_url == (
+            "https://zuul.example.com/t/test-tenant/stream/job-uuid-1?logfile=console.log"
+        )
+
+    @respx.mock
+    async def test_absolute_stream_url_unchanged(self, mock_ctx):
+        item = make_status_item(change=70002)
+        item["jobs"][0]["url"] = "wss://zuul.example.com/console"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/70002").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "70002"))
+        assert result[0]["jobs"][0]["stream_url"] == "wss://zuul.example.com/console"
+
+    @respx.mock
+    async def test_chain_summary_present(self, mock_ctx):
+        item = make_status_item(change=80001)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/80001").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "80001"))
+        summary = result[0]["chain_summary"]
+        assert summary["total"] == 1
+        assert summary["running"] == 1
+        assert summary["completed"] == 0
+
+    @respx.mock
+    async def test_enqueue_time_normalized_to_seconds(self, mock_ctx):
+        item = make_status_item(change=80002)
+        # conftest sets enqueue_time=1704067200000 (ms)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/80002").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "80002"))
+        assert result[0]["enqueue_time"] == 1704067200.0  # seconds
+
+
+class TestFormatDuration:
+    def test_seconds_only(self):
+        assert _format_duration(45) == "45s"
+
+    def test_minutes_and_seconds(self):
+        assert _format_duration(125) == "2m 5s"
+
+    def test_hours_and_minutes(self):
+        assert _format_duration(3723) == "1h 2m"
+
+    def test_hours_only(self):
+        assert _format_duration(7200) == "2h 0m"
+
+    def test_zero(self):
+        assert _format_duration(0) == "0s"
+
+    def test_none_returns_none(self):
+        assert _format_duration(None) is None
+
+    def test_large_duration(self):
+        assert _format_duration(36000) == "10h 0m"
+
+
+class TestChainSummary:
+    def test_chain_progress(self):
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_chained_status_item()
+        formatted = fmt_status_item(item)
+        summary = formatted["chain_summary"]
+        assert summary["completed"] == 1  # deploy-infra
+        assert summary["total"] == 7
+        assert summary["running"] == 2  # deploy-ocp + deploy-osp
+        assert summary["waiting"] == 4
+        assert 0 < summary["progress_pct"] < 100
+
+    def test_critical_path_remaining(self):
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_chained_status_item()
+        formatted = fmt_status_item(item)
+        summary = formatted["chain_summary"]
+        # Critical path: deploy-osp(remaining ~129m) + install-shiftstack(94m)
+        #   + run-adoption(179m) + run-after(40m) = ~442m = ~26520s
+        assert summary["critical_path_remaining"] > 20000  # > ~5.5h
+        assert summary["critical_path_remaining"] < 35000  # < ~9.7h
+        assert "h" in summary["critical_path_remaining_str"]
+
+    def test_all_completed(self):
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_chained_status_item()
+        for j in item["jobs"]:
+            j["result"] = "SUCCESS"
+            j["elapsed_time"] = 300000
+            j.pop("remaining_time", None)
+            j.pop("waiting_status", None)
+            j.pop("estimated_time", None)
+        formatted = fmt_status_item(item)
+        summary = formatted["chain_summary"]
+        assert summary["completed"] == 7
+        assert summary["progress_pct"] == 100
+        assert summary["critical_path_remaining"] == 0
+
+    def test_single_job(self):
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_status_item()
+        formatted = fmt_status_item(item)
+        summary = formatted["chain_summary"]
+        assert summary["total"] == 1
+        assert summary["running"] == 1
+
+    def test_no_estimated_time_uses_zero(self):
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_chained_status_item()
+        for j in item["jobs"]:
+            j.pop("estimated_time", None)
+        formatted = fmt_status_item(item)
+        summary = formatted["chain_summary"]
+        assert summary["critical_path_remaining"] >= 0
+
+    def test_empty_jobs(self):
+        """Item with no jobs still gets a chain_summary."""
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_status_item()
+        item["jobs"] = []
+        formatted = fmt_status_item(item)
+        assert formatted["chain_summary"]["total"] == 0
+        assert formatted["chain_summary"]["critical_path_remaining"] == 0
+
+    def test_cycle_detection(self):
+        """Circular dependencies don't cause infinite recursion."""
+        jobs = [
+            {"name": "a", "status": "WAITING", "estimated": 100,
+             "dependencies": ["b"], "waiting_status": "b"},
+            {"name": "b", "status": "WAITING", "estimated": 200,
+             "dependencies": ["a"], "waiting_status": "a"},
+        ]
+        summary = _compute_chain_summary(jobs)
+        # Should not hang or raise RecursionError
+        assert summary["total"] == 2
+        assert summary["critical_path_remaining"] >= 0
+
+    def test_negative_remaining_clamped(self):
+        """Overdue RUNNING jobs (negative remaining) don't produce negative ETA."""
+        jobs = [
+            {"name": "overdue", "status": "RUNNING", "remaining": -60,
+             "elapsed": 7200, "estimated": 7140},
+        ]
+        summary = _compute_chain_summary(jobs)
+        assert summary["critical_path_remaining"] == 0
+
+    def test_clock_skew_elapsed_clamped(self):
+        """Negative elapsed from clock skew is clamped to 0."""
+        from mcp_zuul.formatters import fmt_status_item
+
+        item = make_status_item(change=90001)
+        item["jobs"][0]["start_time"] = time.time() + 10  # future (clock skew)
+        item["jobs"][0]["result"] = None
+        formatted = fmt_status_item(item)
+        assert formatted["jobs"][0]["elapsed"] == 0
+        assert formatted["jobs"][0]["elapsed_str"] == "0s"

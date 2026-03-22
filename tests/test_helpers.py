@@ -336,7 +336,7 @@ class TestFmtStatusItem:
         assert result["buildset_uuid"] == "bs-uuid"
         assert result["jobs"][0]["name"] == "test-job"
         # elapsed is computed from start_time for running jobs (not Zuul's stale value)
-        assert 100000 < result["jobs"][0]["elapsed"] < 200000  # ~120s = ~120000ms
+        assert 100 < result["jobs"][0]["elapsed"] < 200  # ~120s (now in seconds)
 
 
 class TestApiRetry:

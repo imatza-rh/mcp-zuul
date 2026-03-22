@@ -1,8 +1,26 @@
 """Token-efficient formatters for Zuul API responses."""
 
+from __future__ import annotations
+
 import time as _time
 
 from .helpers import clean
+
+
+def _format_duration(seconds: int | float | None) -> str | None:
+    """Convert seconds to human-readable duration string.
+
+    Returns "Xh Ym" for >=1h, "Xm Ys" for >=1m, "Xs" for <1m.
+    Returns None if input is None.
+    """
+    if seconds is None:
+        return None
+    seconds = int(seconds)
+    if seconds >= 3600:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds >= 60:
+        return f"{seconds // 60}m {seconds % 60}s"
+    return f"{seconds}s"
 
 
 def fmt_build(b: dict, brief: bool = True) -> dict:
@@ -61,9 +79,106 @@ def fmt_buildset(bs: dict, brief: bool = True) -> dict:
     return clean(out)
 
 
+def _job_status(j: dict) -> str:
+    """Compute a canonical status string for a job.
+
+    Always returns one of: SUCCESS, FAILURE, TIMED_OUT, SKIPPED, ABORTED,
+    RETRY_LIMIT, NODE_FAILURE, POST_FAILURE, RUNNING, WAITING, QUEUED.
+    """
+    result = j.get("result")
+    if result:
+        return result
+    if j.get("waiting_status"):
+        return "WAITING"
+    if j.get("start_time"):
+        return "RUNNING"
+    if j.get("queued"):
+        return "QUEUED"
+    return "QUEUED"
+
+
+def _compute_chain_summary(jobs: list[dict]) -> dict:
+    """Compute pipeline chain progress and critical-path ETA.
+
+    Walks the dependency graph to find the longest remaining-work path.
+    All times are in seconds.
+    """
+    if not jobs:
+        return {
+            "completed": 0, "total": 0, "running": 0, "waiting": 0,
+            "progress_pct": 0, "critical_path_remaining": 0,
+            "critical_path_remaining_str": "0s",
+        }
+
+    completed = sum(1 for j in jobs if j.get("result"))
+    running = sum(1 for j in jobs if j.get("status") == "RUNNING")
+    waiting = sum(1 for j in jobs if j.get("status") in ("WAITING", "QUEUED"))
+    total = len(jobs)
+    progress_pct = int((completed / total) * 100)
+
+    by_name: dict[str, dict] = {j["name"]: j for j in jobs}
+    cache: dict[str, int | float] = {}
+    visiting: set[str] = set()  # cycle detection
+
+    def _remaining_through(name: str) -> int | float:
+        if name in cache:
+            return cache[name]
+        if name in visiting:
+            cache[name] = 0  # break cycle
+            return 0
+        job = by_name.get(name)
+        if not job:
+            cache[name] = 0
+            return 0
+
+        visiting.add(name)
+
+        if job.get("result"):
+            cache[name] = 0
+            visiting.discard(name)
+            return 0
+
+        remaining = job.get("remaining")
+        estimated = job.get("estimated", 0) or 0
+        elapsed = job.get("elapsed", 0) or 0
+
+        if job.get("status") == "RUNNING":
+            if remaining is not None:
+                own = max(0, remaining)  # clamp: overdue jobs have negative remaining
+            else:
+                own = max(0, estimated - elapsed)
+        else:
+            # WAITING/QUEUED — full estimated duration plus dependency wait
+            deps = job.get("dependencies") or []
+            dep_max = max((_remaining_through(d) for d in deps), default=0) if deps else 0
+            own = estimated + dep_max
+
+        cache[name] = own
+        visiting.discard(name)
+        return own
+
+    critical_path = int(max((_remaining_through(j["name"]) for j in jobs), default=0))
+
+    return {
+        "completed": completed,
+        "total": total,
+        "running": running,
+        "waiting": waiting,
+        "progress_pct": progress_pct,
+        "critical_path_remaining": critical_path,
+        "critical_path_remaining_str": _format_duration(critical_path),
+    }
+
+
 def fmt_status_item(item: dict) -> dict:
-    """Format a pipeline status item into a compact representation."""
-    out = {
+    """Format a pipeline status item into a compact representation.
+
+    Times are normalized to seconds. Each job includes a computed ``status``
+    field (RUNNING, WAITING, QUEUED, SUCCESS, FAILURE, ...) and human-readable
+    ``elapsed_str``/``remaining_str``. A ``chain_summary`` with critical-path
+    ETA is added when jobs are present.
+    """
+    out: dict = {
         "id": item.get("id", ""),
         "active": item.get("active", False),
         "live": item.get("live", False),
@@ -76,33 +191,47 @@ def fmt_status_item(item: dict) -> dict:
         out["url"] = r.get("url", "")
     enqueue_time = item.get("enqueue_time")
     if enqueue_time:
-        out["enqueue_time"] = enqueue_time
+        out["enqueue_time"] = enqueue_time / 1000  # ms → seconds
     zuul_ref = item.get("zuul_ref", "")
     if zuul_ref.startswith("Z"):
         out["buildset_uuid"] = zuul_ref[1:]
+
+    formatted_jobs: list[dict] = []
     jobs = item.get("jobs", [])
     if jobs:
         now = _time.time()
-        formatted_jobs = []
         for j in jobs:
             elapsed = j.get("elapsed_time")
             start = j.get("start_time")
+            remaining = j.get("remaining_time")
+            estimated = j.get("estimated_time")
+
             # Always compute elapsed from start_time for running jobs.
             # Zuul's elapsed_time is a snapshot from the scheduler's last
             # status update and can be stale by minutes.
             if start and not j.get("result"):
-                elapsed = int((now - start) * 1000)  # ms
+                elapsed = max(0, int(now - start))  # seconds, clamped for clock skew
+            elif elapsed is not None:
+                elapsed = elapsed // 1000  # ms → seconds
+            if remaining is not None:
+                remaining = max(0, remaining // 1000)  # ms → seconds, clamped for overruns
+
+            status = _job_status(j)
+
             formatted_jobs.append(
                 clean(
                     {
                         "name": j.get("name", ""),
                         "uuid": j.get("uuid"),
+                        "status": status,
                         "result": j.get("result"),
                         "voting": j.get("voting", True),
                         "pre_fail": j.get("pre_fail"),
                         "elapsed": elapsed,
-                        "remaining": j.get("remaining_time"),
-                        "estimated": j.get("estimated_time"),
+                        "elapsed_str": _format_duration(elapsed),
+                        "remaining": remaining,
+                        "remaining_str": _format_duration(remaining),
+                        "estimated": estimated,
                         "start_time": start,
                         "report_url": j.get("report_url"),
                         "stream_url": j.get("url"),
@@ -114,6 +243,9 @@ def fmt_status_item(item: dict) -> dict:
                 )
             )
         out["jobs"] = formatted_jobs
+
+    out["chain_summary"] = _compute_chain_summary(formatted_jobs)
+
     failing = item.get("failing_reasons", [])
     if failing:
         out["failing_reasons"] = failing
