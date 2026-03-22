@@ -389,16 +389,25 @@ async def get_build_failures(
         stats = pb.get("stats", {})
         has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
 
-        # Include all playbooks with phase/name/stats for pipeline progression
-        pb_summary = clean(
-            {
+        # Include all playbooks for pipeline progression context.
+        # Passing playbooks: compact (phase/name/failed only).
+        # Failed playbooks: full detail (stats + full path for diagnosis).
+        if has_failure:
+            pb_summary = clean(
+                {
+                    "phase": phase,
+                    "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
+                    "playbook_full": playbook,
+                    "failed": True,
+                    "stats": stats,
+                }
+            )
+        else:
+            pb_summary = {
                 "phase": phase,
                 "playbook": playbook.split("/")[-1] if "/" in playbook else playbook,
-                "playbook_full": playbook,
-                "failed": has_failure,
-                "stats": stats,
+                "failed": False,
             }
-        )
         playbooks.append(pb_summary)
 
         # Extract individual failed tasks only from failed playbooks
@@ -503,19 +512,30 @@ async def diagnose_build(
                     playbook = pb.get("playbook", "")
                     stats = pb.get("stats", {})
                     has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
-                    playbooks.append(
-                        clean(
+                    if has_failure:
+                        playbooks.append(
+                            clean(
+                                {
+                                    "phase": phase,
+                                    "playbook": (
+                                        playbook.split("/")[-1] if "/" in playbook else playbook
+                                    ),
+                                    "playbook_full": playbook,
+                                    "failed": True,
+                                    "stats": stats,
+                                }
+                            )
+                        )
+                    else:
+                        playbooks.append(
                             {
                                 "phase": phase,
                                 "playbook": (
                                     playbook.split("/")[-1] if "/" in playbook else playbook
                                 ),
-                                "playbook_full": playbook,
-                                "failed": has_failure,
-                                "stats": stats,
+                                "failed": False,
                             }
                         )
-                    )
                     if has_failure:
                         for play in pb.get("plays", []):
                             play_name = play.get("play", {}).get("name", "")
