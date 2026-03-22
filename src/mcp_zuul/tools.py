@@ -316,6 +316,20 @@ async def get_build(
     return json.dumps(fmt_build(data, brief=False))
 
 
+def _truncate_invocation(module_args: dict | None, max_size: int = 4000) -> dict | None:
+    """Extract replay-relevant fields from module invocation args, with size cap."""
+    if not module_args or not isinstance(module_args, dict):
+        return None
+    relevant_keys = ("target", "chdir", "params", "cmd", "creates", "removes")
+    relevant = {k: v for k, v in module_args.items() if k in relevant_keys and v is not None}
+    if not relevant:
+        return None
+    for k, v in relevant.items():
+        if isinstance(v, str) and len(v) > max_size:
+            relevant[k] = v[:max_size] + "..."
+    return relevant
+
+
 @mcp.tool(title="Build Failure Analysis", annotations=_READ_ONLY)
 @handle_errors
 async def get_build_failures(
