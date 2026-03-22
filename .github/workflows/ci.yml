@@ -26,6 +26,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          cache-python: true
           cache-dependency-glob: "pyproject.toml"
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
@@ -45,6 +46,7 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
+          cache-python: true
           cache-dependency-glob: "pyproject.toml"
       - name: Install dependencies
         run: uv sync --extra dev
