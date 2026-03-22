@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --python ${{ matrix.python-version }}
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --cov=mcp_zuul --cov-fail-under=85
 
   lint:
     runs-on: ubuntu-latest

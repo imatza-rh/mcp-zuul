@@ -32,6 +32,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "respx>=0.22",
+    "pytest-cov>=6.0",
     "ruff>=0.9",
     "mypy>=1.14",
     "types-defusedxml>=0.7",
