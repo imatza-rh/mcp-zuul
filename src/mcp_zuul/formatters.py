@@ -9,7 +9,7 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
     """Format a build response into a compact representation."""
     out = {
         "uuid": b.get("uuid", "unknown"),
-        "job": b["job_name"],
+        "job": b.get("job_name", "unknown"),
         "result": b.get("result") or "IN_PROGRESS",
         "pipeline": b.get("pipeline", ""),
         "duration": b.get("duration"),

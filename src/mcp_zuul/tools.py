@@ -4,10 +4,10 @@ import asyncio
 import contextlib
 import json
 import re
-import xml.etree.ElementTree as ET
 from typing import Any
 from urllib.parse import quote, urlparse
 
+import defusedxml.ElementTree as ET
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
@@ -376,7 +376,12 @@ async def get_build_failures(
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        return error(f"Failed to parse job-output.json: {e}")
+        size_note = (
+            f" (file was {len(resp.content)} bytes, truncated to {_MAX_JSON_LOG_BYTES})"
+            if len(resp.content) > _MAX_JSON_LOG_BYTES
+            else ""
+        )
+        return error(f"Failed to parse job-output.json{size_note}: {e}")
 
     if not isinstance(data, list):
         return error("Unexpected job-output.json format")
@@ -569,7 +574,8 @@ async def diagnose_build(
     log_context = []
     txt_url = log_url.rstrip("/") + "/job-output.txt"
     try:
-        raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
+        log_bytes, log_truncated = await stream_log(a, txt_url)
+        raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
         all_lines = raw.splitlines()
         total = len(all_lines)
         pat = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
@@ -596,7 +602,7 @@ async def diagnose_build(
                 ]
                 log_context.append(block)
     except Exception:
-        pass  # Log unavailable — structured data still useful
+        log_truncated = False  # Log unavailable — structured data still useful
 
     return json.dumps(
         clean(
@@ -609,6 +615,7 @@ async def diagnose_build(
                 "playbooks": playbooks,
                 "failed_tasks": failed_tasks,
                 "log_context": log_context or None,
+                "log_truncated": log_truncated or None,
             }
         )
     )
@@ -659,7 +666,8 @@ async def get_build_log(
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
 
     a = app(ctx)
-    raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
+    log_bytes, truncated = await stream_log(a, txt_url)
+    raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
 
@@ -671,18 +679,17 @@ async def get_build_log(
         e = (end_line if end_line > 0 else start_line + _MAX_LOG_LINES) - 1
         e = min(e, total - 1)
         chunk_lines = all_lines[s : e + 1]
-        return json.dumps(
-            {
-                "total_lines": total,
-                "log_url": txt_url,
-                "start_line": start_line,
-                "end_line": e + 1,
-                "count": len(chunk_lines),
-                "lines": [
-                    {"n": s + i + 1, "text": line[:500]} for i, line in enumerate(chunk_lines)
-                ],
-            }
-        )
+        result_dict: dict[str, Any] = {
+            "total_lines": total,
+            "log_url": txt_url,
+            "start_line": start_line,
+            "end_line": e + 1,
+            "count": len(chunk_lines),
+            "lines": [{"n": s + i + 1, "text": line[:500]} for i, line in enumerate(chunk_lines)],
+        }
+        if truncated:
+            result_dict["truncated"] = True
+        return json.dumps(result_dict)
 
     # Grep mode
     if grep:
@@ -831,8 +838,10 @@ async def browse_build_logs(
     # Directory listing (Apache/nginx index page)
     if "text/html" in content_type and (not path or path.endswith("/")):
         entries = re.findall(r'href="([^"?][^"]*)"', resp.text)
-        # Filter out parent directory and absolute links
-        entries = [e for e in entries if not e.startswith("/") and not e.startswith("http")]
+        # Filter out parent directory, absolute links, and traversal entries
+        entries = [
+            e for e in entries if not e.startswith("/") and not e.startswith("http") and e != "../"
+        ]
         return json.dumps(
             {
                 "log_url": target_url,
@@ -891,24 +900,29 @@ async def tail_build_log(
 
     a = app(ctx)
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-    raw = strip_ansi((await stream_log(a, txt_url)).decode("utf-8", errors="replace"))
+    log_bytes, truncated = await stream_log(a, txt_url)
+    raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
     n = max(1, min(lines, 500))
     tail_start = max(0, total - n)
     tail = all_lines[tail_start:]
 
-    return json.dumps(
-        {
-            "total_lines": total,
-            "log_url": txt_url,
-            "job": build.get("job_name", ""),
-            "result": build.get("result", ""),
-            "tail_from": tail_start + 1,
-            "count": len(tail),
-            "lines": [line[:500] for line in tail],
-        }
-    )
+    result_dict: dict[str, Any] = {
+        "total_lines": total,
+        "log_url": txt_url,
+        "job": build.get("job_name", ""),
+        "result": build.get("result", ""),
+        "tail_from": tail_start + 1,
+        "count": len(tail),
+        "lines": [line[:500] for line in tail],
+    }
+    if truncated:
+        result_dict["truncated"] = True
+        result_dict["warning"] = (
+            "Log exceeded 10 MB — tail is from truncated content, not the actual end"
+        )
+    return json.dumps(result_dict)
 
 
 @mcp.tool(title="Search Buildsets", annotations=_READ_ONLY)
@@ -961,30 +975,36 @@ async def list_buildsets(
     trimmed = data[:limit]
 
     if include_builds and trimmed:
+        sem = asyncio.Semaphore(10)
+
+        async def _fetch_bs(bs_uuid: str) -> Any:
+            async with sem:
+                return await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}")
+
         details = await asyncio.gather(
-            *[
-                api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs['uuid'])}")
-                for bs in trimmed
-                if bs.get("uuid")
-            ],
+            *[_fetch_bs(bs["uuid"]) for bs in trimmed if bs.get("uuid")],
             return_exceptions=True,
         )
         buildsets = []
+        fetch_errors = 0
         for d in details:
             if isinstance(d, Exception):
+                fetch_errors += 1
                 continue
             buildsets.append(fmt_buildset(d, brief=False))  # type: ignore[arg-type]
     else:
         buildsets = [fmt_buildset(bs) for bs in trimmed]
+        fetch_errors = 0
 
-    return json.dumps(
-        {
-            "buildsets": buildsets,
-            "count": len(buildsets),
-            "has_more": has_more,
-            "skip": skip,
-        }
-    )
+    result_dict: dict[str, Any] = {
+        "buildsets": buildsets,
+        "count": len(buildsets),
+        "has_more": has_more,
+        "skip": skip,
+    }
+    if fetch_errors:
+        result_dict["fetch_errors"] = fetch_errors
+    return json.dumps(result_dict)
 
 
 @mcp.tool(title="Buildset Details", annotations=_READ_ONLY)
@@ -1013,18 +1033,23 @@ async def list_jobs(
     ctx: Context,
     tenant: str = "",
     filter: str = "",
+    limit: int = 200,
 ) -> str:
     """List all jobs in a tenant. Optionally filter by name substring.
 
     Args:
         tenant: Tenant name (uses default if empty)
         filter: Case-insensitive substring to filter job names
+        limit: Max results to return (default 200, 0 for unlimited)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/jobs")
     if filter:
         f_lower = filter.lower()
         data = [j for j in data if f_lower in j.get("name", "").lower()]
+    total = len(data)
+    if limit > 0:
+        data = data[:limit]
     result = [
         clean(
             {
@@ -1035,7 +1060,11 @@ async def list_jobs(
         )
         for j in data
     ]
-    return json.dumps({"jobs": result, "count": len(result)})
+    out: dict[str, Any] = {"jobs": result, "count": len(result)}
+    if total > len(result):
+        out["total"] = total
+        out["truncated"] = True
+    return json.dumps(out)
 
 
 @mcp.tool(title="Job Configuration", annotations=_READ_ONLY)
@@ -1177,18 +1206,23 @@ async def list_projects(
     ctx: Context,
     tenant: str = "",
     filter: str = "",
+    limit: int = 200,
 ) -> str:
     """List all projects in a tenant. Optionally filter by name substring.
 
     Args:
         tenant: Tenant name (uses default if empty)
         filter: Case-insensitive substring to filter project names
+        limit: Max results to return (default 200, 0 for unlimited)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/projects")
     if filter:
         f_lower = filter.lower()
         data = [p for p in data if f_lower in p.get("name", "").lower()]
+    total = len(data)
+    if limit > 0:
+        data = data[:limit]
     result = [
         clean(
             {
@@ -1200,7 +1234,11 @@ async def list_projects(
         )
         for p in data
     ]
-    return json.dumps({"projects": result, "count": len(result)})
+    out: dict[str, Any] = {"projects": result, "count": len(result)}
+    if total > len(result):
+        out["total"] = total
+        out["truncated"] = True
+    return json.dumps(out)
 
 
 @mcp.tool(title="Nodepool Nodes", annotations=_READ_ONLY)

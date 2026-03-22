@@ -37,7 +37,7 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 
 ```
 __init__.py   →  imports tools, prompts, resources (registers decorators), exports main()
-server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients)
+server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
 tools.py      →  35 @mcp.tool() functions (30 read-only + 4 write + 1 LogJuicer) with titles
 prompts.py    →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
 resources.py  →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
@@ -50,14 +50,17 @@ errors.py     →  @handle_errors decorator wrapping all tools with uniform erro
 
 ### Key Patterns
 
-- **Two httpx clients**: `client` (API calls, has base_url + auth headers) and `log_client` (log file fetches from external hosts, no base_url). Both created in `server.py:lifespan`.
-- **AppContext**: Injected via FastMCP lifespan, accessed in tools via `app(ctx)` helper.
+- **Two httpx clients**: `client` (API calls, has base_url + `_BearerAuth`) and `log_client` (log file fetches from external hosts, no base_url/auth). Both created in `server.py:lifespan`. `_pick_client()` selects based on log host vs API host.
+- **Auth safety**: `_BearerAuth` (httpx.Auth subclass) ensures tokens are stripped on cross-origin redirects. An `asyncio.Lock` (`_auth_lock` on AppContext) serializes Kerberos re-auth to prevent concurrent session corruption.
+- **Streaming with size caps**: `fetch_log_url()` streams up to 20 MB (prevents unbounded memory from large `job-output.json`). `stream_log()` streams up to 10 MB and returns `(bytes, truncated_bool)` so callers can warn users.
+- **AppContext**: Injected via FastMCP lifespan, accessed in tools via `app(ctx)` helper. Holds both clients, config, and the auth lock.
 - **Tenant resolution**: Every tool accepts optional `tenant` param; `helpers.tenant()` falls back to `ZUUL_DEFAULT_TENANT` env var.
-- **URL-based input**: Build/buildset/change tools accept a `url` param as alternative to `uuid` + `tenant`. `parse_zuul_url()` extracts tenant and resource ID from Zuul web URLs.
+- **URL-based input**: Build/buildset/change tools accept a `url` param as alternative to `uuid` + `tenant`. `parse_zuul_url()` extracts tenant and resource ID from Zuul web URLs. Supports both multi-tenant (`/t/<tenant>/build/...`) and single-tenant (`/build/...`) URL formats.
 - **`_resolve()`**: Shared helper in tools.py that resolves resource ID + tenant from either explicit params or URL.
 - **`safepath()`**: URL path sanitization — preserves slashes for Zuul project names (e.g., `org/repo`) but blocks `..` traversal.
 - **`clean()`**: Strips `None` values from dicts to minimize token usage in responses.
 - **All tools return JSON strings**, never raw dicts. Errors also return JSON via `helpers.error()`.
+- **XML parsing**: Uses `defusedxml` (not stdlib `xml.etree.ElementTree`) for JUnit XML to prevent entity expansion attacks on untrusted test artifacts.
 - **ToolAnnotations**: Read-only tools: `readOnlyHint=True`. Write tools: `readOnlyHint=False`, with `destructiveHint=True` for dequeue/autohold_delete.
 - **Read-only mode**: `ZUUL_READ_ONLY=true` (default) removes write tools at startup. Set to `false` to enable enqueue/dequeue/autohold operations.
 - **Transport**: Configurable via `MCP_TRANSPORT` env var — `stdio` (default), `sse`, or `streamable-http`. HTTP transport enables remote/shared deployment.

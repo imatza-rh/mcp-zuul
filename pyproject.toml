@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "mcp>=1.26.0",
     "httpx>=0.28.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,7 @@ dev = [
     "respx>=0.22",
     "ruff>=0.9",
     "mypy>=1.14",
+    "types-defusedxml>=0.7",
 ]
 
 [project.scripts]
@@ -90,3 +92,4 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "gssapi.*"
 ignore_missing_imports = true
+

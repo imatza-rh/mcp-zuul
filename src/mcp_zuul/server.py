@@ -21,16 +21,27 @@ logging.basicConfig(
 log = logging.getLogger("zuul-mcp")
 
 
+class _BearerAuth(httpx.Auth):
+    """httpx Auth that sends a Bearer token, stripping it on cross-origin redirects."""
+
+    def __init__(self, token: str) -> None:
+        self.token = token
+
+    def auth_flow(self, request: httpx.Request):  # type: ignore[override]
+        request.headers["Authorization"] = f"Bearer {self.token}"
+        yield request
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
     config = Config.from_env()
     headers = {"Accept": "application/json"}
-    if config.auth_token:
-        headers["Authorization"] = f"Bearer {config.auth_token}"
+    auth = _BearerAuth(config.auth_token) if config.auth_token else None
     async with (
         httpx.AsyncClient(
             base_url=config.base_url,
             headers=headers,
+            auth=auth,
             timeout=config.timeout,
             follow_redirects=True,
             verify=config.verify_ssl,

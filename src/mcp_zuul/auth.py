@@ -74,6 +74,9 @@ async def kerberos_auth(client: httpx.AsyncClient, base_url: str) -> None:
             f"Kerberos auth: SPNEGO token generation failed (is your ticket valid? run kinit): {e}"
         ) from e
 
+    if not out_token:
+        raise RuntimeError("Kerberos auth: SPNEGO context produced no token")
+
     # Send the authenticated request to the SSO endpoint.
     resp = await client.get(
         url,
