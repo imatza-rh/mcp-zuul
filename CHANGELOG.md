@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-03-22
+
+### Security
+- Auth token protection via `_BearerAuth` (httpx.Auth subclass) — prevents token leakage on cross-origin redirects
+- Streaming size caps: `fetch_log_url` (20 MB), `stream_log` (10 MB) — prevents unbounded memory from large logs
+- `defusedxml.ElementTree` for JUnit XML parsing — prevents entity expansion attacks
+- `asyncio.Lock` serializes concurrent Kerberos re-auth — prevents session corruption
+- Non-JSON response handling in `api()`, `api_post()`, `api_delete()` — clear errors on reverse proxy HTML responses
+- Precise stream truncation — includes partial last chunk up to the exact size limit
+- Guard against `gssapi ctx.step()` returning None token
+
+### Added
+- Default `limit=200` for `list_jobs` and `list_projects` — prevents unbounded LLM responses
+- `asyncio.Semaphore(10)` for `list_buildsets` concurrent detail fetches
+- Single-tenant Zuul URL support in `parse_zuul_url`
+- `_parse_playbooks()` shared helper for failure analysis
+- `_truncate_invocation()` helper with size cap for module args
+- CONTRIBUTING.md, SECURITY.md, CHANGELOG.md
+- Makefile with standard targets (test, lint, format, typecheck, check, build, clean)
+- GitHub issue and PR templates
+- Test coverage gate at 85% (currently 89%)
+- `.coverage` in .gitignore
+
+### Changed
+- `.env.example` expanded with all 13 config variables
+
 ## [0.3.1] - 2026-03-22
 
 ### Added
@@ -80,6 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.3.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.2
 [0.3.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.1
 [0.3.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.0
 [0.2.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.2.1
