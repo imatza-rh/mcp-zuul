@@ -4,7 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      patch-and-minor:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    groups:
+      patch-and-minor:
+        patterns: ["*"]
+        update-types: ["patch", "minor"]

@@ -8,3 +8,4 @@ build/
 uv.lock
 .claude/
 .coverage
+coverage.xml

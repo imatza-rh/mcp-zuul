@@ -32,7 +32,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --python ${{ matrix.python-version }}
       - name: Run tests
-        run: uv run pytest tests/ -v --cov=mcp_zuul --cov-fail-under=85
+        run: uv run pytest tests/ -v --cov=mcp_zuul --cov-fail-under=85 --cov-report=term-missing --cov-report=xml
+      - name: Coverage summary
+        if: matrix.python-version == '3.13' && always()
+        run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     runs-on: ubuntu-latest
@@ -51,3 +54,5 @@ jobs:
         run: uv run ruff format --check src/ tests/
       - name: Mypy
         run: uv run mypy src/mcp_zuul/
+      - name: Audit dependencies
+        run: uv run pip-audit
