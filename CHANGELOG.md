@@ -5,18 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.4.0] - 2026-03-23
+## [0.3.3] - 2026-03-23
 
 ### Changed
-- **BREAKING**: `elapsed`, `remaining`, `enqueue_time` in `get_change_status` now in seconds (were milliseconds)
-- Jobs in `get_change_status` now include always-present `status` field: SUCCESS, FAILURE, RUNNING, WAITING, QUEUED
+- **BREAKING**: `elapsed`, `remaining`, `enqueue_time` in `get_status` and `get_change_status` now in seconds (were milliseconds)
+- **BREAKING**: Running jobs get fresh `elapsed`/`remaining` recomputed from `start_time` instead of Zuul's stale scheduler snapshot
+- Jobs in `get_status` and `get_change_status` now include always-present `status` field: SUCCESS, FAILURE, RUNNING, WAITING, QUEUED
 - Relative `stream_url` values are absolutified with the Zuul base URL in `get_change_status`
 
 ### Added
-- `elapsed_str`, `remaining_str` — human-readable duration strings ("1h 23m") per job
+- `get_job_durations` tool — batch avg/min/max duration for multiple jobs in one call (new tool, 35→36 total)
+- `elapsed_str`, `remaining_str` — human-readable duration strings ("1h 23m") per job in status responses
 - `chain_summary` at the item level — pipeline progress counts, critical-path remaining time via dependency-graph walk
-- `_format_duration()` helper for seconds-to-human conversion
 - Cycle detection in chain summary dependency traversal
+
+### CI
+- Supply chain scanning via `pip-audit` in lint job
+- Dependabot auto-merge gated to patch/minor only (was ungated)
+- Docker workflow runs tests + lint before building
+- UV cache improvements (`cache-python: true`)
+- Coverage XML export and markdown summary in CI
 
 ## [0.3.2] - 2026-03-22
 
@@ -119,6 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.3.3]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.3
 [0.3.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.2
 [0.3.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.1
 [0.3.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.0
