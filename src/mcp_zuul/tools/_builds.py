@@ -11,14 +11,9 @@ from ..errors import handle_errors
 from ..formatters import fmt_build, fmt_buildset
 from ..helpers import api, app, clean, safepath, stream_log, strip_ansi
 from ..helpers import tenant as _tenant
+from ..parsers import grep_log_context
 from ..server import mcp
-from ._common import (
-    _READ_ONLY,
-    _fetch_job_output,
-    _grep_log_context,
-    _no_log_url_error,
-    _resolve,
-)
+from ._common import _READ_ONLY, _fetch_job_output, _no_log_url_error, _resolve
 
 
 @mcp.tool(title="Search Builds", annotations=_READ_ONLY)
@@ -161,7 +156,7 @@ async def get_build_failures(
     log_context: list[list[dict]] = []
     try:
         log_bytes, _truncated = await stream_log(app(ctx), log_url.rstrip("/") + "/job-output.txt")
-        log_context = _grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace")))
+        log_context = grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace")))
     except Exception:
         pass
 
@@ -236,7 +231,7 @@ async def diagnose_build(
         log_bytes, log_truncated = await stream_log(
             app(ctx), log_url.rstrip("/") + "/job-output.txt"
         )
-        log_context = _grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace")))
+        log_context = grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace")))
     except Exception:
         pass  # Log unavailable - structured data still useful
 

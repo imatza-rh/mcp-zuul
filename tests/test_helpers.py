@@ -134,19 +134,19 @@ class TestConfig:
             assert config.base_url == "https://zuul.example.com"
 
     def test_from_env_missing_url_exits(self):
-        with patch.dict(os.environ, {}, clear=True), pytest.raises(SystemExit):
+        with patch.dict(os.environ, {}, clear=True), pytest.raises(ValueError):
             Config.from_env()
 
     def test_from_env_invalid_timeout_exits(self):
         with (
             patch.dict(os.environ, {"ZUUL_URL": "https://x", "ZUUL_TIMEOUT": "abc"}, clear=False),
-            pytest.raises(SystemExit),
+            pytest.raises(ValueError),
         ):
             Config.from_env()
 
     def test_from_env_kerberos_and_token_exits(self):
         env = {"ZUUL_URL": "https://x", "ZUUL_USE_KERBEROS": "true", "ZUUL_AUTH_TOKEN": "tok"}
-        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+        with patch.dict(os.environ, env, clear=False), pytest.raises(ValueError):
             Config.from_env()
 
     def test_from_env_transport_default(self):
@@ -162,7 +162,7 @@ class TestConfig:
 
     def test_from_env_invalid_transport_exits(self):
         env = {"ZUUL_URL": "https://x", "MCP_TRANSPORT": "websocket"}
-        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+        with patch.dict(os.environ, env, clear=False), pytest.raises(ValueError):
             Config.from_env()
 
     def test_from_env_enabled_tools(self):
@@ -185,12 +185,12 @@ class TestConfig:
             "ZUUL_ENABLED_TOOLS": "get_build",
             "ZUUL_DISABLED_TOOLS": "list_tenants",
         }
-        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+        with patch.dict(os.environ, env, clear=False), pytest.raises(ValueError):
             Config.from_env()
 
     def test_from_env_invalid_port_exits(self):
         env = {"ZUUL_URL": "https://x", "MCP_PORT": "not-a-number"}
-        with patch.dict(os.environ, env, clear=False), pytest.raises(SystemExit):
+        with patch.dict(os.environ, env, clear=False), pytest.raises(ValueError):
             Config.from_env()
 
 

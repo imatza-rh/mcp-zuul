@@ -9,7 +9,7 @@ from urllib.parse import quote
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
-from ..formatters import _format_duration, fmt_buildset, fmt_status_item
+from ..formatters import _format_duration, fmt_buildset, fmt_status_item, iter_status_items
 from ..helpers import api, app, clean, error, parse_zuul_url, safepath
 from ..helpers import tenant as _tenant
 from ..server import mcp
@@ -48,38 +48,23 @@ async def get_status(
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status")
 
-    pipelines = data.get("pipelines", [])
-    result = []
-    for p in pipelines:
-        if pipeline and p["name"] != pipeline:
-            continue
-        items = []
-        for queue in p.get("change_queues", []):
-            for heads_group in queue.get("heads", []):
-                for item in heads_group:
-                    if project:
-                        item_projects = [r.get("project", "") for r in item.get("refs", [])]
-                        if not any(project in proj for proj in item_projects):
-                            continue
-                    if active_only and not item.get("active", False):
-                        continue
-                    items.append(fmt_status_item(item))
-                    if len(items) >= 50:
-                        break
-                if len(items) >= 50:
-                    break
-            if len(items) >= 50:
-                break
-        if items or not active_only:
-            result.append(
-                {
-                    "pipeline": p["name"],
-                    "item_count": len(items),
-                    "items": items,
-                }
-            )
+    all_pipelines = data.get("pipelines", [])
+    if pipeline:
+        all_pipelines = [p for p in all_pipelines if p["name"] == pipeline]
 
-    # Only include pipelines with items when active_only
+    # Collect items per pipeline using the flattened iterator
+    by_pipeline: dict[str, list] = {}
+    for pname, item in iter_status_items(all_pipelines, project=project, active_only=active_only):
+        items = by_pipeline.setdefault(pname, [])
+        if len(items) < 50:
+            items.append(fmt_status_item(item))
+
+    result = []
+    for p in all_pipelines:
+        items = by_pipeline.get(p["name"], [])
+        if items or not active_only:
+            result.append({"pipeline": p["name"], "item_count": len(items), "items": items})
+
     if active_only:
         result = [r for r in result if r["item_count"] > 0]
 

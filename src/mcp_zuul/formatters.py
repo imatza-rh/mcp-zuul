@@ -245,6 +245,77 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     }
 
 
+def iter_status_items(pipelines: list, *, project: str = "", active_only: bool = True):
+    """Yield (pipeline_name, item) pairs from Zuul status pipelines.
+
+    Flattens the nested pipeline -> change_queues -> heads -> items
+    structure into a simple iterator with optional project/active filtering.
+    """
+    for p in pipelines:
+        for queue in p.get("change_queues", []):
+            for heads_group in queue.get("heads", []):
+                for item in heads_group:
+                    if project:
+                        item_projects = [r.get("project", "") for r in item.get("refs", [])]
+                        if not any(project in proj for proj in item_projects):
+                            continue
+                    if active_only and not item.get("active", False):
+                        continue
+                    yield p["name"], item
+
+
+def _format_job(j: dict, now: float) -> dict:
+    """Format a single job from pipeline status into compact representation.
+
+    Normalizes times to seconds, recomputing elapsed/remaining from
+    start_time for running jobs (Zuul's values can be stale by minutes).
+    """
+    elapsed = j.get("elapsed_time")
+    start = j.get("start_time")
+    remaining = j.get("remaining_time")
+    estimated = j.get("estimated_time")
+
+    # Always compute elapsed from start_time for running jobs.
+    # Zuul's elapsed_time is a snapshot from the scheduler's last
+    # status update and can be stale by minutes.  Remaining is
+    # also stale (estimated*1000 - stale_elapsed), so recompute
+    # both from start_time for consistency.
+    if start and not j.get("result"):
+        elapsed = max(0, int(now - start))  # seconds, clamped for clock skew
+        if estimated is not None:
+            remaining = max(0, estimated - elapsed)  # fresh remaining
+        else:
+            remaining = None
+    else:
+        if elapsed is not None:
+            elapsed = elapsed // 1000  # ms -> seconds
+        if remaining is not None:
+            remaining = max(0, remaining // 1000)  # ms -> seconds
+
+    return clean(
+        {
+            "name": j.get("name", ""),
+            "uuid": j.get("uuid"),
+            "status": _job_status(j),
+            "result": j.get("result"),
+            "voting": j.get("voting", True),
+            "pre_fail": j.get("pre_fail"),
+            "elapsed": elapsed,
+            "elapsed_str": _format_duration(elapsed),
+            "remaining": remaining,
+            "remaining_str": _format_duration(remaining),
+            "estimated": estimated,
+            "start_time": start,
+            "report_url": j.get("report_url"),
+            "stream_url": j.get("url"),
+            "dependencies": j.get("dependencies") or None,
+            "waiting_status": j.get("waiting_status"),
+            "queued": j.get("queued"),
+            "tries": j.get("tries"),
+        }
+    )
+
+
 def fmt_status_item(item: dict) -> dict:
     """Format a pipeline status item into a compact representation.
 
@@ -266,7 +337,7 @@ def fmt_status_item(item: dict) -> dict:
         out["url"] = r.get("url", "")
     enqueue_time = item.get("enqueue_time")
     if enqueue_time:
-        out["enqueue_time"] = enqueue_time / 1000  # ms → seconds
+        out["enqueue_time"] = enqueue_time / 1000  # ms -> seconds
     zuul_ref = item.get("zuul_ref", "")
     if zuul_ref.startswith("Z"):
         out["buildset_uuid"] = zuul_ref[1:]
@@ -275,55 +346,7 @@ def fmt_status_item(item: dict) -> dict:
     jobs = item.get("jobs", [])
     if jobs:
         now = _time.time()
-        for j in jobs:
-            elapsed = j.get("elapsed_time")
-            start = j.get("start_time")
-            remaining = j.get("remaining_time")
-            estimated = j.get("estimated_time")
-
-            # Always compute elapsed from start_time for running jobs.
-            # Zuul's elapsed_time is a snapshot from the scheduler's last
-            # status update and can be stale by minutes.  Remaining is
-            # also stale (estimated*1000 - stale_elapsed), so recompute
-            # both from start_time for consistency.
-            if start and not j.get("result"):
-                elapsed = max(0, int(now - start))  # seconds, clamped for clock skew
-                if estimated is not None:
-                    remaining = max(0, estimated - elapsed)  # fresh remaining
-                else:
-                    remaining = None
-            else:
-                if elapsed is not None:
-                    elapsed = elapsed // 1000  # ms → seconds
-                if remaining is not None:
-                    remaining = max(0, remaining // 1000)  # ms → seconds
-
-            status = _job_status(j)
-
-            formatted_jobs.append(
-                clean(
-                    {
-                        "name": j.get("name", ""),
-                        "uuid": j.get("uuid"),
-                        "status": status,
-                        "result": j.get("result"),
-                        "voting": j.get("voting", True),
-                        "pre_fail": j.get("pre_fail"),
-                        "elapsed": elapsed,
-                        "elapsed_str": _format_duration(elapsed),
-                        "remaining": remaining,
-                        "remaining_str": _format_duration(remaining),
-                        "estimated": estimated,
-                        "start_time": start,
-                        "report_url": j.get("report_url"),
-                        "stream_url": j.get("url"),
-                        "dependencies": j.get("dependencies") or None,
-                        "waiting_status": j.get("waiting_status"),
-                        "queued": j.get("queued"),
-                        "tries": j.get("tries"),
-                    }
-                )
-            )
+        formatted_jobs = [_format_job(j, now) for j in jobs]
         out["jobs"] = formatted_jobs
 
     out["chain_summary"] = _compute_chain_summary(formatted_jobs)

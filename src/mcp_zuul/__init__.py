@@ -12,18 +12,16 @@ __all__ = ["AppContext", "Config", "clean", "main", "mcp", "strip_ansi"]
 
 
 def main():
-    import os
+    import sys
 
-    transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    kwargs: dict = {"transport": transport}
-    if transport != "stdio":
-        kwargs["host"] = os.environ.get("MCP_HOST", "127.0.0.1")
-        raw_port = os.environ.get("MCP_PORT", "8000")
-        try:
-            kwargs["port"] = int(raw_port)
-        except ValueError:
-            import sys
+    try:
+        config = Config.from_env()
+    except ValueError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
 
-            print(f"MCP_PORT must be an integer, got: {raw_port}", file=sys.stderr)
-            sys.exit(1)
+    kwargs: dict = {"transport": config.transport}
+    if config.transport != "stdio":
+        kwargs["host"] = config.host
+        kwargs["port"] = config.port
     mcp.run(**kwargs)
