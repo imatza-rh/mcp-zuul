@@ -366,13 +366,25 @@ class TestApiRetry:
         assert route.call_count == 2
 
     @respx.mock
-    async def test_no_retry_on_other_errors(self, mock_ctx):
-        """Non-503 errors should not trigger a retry."""
+    async def test_retries_on_500(self, mock_ctx):
+        """500 on first attempt should retry and succeed."""
         route = respx.get("https://zuul.example.com/api/tenants")
-        route.side_effect = [httpx.Response(500, text="Internal Server Error")]
+        route.side_effect = [
+            httpx.Response(500, text="Internal Server Error"),
+            httpx.Response(200, json=[{"name": "t1"}]),
+        ]
+        result = await api(mock_ctx, "/tenants")
+        assert result == [{"name": "t1"}]
+        assert route.call_count == 2
+
+    @respx.mock
+    async def test_no_retry_on_other_errors(self, mock_ctx):
+        """Non-500/503 errors should not trigger a retry."""
+        route = respx.get("https://zuul.example.com/api/tenants")
+        route.side_effect = [httpx.Response(502, text="Bad Gateway")]
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await api(mock_ctx, "/tenants")
-        assert exc_info.value.response.status_code == 500
+        assert exc_info.value.response.status_code == 502
         assert route.call_count == 1
 
     @respx.mock

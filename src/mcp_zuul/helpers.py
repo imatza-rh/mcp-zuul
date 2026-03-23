@@ -72,10 +72,10 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
                 await kerberos_auth(a.client, a.config.base_url)
             resp = await a.client.get(url, params=params)
 
-        # Retry once on 503 Service Unavailable (transient LB errors).
-        if resp.status_code == 503 and attempt == 0:
-            log.info("API returned 503 for %s, retrying in 1s", path)
-            await asyncio.sleep(1)
+        # Retry once on 500/503 (transient server errors, LB hiccups).
+        if resp.status_code in (500, 503) and attempt == 0:
+            log.info("API returned %d for %s, retrying in 2s", resp.status_code, path)
+            await asyncio.sleep(2)
             continue
 
         break
@@ -191,16 +191,38 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
     unbounded memory consumption from large log files.
     """
     http = _pick_client(a, url)
+
+    try:
+        return await _fetch_log_stream(http, a, url, max_bytes=_MAX_FETCH_BYTES)
+    except httpx.DecodingError:
+        # Corrupted gzip — retry without compression so the server
+        # sends raw bytes instead of a broken Content-Encoding: gzip.
+        log.info("DecodingError fetching %s, retrying without compression", url)
+        return await _fetch_log_stream(
+            http, a, url, max_bytes=_MAX_FETCH_BYTES,
+            headers={"Accept-Encoding": "identity"},
+        )
+
+
+async def _fetch_log_stream(
+    http: httpx.AsyncClient,
+    a: AppContext,
+    url: str,
+    *,
+    max_bytes: int,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """Internal: stream a log URL with size limit and optional custom headers."""
     chunks: list[bytes] = []
     size = 0
 
-    async with http.stream("GET", url, follow_redirects=True) as resp:
+    async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp:
         if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
             await resp.aclose()
             async with a._auth_lock:
                 log.info("Log fetch: session expired, re-authenticating via Kerberos")
                 await kerberos_auth(a.client, a.config.base_url)
-            async with http.stream("GET", url, follow_redirects=True) as resp2:
+            async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp2:
                 resp2_status = resp2.status_code
                 resp2_headers = resp2.headers
                 resp2_request = resp2.request
@@ -209,8 +231,8 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
                 else:
                     async for chunk in resp2.aiter_bytes():
                         size += len(chunk)
-                        if size > _MAX_FETCH_BYTES:
-                            overshoot = size - _MAX_FETCH_BYTES
+                        if size > max_bytes:
+                            overshoot = size - max_bytes
                             chunks.append(chunk[: len(chunk) - overshoot])
                             break
                         chunks.append(chunk)
@@ -229,8 +251,8 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
         else:
             async for chunk in resp.aiter_bytes():
                 size += len(chunk)
-                if size > _MAX_FETCH_BYTES:
-                    overshoot = size - _MAX_FETCH_BYTES
+                if size > max_bytes:
+                    overshoot = size - max_bytes
                     chunks.append(chunk[: len(chunk) - overshoot])
                     break
                 chunks.append(chunk)

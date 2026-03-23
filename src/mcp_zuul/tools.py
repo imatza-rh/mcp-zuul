@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import quote, urlparse
 
 import defusedxml.ElementTree as ET
+import httpx
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
@@ -397,6 +398,21 @@ def _parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
     return playbooks, failed_tasks
 
 
+def _no_log_url_error(build: dict, uuid: str) -> str:
+    """Return a helpful error when a build has no log_url yet."""
+    result = build.get("result")
+    if not result or result == "IN_PROGRESS":
+        return error(
+            f"Build {uuid} is still in progress (post-run phase) — "
+            "logs not yet available. Use get_change_status for live progress "
+            "or wait for the build to complete."
+        )
+    return error(
+        f"No log_url for build {uuid} (result: {result}). "
+        "Logs may have been lost or the build was aborted before log upload."
+    )
+
+
 @mcp.tool(title="Build Failure Analysis", annotations=_READ_ONLY)
 @handle_errors
 async def get_build_failures(
@@ -440,18 +456,24 @@ async def get_build_failures(
         )
 
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     a = app(ctx)
-    json_url = log_url.rstrip("/") + "/job-output.json.gz"
-    resp = await fetch_log_url(a, json_url)
-    if resp.status_code == 404:
-        # Fall back to uncompressed
-        json_url = log_url.rstrip("/") + "/job-output.json"
+    try:
+        json_url = log_url.rstrip("/") + "/job-output.json.gz"
         resp = await fetch_log_url(a, json_url)
-    if resp.status_code == 404:
-        return error("job-output.json not found")
-    resp.raise_for_status()
+        if resp.status_code == 404:
+            # Fall back to uncompressed
+            json_url = log_url.rstrip("/") + "/job-output.json"
+            resp = await fetch_log_url(a, json_url)
+        if resp.status_code == 404:
+            return error("job-output.json not found")
+        resp.raise_for_status()
+    except httpx.DecodingError:
+        return error(
+            "job-output.json.gz is corrupted (gzip decompression failed). "
+            "Use get_build_log with grep='FAILED|fatal' for text-based diagnosis."
+        )
 
     raw = resp.content[:_MAX_JSON_LOG_BYTES]
     try:
@@ -524,26 +546,29 @@ async def diagnose_build(
         )
 
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     a = app(ctx)
 
     # --- 1. Parse job-output.json for structured failures ---
-    json_url = log_url.rstrip("/") + "/job-output.json.gz"
-    resp = await fetch_log_url(a, json_url)
-    if resp.status_code == 404:
-        json_url = log_url.rstrip("/") + "/job-output.json"
-        resp = await fetch_log_url(a, json_url)
-
     playbooks: list[dict] = []
     failed_tasks: list[dict] = []
-    if resp.status_code == 200:
-        try:
-            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-            if isinstance(data, list):
-                playbooks, failed_tasks = _parse_playbooks(data)
-        except (json.JSONDecodeError, KeyError):
-            pass  # Fall through to log-based diagnosis
+    try:
+        json_url = log_url.rstrip("/") + "/job-output.json.gz"
+        resp = await fetch_log_url(a, json_url)
+        if resp.status_code == 404:
+            json_url = log_url.rstrip("/") + "/job-output.json"
+            resp = await fetch_log_url(a, json_url)
+
+        if resp.status_code == 200:
+            try:
+                data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+                if isinstance(data, list):
+                    playbooks, failed_tasks = _parse_playbooks(data)
+            except (json.JSONDecodeError, KeyError):
+                pass  # Fall through to log-based diagnosis
+    except httpx.DecodingError:
+        pass  # Corrupted gzip — fall through to log-based diagnosis
 
     # --- 2. Grep job-output.txt for fatal/FAILED context ---
     log_context = []
@@ -843,6 +868,9 @@ async def browse_build_logs(
     )
 
 
+_RUN_END_MARKER = re.compile(r"\| RUN END RESULT_")
+
+
 @mcp.tool(title="Log Tail", annotations=_READ_ONLY)
 @handle_errors
 async def tail_build_log(
@@ -852,6 +880,7 @@ async def tail_build_log(
     lines: int = 50,
     log_name: str = "job-output.txt",
     url: str = "",
+    skip_postrun: bool = True,
 ) -> str:
     """Get the last N lines of a build log — fastest way to see why a build failed.
 
@@ -864,12 +893,15 @@ async def tail_build_log(
         lines: Number of lines from the end (default 50, max 500)
         log_name: Log file to read (default "job-output.txt")
         url: Zuul build URL (alternative to uuid + tenant)
+        skip_postrun: Skip post-run log collection lines and tail from the
+                      end of the run phase instead (default true). Only
+                      applies to job-output.txt. Set false to see raw tail.
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
     if ".." in log_name.split("/"):
         return error(f"Invalid log_name: {log_name!r}")
 
@@ -880,8 +912,20 @@ async def tail_build_log(
     all_lines = raw.splitlines()
     total = len(all_lines)
     n = max(1, min(lines, 500))
-    tail_start = max(0, total - n)
-    tail = all_lines[tail_start:]
+
+    # Find the end of the run phase to skip post-run log collection
+    run_end = total
+    skipped_postrun = False
+    if skip_postrun and log_name == "job-output.txt" and total > n:
+        # Scan backwards for the "RUN END" marker (end of actual job)
+        for i in range(total - 1, max(total - 2000, -1), -1):
+            if _RUN_END_MARKER.search(all_lines[i]):
+                run_end = i + 1  # include the marker line
+                skipped_postrun = True
+                break
+
+    tail_start = max(0, run_end - n)
+    tail = all_lines[tail_start:run_end]
 
     result_dict: dict[str, Any] = {
         "total_lines": total,
@@ -892,6 +936,9 @@ async def tail_build_log(
         "count": len(tail),
         "lines": [line[:500] for line in tail],
     }
+    if skipped_postrun:
+        result_dict["skipped_postrun"] = True
+        result_dict["postrun_lines"] = total - run_end
     if truncated:
         result_dict["truncated"] = True
         result_dict["warning"] = (
