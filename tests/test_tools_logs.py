@@ -136,6 +136,19 @@ class TestGetBuildLog:
         assert "error" in result
 
     @respx.mock
+    async def test_no_log_url_in_progress(self, mock_ctx):
+        """In-progress build should return status-aware error."""
+        build = make_build(log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
+
+    @respx.mock
     async def test_404_log_file(self, mock_ctx):
         build = make_build()
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
@@ -238,6 +251,19 @@ class TestGetBuildLog:
 
 
 class TestBrowseBuildLogs:
+    @respx.mock
+    async def test_no_log_url_in_progress(self, mock_ctx):
+        """In-progress build should return status-aware error."""
+        build = make_build(log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await browse_build_logs(mock_ctx, "in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
+
     @respx.mock
     async def test_directory_listing(self, mock_ctx):
         build = make_build()

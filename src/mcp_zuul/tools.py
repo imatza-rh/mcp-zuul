@@ -658,7 +658,7 @@ async def get_build_log(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     # Sanitize log_name to prevent path traversal
     if ".." in log_name.split("/"):
@@ -815,7 +815,7 @@ async def browse_build_logs(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     parsed = urlparse(log_url)
     if parsed.scheme not in ("http", "https"):
@@ -2097,7 +2097,7 @@ async def get_build_test_results(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     a = app(ctx)
     base = log_url.rstrip("/")
@@ -2193,7 +2193,7 @@ async def get_build_anomalies(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     log_url = build.get("log_url")
     if not log_url:
-        return error(f"No log_url for build {uuid}")
+        return _no_log_url_error(build, uuid)
 
     # Build the Zuul build URL for LogJuicer
     build_url = f"{a.config.base_url}/t/{quote(t, safe='/')}/build/{quote(uuid)}"

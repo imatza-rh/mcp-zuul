@@ -222,7 +222,8 @@ class TestGetBuildTestResults:
         assert "error" in result
         assert "none contained valid" in result["error"]
 
-    async def test_no_log_url(self, mock_ctx):
+    async def test_no_log_url_completed(self, mock_ctx):
+        """Completed build with no log_url should mention lost/aborted logs."""
         build = make_build(uuid="no-log", log_url=None)
         build["log_url"] = None
         respx.mock(assert_all_mocked=False)
@@ -232,6 +233,20 @@ class TestGetBuildTestResults:
             )
             result = json.loads(await get_build_test_results(mock_ctx, uuid="no-log"))
         assert "error" in result
+        assert "lost" in result["error"] or "aborted" in result["error"]
+
+    async def test_no_log_url_in_progress(self, mock_ctx):
+        """In-progress build should return status-aware error."""
+        build = make_build(uuid="in-prog", log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        with respx.mock:
+            respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+                return_value=httpx.Response(200, json=build)
+            )
+            result = json.loads(await get_build_test_results(mock_ctx, uuid="in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
 
     @respx.mock
     async def test_testsuites_wrapper(self, mock_ctx):
