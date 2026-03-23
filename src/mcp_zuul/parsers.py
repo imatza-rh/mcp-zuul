@@ -82,7 +82,7 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
         phase = pb.get("phase", "")
         playbook = pb.get("playbook", "")
         stats = pb.get("stats", {})
-        has_failure = any(s.get("failures", 0) > 0 for s in stats.values())
+        has_failure = any(isinstance(s, dict) and s.get("failures", 0) > 0 for s in stats.values())
 
         if has_failure:
             pb_summary = clean(

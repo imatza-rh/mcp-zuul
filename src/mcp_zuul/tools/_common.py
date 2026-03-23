@@ -1,6 +1,7 @@
 """Shared constants, annotations, and helpers used across tool sub-modules."""
 
 import json
+import re
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -61,11 +62,11 @@ def _resolve(
 _MAX_LOG_LINES = 200
 _MAX_JSON_LOG_BYTES = 20 * 1024 * 1024  # 20 MB (JSON is larger)
 _MAX_FILE_BYTES = 512 * 1024  # 512 KB for fetched log files
-_ERROR_PATTERNS = __import__("re").compile(
+_ERROR_PATTERNS = re.compile(
     r"(FAILED!|UNREACHABLE|fatal:|Traceback|failed=[1-9])",
 )
-_ERROR_NOISE = __import__("re").compile(r"failed=0|RETRYING:")
-_RUN_END_MARKER = __import__("re").compile(r"\| RUN END RESULT_")
+_ERROR_NOISE = re.compile(r"failed=0|RETRYING:")
+_RUN_END_MARKER = re.compile(r"\| RUN END RESULT_")
 
 
 def _no_log_url_error(build: dict, uuid: str) -> str:

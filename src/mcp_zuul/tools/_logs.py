@@ -17,11 +17,10 @@ from ._common import (
     _MAX_FILE_BYTES,
     _MAX_LOG_LINES,
     _READ_ONLY,
+    _RUN_END_MARKER,
     _no_log_url_error,
     _resolve,
 )
-
-_RUN_END_MARKER = re.compile(r"\| RUN END RESULT_")
 
 
 @mcp.tool(title="Read Build Log", annotations=_READ_ONLY)
