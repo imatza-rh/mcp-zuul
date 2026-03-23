@@ -5,47 +5,25 @@ import json
 from mcp.server.fastmcp import Context
 
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
-from .helpers import api, app, fetch_log_url, safepath
+from .helpers import api, safepath
 from .helpers import tenant as _tenant
 from .server import mcp
-from .tools import _MAX_JSON_LOG_BYTES, _parse_playbooks
-
-
-async def _fetch_failed_tasks(ctx: Context, build: dict) -> list[dict]:
-    """Fetch and parse failed tasks from a build's job-output.json.
-
-    Reuses _parse_playbooks() for consistent failure extraction across
-    tools and prompts.
-    """
-    log_url = build.get("log_url")
-    if not log_url or build.get("result") in ("SUCCESS", "SKIPPED"):
-        return []
-    try:
-        a = app(ctx)
-        json_url = log_url.rstrip("/") + "/job-output.json.gz"
-        resp = await fetch_log_url(a, json_url)
-        if resp.status_code == 404:
-            json_url = log_url.rstrip("/") + "/job-output.json"
-            resp = await fetch_log_url(a, json_url)
-        if resp.status_code == 200:
-            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-            if isinstance(data, list):
-                _playbooks, failed_tasks = _parse_playbooks(data)
-                return failed_tasks
-    except Exception:
-        pass
-    return []
+from .tools import _fetch_job_output
 
 
 @mcp.prompt()
 async def debug_build(uuid: str, tenant: str = "", ctx: Context | None = None) -> str:
-    """Investigate a CI build failure — pre-loads build details and structured failures."""
+    """Investigate a CI build failure - pre-loads build details and structured failures."""
     assert ctx is not None  # FastMCP always injects ctx
     t = _tenant(ctx, tenant)
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     info = fmt_build(build, brief=False)
 
-    failures = await _fetch_failed_tasks(ctx, build)
+    # Fetch structured failures via shared helper
+    failures: list[dict] = []
+    log_url = build.get("log_url")
+    if log_url and build.get("result") not in ("SUCCESS", "SKIPPED"):
+        _playbooks, failures, _ok = await _fetch_job_output(ctx, log_url)
 
     parts = [
         "Investigate this Zuul CI build failure:\n",
@@ -69,7 +47,7 @@ async def debug_build(uuid: str, tenant: str = "", ctx: Context | None = None) -
                     rate = round(fail_count / len(recent) * 100)
                     flaky_hint = (
                         f"\n**Flaky signal**: {fail_count}/{len(recent)} recent builds failed "
-                        f"({rate}% failure rate) with mixed results — likely flaky. "
+                        f"({rate}% failure rate) with mixed results - likely flaky. "
                         "Consider rechecking before deep investigation.\n"
                     )
         except Exception:
@@ -94,7 +72,7 @@ async def debug_build(uuid: str, tenant: str = "", ctx: Context | None = None) -
 async def compare_builds(
     uuid1: str, uuid2: str, tenant: str = "", ctx: Context | None = None
 ) -> str:
-    """Compare two builds side-by-side — highlights differences in result, timing, nodeset, and failures."""
+    """Compare two builds side-by-side - highlights differences in result, timing, nodeset, and failures."""
     assert ctx is not None
     t = _tenant(ctx, tenant)
     b1 = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid1)}")
@@ -108,13 +86,15 @@ async def compare_builds(
         f"## Build B\n```json\n{json.dumps(info2, indent=2)}\n```\n",
     ]
 
-    # Fetch failures for failed builds
+    # Fetch failures for failed builds via shared helper
     for label, build in [("A", b1), ("B", b2)]:
-        tasks = await _fetch_failed_tasks(ctx, build)
-        if tasks:
-            parts.append(
-                f"## Build {label} Failures\n```json\n{json.dumps(tasks, indent=2)}\n```\n"
-            )
+        log_url = build.get("log_url")
+        if log_url and build.get("result") not in ("SUCCESS", "SKIPPED", None):
+            _playbooks, tasks, _ok = await _fetch_job_output(ctx, log_url)
+            if tasks:
+                parts.append(
+                    f"## Build {label} Failures\n```json\n{json.dumps(tasks, indent=2)}\n```\n"
+                )
 
     parts.append(
         "## Analysis\n"
@@ -128,7 +108,7 @@ async def compare_builds(
 
 @mcp.prompt()
 async def check_change(change: str, tenant: str = "", ctx: Context | None = None) -> str:
-    """Check the current CI status of a change — live pipeline or latest results."""
+    """Check the current CI status of a change - live pipeline or latest results."""
     assert ctx is not None
     t = _tenant(ctx, tenant)
 
@@ -146,7 +126,7 @@ async def check_change(change: str, tenant: str = "", ctx: Context | None = None
             "4. For failed jobs, use `get_build_failures` with the job's UUID"
         )
 
-    # Not in pipeline — get latest buildset
+    # Not in pipeline - get latest buildset
     buildsets = await api(ctx, f"/tenant/{safepath(t)}/buildsets", {"change": change, "limit": 1})
     if buildsets:
         bs_uuid = buildsets[0].get("uuid")

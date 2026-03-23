@@ -36,16 +36,26 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 ### Module Dependency Flow
 
 ```
-__init__.py   →  imports tools, prompts, resources (registers decorators), exports main()
-server.py     →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
-tools.py      →  36 @mcp.tool() functions (31 read-only + 4 write + 1 LogJuicer) with titles
-prompts.py    →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
-resources.py  →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
-helpers.py    →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
-config.py     →  Config dataclass loaded from env vars (ZUUL_URL, MCP_TRANSPORT, ZUUL_ENABLED_TOOLS, etc.)
-auth.py       →  Kerberos/SPNEGO authentication (drives OIDC redirect chain)
-formatters.py →  Token-efficient response formatters (fmt_build, fmt_buildset, fmt_status_item)
-errors.py     →  @handle_errors decorator wrapping all tools with uniform error→JSON handling
+__init__.py        →  imports tools, prompts, resources (registers decorators), exports main()
+server.py          →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
+tools/             →  Package: 36 @mcp.tool() functions split by domain
+  __init__.py      →  Re-exports for backward compat (tests import from mcp_zuul.tools)
+  _common.py       →  Shared constants, _resolve(), _fetch_job_output(), _parse_playbooks()
+  _builds.py       →  6 build tools: list_builds, get_build, get_build_failures, diagnose_build, etc.
+  _logs.py         →  3 log tools: get_build_log, browse_build_logs, tail_build_log
+  _status.py       →  6 status/analytics: list_tenants, get_status, get_change_status, find_flaky_jobs, etc.
+  _config.py       →  15 config/infra: list_jobs, get_job, get_project, list_nodes, get_freeze_job, etc.
+  _write.py        →  4 write ops: enqueue, dequeue, autohold_create, autohold_delete
+  _tests.py        →  1 test results: get_build_test_results + JUnit XML parsing
+  _logjuicer.py    →  1 LogJuicer: get_build_anomalies
+prompts.py         →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
+resources.py       →  3 @mcp.resource() templates (zuul://{tenant}/build|job|project/...)
+helpers.py         →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
+config.py          →  Config dataclass loaded from env vars (ZUUL_URL, MCP_TRANSPORT, ZUUL_ENABLED_TOOLS, etc.)
+auth.py            →  Kerberos/SPNEGO authentication (drives OIDC redirect chain)
+formatters.py      →  Token-efficient formatters (fmt_build, fmt_buildset, fmt_project, fmt_job_variants, etc.)
+errors.py          →  @handle_errors decorator wrapping all tools with uniform error→JSON handling
+classifier.py      →  Failure classification (INFRA_FLAKE, REAL_FAILURE, CONFIG_ERROR, UNKNOWN)
 ```
 
 ### Key Patterns

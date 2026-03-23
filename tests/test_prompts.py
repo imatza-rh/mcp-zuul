@@ -79,6 +79,9 @@ class TestCompareBuilds:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b2").mock(
             return_value=httpx.Response(200, json=b2)
         )
+        # Mock job-output fetch for the failed build (via shared _fetch_job_output)
+        respx.get(f"{b2['log_url']}job-output.json.gz").mock(return_value=httpx.Response(404))
+        respx.get(f"{b2['log_url']}job-output.json").mock(return_value=httpx.Response(404))
         result = await compare_builds(uuid1="b1", uuid2="b2", ctx=mock_ctx)
         assert "Build A" in result
         assert "Build B" in result

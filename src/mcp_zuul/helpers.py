@@ -90,16 +90,37 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
         raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
 
 
-async def api_post(ctx: Context, path: str, body: dict) -> Any:
-    """Make an authenticated POST request to the Zuul API."""
+async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = None) -> Any:
+    """Shared logic for POST/DELETE with Kerberos re-auth and 500/503 retry.
+
+    All write tools declare idempotentHint=True, so transient 503 from
+    load balancers can safely be retried (same pattern as api() for GET).
+    """
     a = app(ctx)
     if a.config.read_only:
         raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
-    resp = await a.client.post(f"/api{path}", json=body)
-    if resp.status_code == 401 and a.config.use_kerberos:
-        async with a._auth_lock:
-            await kerberos_auth(a.client, a.config.base_url)
-        resp = await a.client.post(f"/api{path}", json=body)
+    url = f"/api{path}"
+
+    for attempt in range(2):
+        if method == "POST":
+            resp = await a.client.post(url, json=body)
+        else:
+            resp = await a.client.delete(url)
+
+        if resp.status_code == 401 and a.config.use_kerberos:
+            async with a._auth_lock:
+                await kerberos_auth(a.client, a.config.base_url)
+            if method == "POST":
+                resp = await a.client.post(url, json=body)
+            else:
+                resp = await a.client.delete(url)
+
+        if resp.status_code in (500, 503) and attempt == 0:
+            log.info("API returned %d for %s %s, retrying in 2s", resp.status_code, method, path)
+            await asyncio.sleep(2)
+            continue
+        break
+
     resp.raise_for_status()
     if not resp.text:
         return {}
@@ -108,26 +129,16 @@ async def api_post(ctx: Context, path: str, body: dict) -> Any:
     except json.JSONDecodeError as exc:
         ct = resp.headers.get("content-type", "")
         raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
+
+
+async def api_post(ctx: Context, path: str, body: dict) -> Any:
+    """Make an authenticated POST request to the Zuul API."""
+    return await _api_mutate(ctx, "POST", path, body)
 
 
 async def api_delete(ctx: Context, path: str) -> Any:
     """Make an authenticated DELETE request to the Zuul API."""
-    a = app(ctx)
-    if a.config.read_only:
-        raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
-    resp = await a.client.delete(f"/api{path}")
-    if resp.status_code == 401 and a.config.use_kerberos:
-        async with a._auth_lock:
-            await kerberos_auth(a.client, a.config.base_url)
-        resp = await a.client.delete(f"/api{path}")
-    resp.raise_for_status()
-    if not resp.text:
-        return {}
-    try:
-        return resp.json()
-    except json.JSONDecodeError as exc:
-        ct = resp.headers.get("content-type", "")
-        raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
+    return await _api_mutate(ctx, "DELETE", path)
 
 
 _MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB

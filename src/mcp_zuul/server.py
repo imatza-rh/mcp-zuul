@@ -1,6 +1,5 @@
 """FastMCP server instance and lifespan management."""
 
-import contextlib
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -32,6 +31,24 @@ class _BearerAuth(httpx.Auth):
         yield request
 
 
+def _remove_tool(server: FastMCP, name: str) -> bool:
+    """Remove a tool by name, tolerating FastMCP internal API changes."""
+    try:
+        server._tool_manager.remove_tool(name)
+        return True
+    except (AttributeError, KeyError):
+        return False
+
+
+def _list_tool_names(server: FastMCP) -> list[str]:
+    """List registered tool names, tolerating FastMCP internal API changes."""
+    try:
+        return list(server._tool_manager._tools.keys())
+    except AttributeError:
+        log.warning("Cannot list tools - FastMCP internal API may have changed")
+        return []
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
     config = Config.from_env()
@@ -59,22 +76,19 @@ async def lifespan(server: FastMCP):
         _WRITE_TOOLS = {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
         if config.read_only:
             for name in _WRITE_TOOLS:
-                with contextlib.suppress(KeyError):
-                    server._tool_manager.remove_tool(name)
+                _remove_tool(server, name)
             log.info("Read-only mode: write tools disabled")
 
         # Apply tool filtering
         if config.enabled_tools:
-            all_tools = list(server._tool_manager._tools.keys())
+            all_tools = _list_tool_names(server)
             for name in all_tools:
                 if name not in config.enabled_tools:
-                    server._tool_manager.remove_tool(name)
+                    _remove_tool(server, name)
             log.info("Tools enabled: %s", ", ".join(config.enabled_tools))
         elif config.disabled_tools:
             for name in config.disabled_tools:
-                try:
-                    server._tool_manager.remove_tool(name)
-                except KeyError:
+                if not _remove_tool(server, name):
                     log.warning("Cannot disable unknown tool: %s", name)
             log.info("Tools disabled: %s", ", ".join(config.disabled_tools))
 

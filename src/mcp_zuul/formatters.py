@@ -79,6 +79,70 @@ def fmt_buildset(bs: dict, brief: bool = True) -> dict:
     return clean(out)
 
 
+_TERMINAL_RESULTS = frozenset(
+    {
+        "SUCCESS",
+        "FAILURE",
+        "TIMED_OUT",
+        "SKIPPED",
+        "ABORTED",
+        "RETRY_LIMIT",
+        "NODE_FAILURE",
+        "POST_FAILURE",
+        "DISK_FULL",
+        "CANCELED",
+        "MERGER_FAILURE",
+    }
+)
+
+
+def fmt_job_variants(data: list, description_limit: int = 200) -> list[dict]:
+    """Format job API response into compact variant list."""
+    variants = []
+    for v in data:
+        sc = v.get("source_context") or {}
+        variants.append(
+            clean(
+                {
+                    "parent": v.get("parent"),
+                    "branches": v.get("branches", []) or None,
+                    "nodeset": v.get("nodeset"),
+                    "timeout": v.get("timeout"),
+                    "voting": v.get("voting", True),
+                    "abstract": v.get("abstract", False) or None,
+                    "description": (v.get("description") or "")[:description_limit] or None,
+                    "source_project": sc.get("project"),
+                }
+            )
+        )
+    return variants
+
+
+def fmt_project(data: dict, name: str = "") -> dict:
+    """Format project API response into compact representation."""
+    configs: dict[str, list[str]] = {}
+    for cfg in data.get("configs", []):
+        for pip in cfg.get("pipelines", []):
+            pname = pip.get("name", "")
+            jobs = []
+            for j in pip.get("jobs", []):
+                if isinstance(j, list):
+                    jobs.append(j[0]["name"] if j else "")
+                elif isinstance(j, dict):
+                    jobs.append(j.get("name", ""))
+            if jobs:
+                configs[pname] = jobs
+    return clean(
+        {
+            "project": name or data.get("canonical_name", ""),
+            "canonical_name": data.get("canonical_name"),
+            "connection": data.get("connection_name"),
+            "type": data.get("type"),
+            "pipelines": configs,
+        }
+    )
+
+
 def _job_status(j: dict) -> str:
     """Compute a canonical status string for a job.
 
@@ -164,22 +228,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
 
     # A job's outcome is "decided" when it has a terminal result or pre_fail.
     # all_decided=True means every job's fate is known even if some are still
-    # running in post-run cleanup — callers can stop rapid-polling.
-    _TERMINAL_RESULTS = frozenset(
-        {
-            "SUCCESS",
-            "FAILURE",
-            "TIMED_OUT",
-            "SKIPPED",
-            "ABORTED",
-            "RETRY_LIMIT",
-            "NODE_FAILURE",
-            "POST_FAILURE",
-            "DISK_FULL",
-            "CANCELED",
-            "MERGER_FAILURE",
-        }
-    )
+    # running in post-run cleanup - callers can stop rapid-polling.
     all_decided = total > 0 and all(
         j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail") for j in jobs
     )
