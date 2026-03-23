@@ -465,7 +465,10 @@ class TestTailBuildLog:
         )
         result = json.loads(
             await tail_build_log(
-                mock_ctx, uuid="build-uuid-1", lines=10, skip_postrun=False,
+                mock_ctx,
+                uuid="build-uuid-1",
+                lines=10,
+                skip_postrun=False,
             )
         )
         assert result["count"] == 10
@@ -489,7 +492,10 @@ class TestTailBuildLog:
         )
         result = json.loads(
             await tail_build_log(
-                mock_ctx, uuid="build-uuid-1", lines=10, log_name="logs/custom.log",
+                mock_ctx,
+                uuid="build-uuid-1",
+                lines=10,
+                log_name="logs/custom.log",
             )
         )
         assert "skipped_postrun" not in result

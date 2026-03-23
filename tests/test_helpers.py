@@ -446,9 +446,7 @@ class TestFetchLogUrlDecodingError:
         a = mock_ctx.request_context.lifespan_context
         url = "https://logs.example.com/build/job-output.json.gz"
 
-        route = respx.get(url).mock(
-            return_value=httpx.Response(200, content=b"log content")
-        )
+        route = respx.get(url).mock(return_value=httpx.Response(200, content=b"log content"))
         resp = await fetch_log_url(a, url)
         assert resp.status_code == 200
         assert route.call_count == 1

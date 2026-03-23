@@ -407,9 +407,7 @@ class TestGetBuildFailuresDecodingError:
             return_value=httpx.Response(200, json=build)
         )
         # Both .gz and identity retry fail with DecodingError
-        respx.get(f"{build['log_url']}job-output.json.gz").mock(
-            side_effect=httpx.DecodingError("")
-        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
         assert "error" in result
         assert "corrupted" in result["error"]
@@ -507,9 +505,7 @@ class TestDiagnoseBuildDecodingError:
             return_value=httpx.Response(200, json=build)
         )
         # job-output.json.gz triggers DecodingError (both attempts via fetch_log_url)
-        respx.get(f"{build['log_url']}job-output.json.gz").mock(
-            side_effect=httpx.DecodingError("")
-        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=log_text.encode())
         )

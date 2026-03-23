@@ -199,7 +199,10 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
         # sends raw bytes instead of a broken Content-Encoding: gzip.
         log.info("DecodingError fetching %s, retrying without compression", url)
         return await _fetch_log_stream(
-            http, a, url, max_bytes=_MAX_FETCH_BYTES,
+            http,
+            a,
+            url,
+            max_bytes=_MAX_FETCH_BYTES,
             headers={"Accept-Encoding": "identity"},
         )
 
