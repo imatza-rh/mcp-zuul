@@ -40,6 +40,12 @@ def handle_errors(
         except httpx.HTTPStatusError as e:
             body = _clean_body(e.response.text)
             return error(f"API returned {e.response.status_code}: {body}")
+        except httpx.DecodingError:
+            return error(
+                "Log file decompression failed (corrupted gzip). "
+                "Use get_build_log with grep='FAILED|fatal' for text-based diagnosis, "
+                "or diagnose_build which falls back automatically."
+            )
         except httpx.ConnectError:
             return error("Cannot connect to Zuul API")
         except httpx.TimeoutException:

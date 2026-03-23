@@ -198,13 +198,20 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
         # Corrupted gzip — retry without compression so the server
         # sends raw bytes instead of a broken Content-Encoding: gzip.
         log.info("DecodingError fetching %s, retrying without compression", url)
-        return await _fetch_log_stream(
-            http,
-            a,
-            url,
-            max_bytes=_MAX_FETCH_BYTES,
-            headers={"Accept-Encoding": "identity"},
-        )
+        try:
+            return await _fetch_log_stream(
+                http,
+                a,
+                url,
+                max_bytes=_MAX_FETCH_BYTES,
+                headers={"Accept-Encoding": "identity"},
+            )
+        except httpx.DecodingError:
+            # Server ignored Accept-Encoding: identity and sent corrupt
+            # Content-Encoding: gzip again.  Re-raise so callers can
+            # fall back to text-based diagnosis.
+            log.warning("DecodingError persists after identity retry for %s", url)
+            raise
 
 
 async def _fetch_log_stream(

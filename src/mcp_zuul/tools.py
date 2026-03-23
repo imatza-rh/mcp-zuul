@@ -346,6 +346,38 @@ def _truncate_invocation(module_args: dict | None, max_size: int = 4000) -> dict
     return relevant
 
 
+_FATAL_PATTERN = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
+
+
+def _grep_log_context(text: str, *, context_lines: int = 5) -> list[list[dict]]:
+    """Grep log text for fatal/FAILED lines and return context blocks."""
+    all_lines = text.splitlines()
+    total = len(all_lines)
+    matched = [(i + 1, line) for i, line in enumerate(all_lines) if _FATAL_PATTERN.search(line)]
+    if not matched:
+        return []
+    ranges: list[tuple[int, int]] = []
+    for n, _text in matched[:30]:
+        start = max(0, n - 1 - context_lines)
+        end = min(total, n + context_lines)
+        if ranges and start <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+        else:
+            ranges.append((start, end))
+    blocks: list[list[dict]] = []
+    for start, end in ranges[:10]:
+        block = [
+            {
+                "n": i + 1,
+                "text": all_lines[i][:500],
+                "match": _FATAL_PATTERN.search(all_lines[i]) is not None,
+            }
+            for i in range(start, end)
+        ]
+        blocks.append(block)
+    return blocks
+
+
 def _parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
     """Parse job-output.json into playbook summaries and failed task details.
 
@@ -469,37 +501,49 @@ async def get_build_failures(
         return _no_log_url_error(build, uuid)
 
     a = app(ctx)
+    playbooks: list[dict] = []
+    failed_tasks: list[dict] = []
+    json_ok = False
     try:
         json_url = log_url.rstrip("/") + "/job-output.json.gz"
         resp = await fetch_log_url(a, json_url)
         if resp.status_code == 404:
-            # Fall back to uncompressed
             json_url = log_url.rstrip("/") + "/job-output.json"
             resp = await fetch_log_url(a, json_url)
         if resp.status_code == 404:
             return error("job-output.json not found")
         resp.raise_for_status()
-    except httpx.DecodingError:
-        return error(
-            "job-output.json.gz is corrupted (gzip decompression failed). "
-            "Use get_build_log with grep='FAILED|fatal' for text-based diagnosis."
+        data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+        if isinstance(data, list):
+            playbooks, failed_tasks = _parse_playbooks(data)
+            json_ok = True
+    except (httpx.DecodingError, json.JSONDecodeError, KeyError):
+        pass  # Fall through to text-based fallback
+
+    if json_ok:
+        return json.dumps(
+            clean(
+                {
+                    "job": build.get("job_name", ""),
+                    "result": build.get("result", ""),
+                    "log_url": log_url,
+                    "duration": build.get("duration"),
+                    "playbook_count": len(playbooks),
+                    "playbooks": playbooks,
+                    "failed_tasks": failed_tasks,
+                }
+            )
         )
 
-    raw = resp.content[:_MAX_JSON_LOG_BYTES]
+    # Structured parsing failed — fall back to text log grep
+    log_context: list[list[dict]] = []
+    txt_url = log_url.rstrip("/") + "/job-output.txt"
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        size_note = (
-            f" (file was {len(resp.content)} bytes, truncated to {_MAX_JSON_LOG_BYTES})"
-            if len(resp.content) > _MAX_JSON_LOG_BYTES
-            else ""
-        )
-        return error(f"Failed to parse job-output.json{size_note}: {e}")
-
-    if not isinstance(data, list):
-        return error("Unexpected job-output.json format")
-
-    playbooks, failed_tasks = _parse_playbooks(data)
+        log_bytes, _truncated = await stream_log(a, txt_url)
+        raw_text = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
+        log_context = _grep_log_context(raw_text)
+    except Exception:
+        pass  # Log also unavailable — return what we have
 
     return json.dumps(
         clean(
@@ -508,9 +552,13 @@ async def get_build_failures(
                 "result": build.get("result", ""),
                 "log_url": log_url,
                 "duration": build.get("duration"),
-                "playbook_count": len(data),
-                "playbooks": playbooks,
+                "json_fallback": True,
                 "failed_tasks": failed_tasks,
+                "log_context": log_context or None,
+                "message": "Structured job-output.json unavailable (corrupted gzip or parse error). "
+                "Showing text log grep for fatal/FAILED lines."
+                if log_context
+                else "Both job-output.json and job-output.txt unavailable.",
             }
         )
     )
@@ -581,38 +629,15 @@ async def diagnose_build(
         pass  # Corrupted gzip — fall through to log-based diagnosis
 
     # --- 2. Grep job-output.txt for fatal/FAILED context ---
-    log_context = []
+    log_context: list[list[dict]] = []
+    log_truncated = False
     txt_url = log_url.rstrip("/") + "/job-output.txt"
     try:
         log_bytes, log_truncated = await stream_log(a, txt_url)
         raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
-        all_lines = raw.splitlines()
-        total = len(all_lines)
-        pat = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
-        matched = [(i + 1, line) for i, line in enumerate(all_lines) if pat.search(line)]
-        # Build merged context blocks (5 lines before/after each match)
-        ctx_n = 5
-        if matched:
-            ranges: list[tuple[int, int]] = []
-            for n, _text in matched[:30]:
-                start = max(0, n - 1 - ctx_n)
-                end = min(total, n + ctx_n)
-                if ranges and start <= ranges[-1][1]:
-                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
-                else:
-                    ranges.append((start, end))
-            for start, end in ranges[:10]:  # Max 10 blocks
-                block = [
-                    {
-                        "n": i + 1,
-                        "text": all_lines[i][:500],
-                        "match": pat.search(all_lines[i]) is not None,
-                    }
-                    for i in range(start, end)
-                ]
-                log_context.append(block)
+        log_context = _grep_log_context(raw)
     except Exception:
-        log_truncated = False  # Log unavailable — structured data still useful
+        pass  # Log unavailable — structured data still useful
 
     # --- 3. Classify the failure and determine phase ---
     classification: Classification | None = None

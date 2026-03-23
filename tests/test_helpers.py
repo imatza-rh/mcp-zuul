@@ -265,6 +265,17 @@ class TestHandleErrors:
         result = json.loads(await failing())
         assert result["error"] == "bad input"
 
+    async def test_wraps_decoding_error(self):
+        @handle_errors
+        async def failing():
+            raise httpx.DecodingError("Error -3 while decompressing data")
+
+        result = json.loads(await failing())
+        assert "decompression failed" in result["error"]
+        assert "get_build_log" in result["error"]
+        # Must NOT contain "Internal error" — it's a known exception
+        assert "Internal error" not in result["error"]
+
     async def test_wraps_unexpected(self):
         @handle_errors
         async def failing():

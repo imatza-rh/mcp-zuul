@@ -400,18 +400,41 @@ class TestGetBuildFailures:
 
 class TestGetBuildFailuresDecodingError:
     @respx.mock
-    async def test_decoding_error_returns_actionable_message(self, mock_ctx):
-        """DecodingError on job-output.json.gz should return guidance to use get_build_log."""
+    async def test_decoding_error_falls_through_to_log_grep(self, mock_ctx):
+        """DecodingError on job-output.json.gz should fall through to text log grep."""
         build = make_build(result="FAILURE")
+        log_text = "some log\nfatal: [host]: FAILED! => deploy error\nmore log"
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
             return_value=httpx.Response(200, json=build)
         )
         # Both .gz and identity retry fail with DecodingError
         respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log_text.encode())
+        )
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
-        assert "error" in result
-        assert "corrupted" in result["error"]
-        assert "get_build_log" in result["error"]
+        # Should NOT be an error — should have fallen through to text diagnosis
+        assert "error" not in result
+        assert result["json_fallback"] is True
+        assert result["result"] == "FAILURE"
+        assert len(result["log_context"]) >= 1
+        fatal_lines = [
+            line for block in result["log_context"] for line in block if line.get("match")
+        ]
+        assert any("fatal" in line["text"] for line in fatal_lines)
+
+    @respx.mock
+    async def test_decoding_error_both_logs_unavailable(self, mock_ctx):
+        """When both json.gz and txt are unavailable, return a clear message."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        assert result["json_fallback"] is True
+        assert "unavailable" in result["message"]
 
     @respx.mock
     async def test_in_progress_build_returns_helpful_error(self, mock_ctx):
