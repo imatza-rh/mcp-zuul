@@ -110,6 +110,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
             "progress_pct": 0,
             "critical_path_remaining": 0,
             "critical_path_remaining_str": "0s",
+            "all_decided": False,
         }
 
     completed = sum(1 for j in jobs if j.get("result"))
@@ -161,6 +162,19 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
 
     critical_path = int(max((_remaining_through(j["name"]) for j in jobs), default=0))
 
+    # A job's outcome is "decided" when it has a terminal result or pre_fail.
+    # all_decided=True means every job's fate is known even if some are still
+    # running in post-run cleanup — callers can stop rapid-polling.
+    _TERMINAL_RESULTS = frozenset(
+        {"SUCCESS", "FAILURE", "TIMED_OUT", "SKIPPED", "ABORTED",
+         "RETRY_LIMIT", "NODE_FAILURE", "POST_FAILURE", "DISK_FULL",
+         "CANCELED", "MERGER_FAILURE"}
+    )
+    all_decided = total > 0 and all(
+        j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail")
+        for j in jobs
+    )
+
     return {
         "completed": completed,
         "total": total,
@@ -169,6 +183,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
         "progress_pct": progress_pct,
         "critical_path_remaining": critical_path,
         "critical_path_remaining_str": _format_duration(critical_path),
+        "all_decided": all_decided,
     }
 
 

@@ -12,6 +12,7 @@ import httpx
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
+from .classifier import Classification, classify_failure, determine_failure_phase
 from .errors import handle_errors
 from .formatters import _format_duration, fmt_build, fmt_buildset, fmt_status_item
 from .helpers import (
@@ -194,6 +195,8 @@ async def get_change_status(
         change = ref_match.group(1)
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
+    # Track which pipeline each item belongs to (enriched from fallback path)
+    pipeline_map: dict[str, str] = {}
     if not data and change.isdigit():
         # Zuul status/change API doesn't match bare numbers to GitLab-style
         # refs. Fall back to filtering the full status by change number.
@@ -207,6 +210,7 @@ async def get_change_status(
                             ref_str = r.get("ref", "")
                             if f"/{change}/" in ref_str:
                                 items.append(item)
+                                pipeline_map[item.get("id", "")] = p["name"]
                                 break
         data = items
     if not data:
@@ -231,8 +235,14 @@ async def get_change_status(
         return json.dumps(result)
     base = app(ctx).config.base_url
     formatted = [fmt_status_item(item) for item in data]
-    # Enrich with status_url — constructed from ref id ("{change},{sha}")
+    # Enrich with status_url, pipeline, tenant
     for raw, fmt in zip(data, formatted, strict=True):
+        # Add pipeline name if available (from fallback full-status scan)
+        item_id = raw.get("id", "")
+        if item_id in pipeline_map:
+            fmt["pipeline"] = pipeline_map[item_id]
+        # Always include tenant for caller convenience
+        fmt["tenant"] = t
         refs = raw.get("refs", [])
         if refs:
             ref_id = refs[0].get("id", "")
@@ -604,21 +614,63 @@ async def diagnose_build(
     except Exception:
         log_truncated = False  # Log unavailable — structured data still useful
 
-    return json.dumps(
-        clean(
-            {
-                "job": build.get("job_name", ""),
-                "result": result,
-                "log_url": log_url,
-                "duration": build.get("duration"),
-                "playbook_count": len(playbooks),
-                "playbooks": playbooks,
-                "failed_tasks": failed_tasks,
-                "log_context": log_context or None,
-                "log_truncated": log_truncated or None,
-            }
+    # --- 3. Classify the failure and determine phase ---
+    classification: Classification | None = None
+    failure_phase: str | None = None
+    run_phase_passed: bool | None = None
+
+    if result not in ("SUCCESS", "SKIPPED"):
+        classification = classify_failure(
+            result=result,
+            failed_tasks=failed_tasks,
+            playbooks=playbooks,
+            log_context=log_context,
+            duration=build.get("duration"),
         )
-    )
+        failure_phase = determine_failure_phase(playbooks)
+        if failure_phase:
+            run_failed = any(
+                pb.get("phase") == "run" and pb.get("failed") for pb in playbooks
+            )
+            run_phase_passed = not run_failed
+        else:
+            run_phase_passed = None
+
+    # Extract node name from nodeset for SSH debugging
+    nodeset = build.get("nodeset")
+    node_name: str | None = None
+    if isinstance(nodeset, dict):
+        nodes = nodeset.get("nodes", [])
+        if nodes and isinstance(nodes[0], dict):
+            node_name = nodes[0].get("name")
+    elif isinstance(nodeset, str) and nodeset:
+        node_name = nodeset
+
+    out: dict = {
+        "job": build.get("job_name", ""),
+        "result": result,
+        "log_url": log_url,
+        "duration": build.get("duration"),
+        "start_time": build.get("start_time"),
+        "end_time": build.get("end_time"),
+        "node_name": node_name,
+        "pipeline": build.get("pipeline"),
+        "playbook_count": len(playbooks),
+        "playbooks": playbooks,
+        "failed_tasks": failed_tasks,
+        "log_context": log_context or None,
+        "log_truncated": log_truncated or None,
+        "failure_phase": failure_phase,
+        "run_phase_passed": run_phase_passed,
+    }
+
+    if classification:
+        out["classification"] = classification.category
+        out["classification_reason"] = classification.reason
+        out["classification_confidence"] = classification.confidence
+        out["retryable"] = classification.retryable
+
+    return json.dumps(clean(out))
 
 
 @mcp.tool(title="Read Build Log", annotations=_READ_ONLY)
@@ -1294,10 +1346,31 @@ async def list_nodes(
                 by_label[label] = {}
             by_label[label][s] = by_label[label].get(s, 0) + 1
 
+    # Pool health summary
+    total_nodes = len(data)
+    ready = states.get("ready", 0)
+    in_use = states.get("in-use", 0)
+    building = states.get("building", 0)
+    if total_nodes == 0:
+        health_status = "empty"
+    elif ready == 0:
+        health_status = "exhausted"
+    elif ready / total_nodes < 0.3:
+        health_status = "stressed"
+    else:
+        health_status = "healthy"
+
     out: dict[str, Any] = {
-        "count": len(data),
+        "count": total_nodes,
         "by_state": states,
         "by_label": by_label,
+        "pool_health": {
+            "total": total_nodes,
+            "ready": ready,
+            "in_use": in_use,
+            "building": building,
+            "status": health_status,
+        },
     }
     if detail:
         out["nodes"] = [
