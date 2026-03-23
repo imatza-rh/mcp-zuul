@@ -629,9 +629,7 @@ async def diagnose_build(
         )
         failure_phase = determine_failure_phase(playbooks)
         if failure_phase:
-            run_failed = any(
-                pb.get("phase") == "run" and pb.get("failed") for pb in playbooks
-            )
+            run_failed = any(pb.get("phase") == "run" and pb.get("failed") for pb in playbooks)
             run_phase_passed = not run_failed
         else:
             run_phase_passed = None
@@ -1353,9 +1351,11 @@ async def list_nodes(
     building = states.get("building", 0)
     if total_nodes == 0:
         health_status = "empty"
+    elif ready == 0 and building > 0:
+        health_status = "recovering"
     elif ready == 0:
         health_status = "exhausted"
-    elif ready / total_nodes < 0.3:
+    elif ready / total_nodes < 0.2:
         health_status = "stressed"
     else:
         health_status = "healthy"

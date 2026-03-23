@@ -148,6 +148,31 @@ class TestGetChangeStatus:
         assert len(result) == 1
 
     @respx.mock
+    async def test_gitlab_ref_fallback_enriches_pipeline(self, mock_ctx):
+        """Fallback full-status scan enriches items with pipeline name and tenant."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/2001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        item = make_status_item(change=2001)
+        item["refs"][0]["ref"] = "refs/merge-requests/2001/head"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "zuul_version": "10.0.0",
+                    "pipelines": [
+                        {"name": "gate", "change_queues": [{"heads": [[item]]}]},
+                    ],
+                },
+            )
+        )
+        result = json.loads(await get_change_status(mock_ctx, "2001"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["pipeline"] == "gate"
+        assert result[0]["tenant"] == "test-tenant"
+
+    @respx.mock
     async def test_pre_fail_preserved_in_output(self, mock_ctx):
         """Verify pre_fail=True is included in formatted job output."""
         item = make_status_item(change=77777)

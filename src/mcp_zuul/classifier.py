@@ -29,8 +29,14 @@ _INFRA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"kex_exchange_identification|ssh_exchange_identification", re.IGNORECASE),
         "SSH key exchange failed (transient)",
     ),
-    (re.compile(r"Connection reset by peer", re.IGNORECASE), "Connection reset (transient network)"),
-    (re.compile(r"Connection timed out", re.IGNORECASE), "Connection timed out (transient network)"),
+    (
+        re.compile(r"Connection reset by peer", re.IGNORECASE),
+        "Connection reset (transient network)",
+    ),
+    (
+        re.compile(r"Connection timed out", re.IGNORECASE),
+        "Connection timed out (transient network)",
+    ),
     (
         re.compile(r"Connection refused", re.IGNORECASE),
         "Connection refused (service not ready or transient)",
@@ -191,10 +197,7 @@ def classify_failure(
 
     # POST_FAILURE — check if run phase passed
     if result == "POST_FAILURE":
-        run_failed = any(
-            pb.get("phase") == "run" and pb.get("failed")
-            for pb in playbooks
-        )
+        run_failed = any(pb.get("phase") == "run" and pb.get("failed") for pb in playbooks)
         if not run_failed:
             return Classification(
                 category="INFRA_FLAKE",
@@ -210,25 +213,36 @@ def classify_failure(
         all_text += " " + _collect_log_text(log_context)
 
     if all_text:
-        # Check infra patterns first (higher priority for retry decisions)
+        # Check both pattern lists, then decide priority.
+        # Real failure patterns are more specific (code/config bugs) and take
+        # precedence over infra patterns when both match — retrying a real bug
+        # wastes CI resources, so the conservative call is REAL_FAILURE.
+        infra_reason: str | None = None
         for pattern, reason in _INFRA_PATTERNS:
             if pattern.search(all_text):
-                return Classification(
-                    category="INFRA_FLAKE",
-                    reason=reason,
-                    confidence="high",
-                    retryable=True,
-                )
+                infra_reason = reason
+                break
 
-        # Check real failure patterns
+        real_reason: str | None = None
         for pattern, reason in _REAL_FAILURE_PATTERNS:
             if pattern.search(all_text):
-                return Classification(
-                    category="REAL_FAILURE",
-                    reason=reason,
-                    confidence="high",
-                    retryable=False,
-                )
+                real_reason = reason
+                break
+
+        if real_reason:
+            return Classification(
+                category="REAL_FAILURE",
+                reason=real_reason,
+                confidence="high",
+                retryable=False,
+            )
+        if infra_reason:
+            return Classification(
+                category="INFRA_FLAKE",
+                reason=infra_reason,
+                confidence="high",
+                retryable=True,
+            )
 
     # Failed tasks exist but no pattern matched
     if failed_tasks:
@@ -287,14 +301,22 @@ def determine_failure_phase(playbooks: list[dict[str, Any]]) -> str | None:
     return "mixed"
 
 
+_MAX_ERROR_TEXT = 50_000  # Cap total text scanned by regex patterns
+
+
 def _collect_error_text(failed_tasks: list[dict[str, Any]]) -> str:
     """Collect searchable text from failed task fields."""
     parts = []
+    size = 0
     for t in failed_tasks:
         for field in ("msg", "stderr", "stdout"):
             val = t.get(field)
             if val:
-                parts.append(str(val)[:2000])
+                chunk = str(val)[:2000]
+                parts.append(chunk)
+                size += len(chunk)
+                if size >= _MAX_ERROR_TEXT:
+                    return " ".join(parts)
     return " ".join(parts)
 
 

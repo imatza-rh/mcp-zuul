@@ -81,7 +81,12 @@ class TestClassifyFailure:
         assert "TripleO" in result.reason or "overcloud" in result.reason.lower()
 
     def test_parse_kv_error(self):
-        tasks = [{"msg": "failed at splitting arguments, either an unbalanced jinja2 block or quotes", "task": "Shell"}]
+        tasks = [
+            {
+                "msg": "failed at splitting arguments, either an unbalanced jinja2 block or quotes",
+                "task": "Shell",
+            }
+        ]
         result = classify_failure("FAILURE", tasks, [])
         assert result.category == "REAL_FAILURE"
         assert "parse_kv" in result.reason
@@ -136,12 +141,54 @@ class TestClassifyFailure:
 
     def test_log_context_used_for_classification(self):
         """Patterns in log_context should also be matched."""
-        log_context = [[
-            {"text": "some line", "match": False},
-            {"text": "fatal: UNREACHABLE! host is down", "match": True},
-        ]]
+        log_context = [
+            [
+                {"text": "some line", "match": False},
+                {"text": "fatal: UNREACHABLE! host is down", "match": True},
+            ]
+        ]
         result = classify_failure("FAILURE", [], [], log_context=log_context)
         assert result.category == "INFRA_FLAKE"
+
+    def test_mixed_infra_and_real_prefers_real_failure(self):
+        """When both infra and real patterns match, REAL_FAILURE wins.
+
+        Real failure patterns are more specific and actionable - retrying
+        a real bug wastes CI resources. The infra signal (Connection refused)
+        may be a symptom of the real failure (undefined variable caused
+        a service not to start).
+        """
+        tasks = [
+            {"msg": "Connection refused to host:5000", "task": "Check service"},
+            {"msg": "AnsibleUndefinedVariable: 'cifmw_foo' is undefined", "task": "Deploy"},
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "REAL_FAILURE"
+        assert result.retryable is False
+        assert "Undefined" in result.reason
+
+    def test_mixed_infra_and_real_in_same_task(self):
+        """Even within one task, real pattern takes priority over infra."""
+        tasks = [
+            {
+                "msg": "Connection refused",
+                "stderr": "AnsibleUndefinedVariable: 'x' is undefined",
+                "task": "Deploy",
+            }
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "REAL_FAILURE"
+        assert result.retryable is False
+
+    def test_infra_only_still_classified_as_infra(self):
+        """Pure infra errors with no real failure patterns stay INFRA_FLAKE."""
+        tasks = [
+            {"msg": "Connection refused to host:5000", "task": "Check service"},
+            {"msg": "UNREACHABLE! host is down", "task": "Ping"},
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+        assert result.retryable is True
 
     def test_beaker_provisioning(self):
         tasks = [{"msg": "Beaker provision failed for host titan99", "task": "Provision"}]
@@ -255,15 +302,27 @@ class TestDiagnoseBuildClassification:
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}job-output.json.gz").mock(
-            return_value=httpx.Response(200, json=[{
-                "phase": "run",
-                "playbook": "/x.yaml",
-                "stats": {"h": {"failures": 1, "ok": 0}},
-                "plays": [{"play": {"name": "X"}, "tasks": [
-                    {"task": {"name": "T", "duration": {}},
-                     "hosts": {"h": {"failed": True, "msg": "err"}}}
-                ]}],
-            }])
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "phase": "run",
+                        "playbook": "/x.yaml",
+                        "stats": {"h": {"failures": 1, "ok": 0}},
+                        "plays": [
+                            {
+                                "play": {"name": "X"},
+                                "tasks": [
+                                    {
+                                        "task": {"name": "T", "duration": {}},
+                                        "hosts": {"h": {"failed": True, "msg": "err"}},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            )
         )
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=b"log")
@@ -281,6 +340,54 @@ class TestDiagnoseBuildClassification:
         result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1"))
         assert "classification" not in result
         assert "failure_phase" not in result
+
+
+class TestDiagnoseBuildFallback:
+    """Test diagnose_build fallback paths."""
+
+    @respx.mock
+    async def test_json_gz_404_falls_back_to_uncompressed(self, mock_ctx):
+        """When job-output.json.gz returns 404, diagnose_build tries .json."""
+        build = make_build(result="FAILURE")
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Deploy", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "AnsibleUndefinedVariable: x",
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # .gz returns 404
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(return_value=httpx.Response(404))
+        # Uncompressed .json succeeds
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"line 1\nline 2")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        assert result["classification"] == "REAL_FAILURE"
+        assert len(result["failed_tasks"]) == 1
+        assert "AnsibleUndefinedVariable" in result["failed_tasks"][0]["msg"]
 
 
 class TestListNodesPoolHealth:
@@ -305,10 +412,10 @@ class TestListNodesPoolHealth:
 
     @respx.mock
     async def test_exhausted_pool(self, mock_ctx):
+        """No ready nodes and nothing building = exhausted."""
         nodes = [
             {"state": "in-use", "type": ["centos"]},
             {"state": "in-use", "type": ["centos"]},
-            {"state": "building", "type": ["centos"]},
         ]
         respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
             return_value=httpx.Response(200, json=nodes)
@@ -318,9 +425,28 @@ class TestListNodesPoolHealth:
         assert result["pool_health"]["ready"] == 0
 
     @respx.mock
+    async def test_recovering_pool(self, mock_ctx):
+        """No ready nodes but some building = recovering."""
+        nodes = [
+            {"state": "in-use", "type": ["centos"]},
+            {"state": "in-use", "type": ["centos"]},
+            {"state": "building", "type": ["centos"]},
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=nodes)
+        )
+        result = json.loads(await list_nodes(mock_ctx))
+        assert result["pool_health"]["status"] == "recovering"
+        assert result["pool_health"]["ready"] == 0
+        assert result["pool_health"]["building"] == 1
+
+    @respx.mock
     async def test_stressed_pool(self, mock_ctx):
+        """Less than 20% ready nodes = stressed."""
+        # 1 ready out of 6 = 16.7% < 20%
         nodes = [
             {"state": "ready", "type": ["centos"]},
+            {"state": "in-use", "type": ["centos"]},
             {"state": "in-use", "type": ["centos"]},
             {"state": "in-use", "type": ["centos"]},
             {"state": "in-use", "type": ["centos"]},
@@ -331,6 +457,21 @@ class TestListNodesPoolHealth:
         )
         result = json.loads(await list_nodes(mock_ctx))
         assert result["pool_health"]["status"] == "stressed"
+
+    @respx.mock
+    async def test_small_pool_not_stressed(self, mock_ctx):
+        """Small pool with 1/4 ready (25%) is healthy, not stressed (threshold 20%)."""
+        nodes = [
+            {"state": "ready", "type": ["centos"]},
+            {"state": "in-use", "type": ["centos"]},
+            {"state": "in-use", "type": ["centos"]},
+            {"state": "in-use", "type": ["centos"]},
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=nodes)
+        )
+        result = json.loads(await list_nodes(mock_ctx))
+        assert result["pool_health"]["status"] == "healthy"
 
     @respx.mock
     async def test_empty_pool(self, mock_ctx):
@@ -373,24 +514,27 @@ class TestChainSummaryAllDecided:
         from mcp_zuul.formatters import fmt_status_item
         from tests.conftest import make_status_item
 
-        item = make_status_item(change=50001, jobs=[
-            {
-                "name": "job-a",
-                "result": "SUCCESS",
-                "voting": True,
-                "elapsed_time": 300000,
-                "start_time": time.time() - 600,
-            },
-            {
-                "name": "job-b",
-                "result": None,
-                "voting": True,
-                "pre_fail": True,  # failed but still running post-run
-                "elapsed_time": 200000,
-                "start_time": time.time() - 400,
-                "estimated_time": 600,
-            },
-        ])
+        item = make_status_item(
+            change=50001,
+            jobs=[
+                {
+                    "name": "job-a",
+                    "result": "SUCCESS",
+                    "voting": True,
+                    "elapsed_time": 300000,
+                    "start_time": time.time() - 600,
+                },
+                {
+                    "name": "job-b",
+                    "result": None,
+                    "voting": True,
+                    "pre_fail": True,  # failed but still running post-run
+                    "elapsed_time": 200000,
+                    "start_time": time.time() - 400,
+                    "estimated_time": 600,
+                },
+            ],
+        )
         formatted = fmt_status_item(item)
         # job-a has result, job-b has pre_fail — all decided
         assert formatted["chain_summary"]["all_decided"] is True
@@ -401,23 +545,26 @@ class TestChainSummaryAllDecided:
         from mcp_zuul.formatters import fmt_status_item
         from tests.conftest import make_status_item
 
-        item = make_status_item(change=50002, jobs=[
-            {
-                "name": "job-a",
-                "result": "SUCCESS",
-                "voting": True,
-                "elapsed_time": 300000,
-                "start_time": time.time() - 600,
-            },
-            {
-                "name": "job-b",
-                "result": None,
-                "voting": True,
-                "elapsed_time": 200000,
-                "start_time": time.time() - 400,
-                "estimated_time": 600,
-            },
-        ])
+        item = make_status_item(
+            change=50002,
+            jobs=[
+                {
+                    "name": "job-a",
+                    "result": "SUCCESS",
+                    "voting": True,
+                    "elapsed_time": 300000,
+                    "start_time": time.time() - 600,
+                },
+                {
+                    "name": "job-b",
+                    "result": None,
+                    "voting": True,
+                    "elapsed_time": 200000,
+                    "start_time": time.time() - 400,
+                    "estimated_time": 600,
+                },
+            ],
+        )
         formatted = fmt_status_item(item)
         # job-b is still running with no result and no pre_fail
         assert formatted["chain_summary"]["all_decided"] is False

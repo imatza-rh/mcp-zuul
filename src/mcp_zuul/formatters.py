@@ -166,13 +166,22 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     # all_decided=True means every job's fate is known even if some are still
     # running in post-run cleanup — callers can stop rapid-polling.
     _TERMINAL_RESULTS = frozenset(
-        {"SUCCESS", "FAILURE", "TIMED_OUT", "SKIPPED", "ABORTED",
-         "RETRY_LIMIT", "NODE_FAILURE", "POST_FAILURE", "DISK_FULL",
-         "CANCELED", "MERGER_FAILURE"}
+        {
+            "SUCCESS",
+            "FAILURE",
+            "TIMED_OUT",
+            "SKIPPED",
+            "ABORTED",
+            "RETRY_LIMIT",
+            "NODE_FAILURE",
+            "POST_FAILURE",
+            "DISK_FULL",
+            "CANCELED",
+            "MERGER_FAILURE",
+        }
     )
     all_decided = total > 0 and all(
-        j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail")
-        for j in jobs
+        j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail") for j in jobs
     )
 
     return {
