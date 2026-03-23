@@ -12,7 +12,16 @@ import respx
 from mcp_zuul.config import Config
 from mcp_zuul.errors import _clean_body, handle_errors
 from mcp_zuul.formatters import fmt_build, fmt_status_item
-from mcp_zuul.helpers import api, clean, error, parse_zuul_url, safepath, strip_ansi, tenant
+from mcp_zuul.helpers import (
+    api,
+    clean,
+    error,
+    fetch_log_url,
+    parse_zuul_url,
+    safepath,
+    strip_ansi,
+    tenant,
+)
 
 
 class TestClean:
@@ -394,4 +403,52 @@ class TestApiRetry:
         route.side_effect = [httpx.Response(200, json=[{"name": "t1"}])]
         result = await api(mock_ctx, "/tenants")
         assert result == [{"name": "t1"}]
+        assert route.call_count == 1
+
+
+class TestFetchLogUrlDecodingError:
+    @respx.mock
+    async def test_retries_with_identity_on_decoding_error(self, mock_ctx):
+        """DecodingError on first attempt should retry with Accept-Encoding: identity."""
+        a = mock_ctx.request_context.lifespan_context
+        url = "https://logs.example.com/build/job-output.json.gz"
+
+        call_count = 0
+
+        def _side_effect(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call: simulate corrupted gzip
+                raise httpx.DecodingError("")
+            # Second call: should have Accept-Encoding: identity
+            assert request.headers.get("accept-encoding") == "identity"
+            return httpx.Response(200, content=b'{"data": "ok"}')
+
+        respx.get(url).mock(side_effect=_side_effect)
+        resp = await fetch_log_url(a, url)
+        assert resp.status_code == 200
+        assert call_count == 2
+
+    @respx.mock
+    async def test_propagates_decoding_error_on_both_failures(self, mock_ctx):
+        """If identity retry also fails with DecodingError, it should propagate."""
+        a = mock_ctx.request_context.lifespan_context
+        url = "https://logs.example.com/build/job-output.json.gz"
+
+        respx.get(url).mock(side_effect=httpx.DecodingError(""))
+        with pytest.raises(httpx.DecodingError):
+            await fetch_log_url(a, url)
+
+    @respx.mock
+    async def test_no_retry_on_success(self, mock_ctx):
+        """Successful response should not trigger identity fallback."""
+        a = mock_ctx.request_context.lifespan_context
+        url = "https://logs.example.com/build/job-output.json.gz"
+
+        route = respx.get(url).mock(
+            return_value=httpx.Response(200, content=b"log content")
+        )
+        resp = await fetch_log_url(a, url)
+        assert resp.status_code == 200
         assert route.call_count == 1

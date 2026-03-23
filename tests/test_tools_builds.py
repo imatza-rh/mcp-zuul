@@ -6,6 +6,7 @@ import httpx
 import respx
 
 from mcp_zuul.tools import (
+    _no_log_url_error,
     diagnose_build,
     get_build,
     get_build_failures,
@@ -15,6 +16,34 @@ from mcp_zuul.tools import (
     list_buildsets,
 )
 from tests.conftest import make_build, make_buildset, make_job_output_json
+
+
+class TestNoLogUrlError:
+    def test_in_progress_build(self):
+        """In-progress build should suggest get_change_status."""
+        build = {"result": None}
+        result = json.loads(_no_log_url_error(build, "uuid-123"))
+        assert "still in progress" in result["error"]
+        assert "get_change_status" in result["error"]
+
+    def test_in_progress_explicit_result(self):
+        """Build with explicit IN_PROGRESS result."""
+        build = {"result": "IN_PROGRESS"}
+        result = json.loads(_no_log_url_error(build, "uuid-123"))
+        assert "still in progress" in result["error"]
+
+    def test_completed_build_no_logs(self):
+        """Completed build with no log_url should mention lost logs."""
+        build = {"result": "FAILURE"}
+        result = json.loads(_no_log_url_error(build, "uuid-456"))
+        assert "result: FAILURE" in result["error"]
+        assert "lost" in result["error"] or "aborted" in result["error"]
+
+    def test_node_failure_result(self):
+        """NODE_FAILURE build should show the result in the error."""
+        build = {"result": "NODE_FAILURE"}
+        result = json.loads(_no_log_url_error(build, "uuid-789"))
+        assert "NODE_FAILURE" in result["error"]
 
 
 class TestListBuilds:
@@ -369,6 +398,37 @@ class TestGetBuildFailures:
         assert len(stdout) == 4000
 
 
+class TestGetBuildFailuresDecodingError:
+    @respx.mock
+    async def test_decoding_error_returns_actionable_message(self, mock_ctx):
+        """DecodingError on job-output.json.gz should return guidance to use get_build_log."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # Both .gz and identity retry fail with DecodingError
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            side_effect=httpx.DecodingError("")
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        assert "error" in result
+        assert "corrupted" in result["error"]
+        assert "get_build_log" in result["error"]
+
+    @respx.mock
+    async def test_in_progress_build_returns_helpful_error(self, mock_ctx):
+        """In-progress build should return status-aware error, not generic."""
+        build = make_build(result="FAILURE", log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
+
+
 class TestDiagnoseBuild:
     @respx.mock
     async def test_success_short_circuits(self, mock_ctx):
@@ -435,6 +495,49 @@ class TestDiagnoseBuild:
         ft = result["failed_tasks"][0]
         # These fields exist in get_build_failures but are currently MISSING from diagnose_build
         assert "cmd" in ft, "diagnose_build should extract cmd field"
+
+
+class TestDiagnoseBuildDecodingError:
+    @respx.mock
+    async def test_falls_through_to_log_grep(self, mock_ctx):
+        """DecodingError on job-output.json should fall through to text log grep."""
+        build = make_build(result="FAILURE")
+        log_text = "some log\nfatal: deployment failed\nmore log"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # job-output.json.gz triggers DecodingError (both attempts via fetch_log_url)
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            side_effect=httpx.DecodingError("")
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log_text.encode())
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        # Should NOT be an error — should have fallen through to text diagnosis
+        assert "error" not in result
+        assert result["result"] == "FAILURE"
+        # Structured failures empty (json parsing failed), but log_context should exist
+        assert result["failed_tasks"] == []
+        assert len(result["log_context"]) >= 1
+        # Should have found "fatal:" in the log
+        fatal_lines = [
+            line for block in result["log_context"] for line in block if line.get("match")
+        ]
+        assert any("fatal" in line["text"] for line in fatal_lines)
+
+    @respx.mock
+    async def test_in_progress_build_returns_helpful_error(self, mock_ctx):
+        """In-progress build should return status-aware error."""
+        build = make_build(result="FAILURE", log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
 
 
 class TestListBuildsets:

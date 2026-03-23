@@ -56,8 +56,8 @@ def safepath(value: str) -> str:
 async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
     """Make an authenticated GET request to the Zuul API.
 
-    Retries once on 503 (common behind load balancers) and re-authenticates
-    via Kerberos on 401/302.
+    Retries once on 500/503 (transient server errors, LB hiccups) and
+    re-authenticates via Kerberos on 401/302.
     """
     a = app(ctx)
     url = f"/api{path}"

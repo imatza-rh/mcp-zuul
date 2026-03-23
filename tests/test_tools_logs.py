@@ -382,3 +382,119 @@ class TestTailBuildLog:
             )
         )
         assert result["count"] == 1
+
+    @respx.mock
+    async def test_skip_postrun_finds_run_end_marker(self, mock_ctx):
+        """With skip_postrun=True, tail should end at the RUN END marker."""
+        build = make_build()
+        # Simulate a log with run phase, RUN END marker, and post-run lines
+        run_lines = [f"run line {i}" for i in range(1, 51)]
+        marker = "2025-01-01 | RUN END RESULT_NORMAL"
+        postrun_lines = [f"post-run collecting {i}" for i in range(1, 31)]
+        log_text = "\n".join([*run_lines, marker, *postrun_lines])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=10))
+        assert result["total_lines"] == 81  # 50 run + 1 marker + 30 postrun
+        assert result["skipped_postrun"] is True
+        assert result["postrun_lines"] == 30
+        # Last line should be the RUN END marker, not postrun content
+        assert "RUN END" in result["lines"][-1]
+        # Should NOT contain postrun lines
+        assert not any("post-run collecting" in line for line in result["lines"])
+
+    @respx.mock
+    async def test_skip_postrun_no_marker(self, mock_ctx):
+        """Without a RUN END marker, skip_postrun should fall back to raw tail."""
+        build = make_build()
+        log_text = "\n".join([f"line {i}" for i in range(1, 101)])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=10))
+        assert result["count"] == 10
+        assert "skipped_postrun" not in result
+        assert "line 100" in result["lines"][-1]
+
+    @respx.mock
+    async def test_skip_postrun_false_shows_raw_tail(self, mock_ctx):
+        """With skip_postrun=False, should show the actual last lines including postrun."""
+        build = make_build()
+        run_lines = [f"run line {i}" for i in range(1, 51)]
+        marker = "2025-01-01 | RUN END RESULT_NORMAL"
+        postrun_lines = [f"post-run collecting {i}" for i in range(1, 31)]
+        log_text = "\n".join([*run_lines, marker, *postrun_lines])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        result = json.loads(
+            await tail_build_log(
+                mock_ctx, uuid="build-uuid-1", lines=10, skip_postrun=False,
+            )
+        )
+        assert result["count"] == 10
+        assert "skipped_postrun" not in result
+        # Should contain postrun lines (raw tail from end)
+        assert any("post-run collecting" in line for line in result["lines"])
+
+    @respx.mock
+    async def test_skip_postrun_only_applies_to_job_output_txt(self, mock_ctx):
+        """skip_postrun should not apply to custom log files."""
+        build = make_build()
+        run_lines = [f"run line {i}" for i in range(1, 51)]
+        marker = "2025-01-01 | RUN END RESULT_NORMAL"
+        postrun_lines = [f"post-run collecting {i}" for i in range(1, 31)]
+        log_text = "\n".join([*run_lines, marker, *postrun_lines])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}logs/custom.log").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        result = json.loads(
+            await tail_build_log(
+                mock_ctx, uuid="build-uuid-1", lines=10, log_name="logs/custom.log",
+            )
+        )
+        assert "skipped_postrun" not in result
+        # Should show raw tail — postrun lines at the end
+        assert any("post-run collecting" in line for line in result["lines"])
+
+    @respx.mock
+    async def test_skip_postrun_short_log_shows_everything(self, mock_ctx):
+        """When total lines <= requested lines, skip_postrun is bypassed."""
+        build = make_build()
+        log_text = "run line\n2025-01-01 | RUN END RESULT_NORMAL\npost-run line"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=log_text)
+        )
+        # Request 50 lines but log only has 3 — should show all
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=50))
+        assert result["count"] == 3
+        assert "skipped_postrun" not in result
+
+    @respx.mock
+    async def test_no_log_url_in_progress(self, mock_ctx):
+        """In-progress build with no log_url should return status-aware error."""
+        build = make_build(log_url=None)
+        build["log_url"] = None
+        build["result"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/in-prog").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="in-prog"))
+        assert "error" in result
+        assert "in progress" in result["error"]
