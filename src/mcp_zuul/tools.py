@@ -378,6 +378,53 @@ def _grep_log_context(text: str, *, context_lines: int = 5) -> list[list[dict]]:
     return blocks
 
 
+_PLAY_RECAP_RE = re.compile(r"PLAY RECAP \*+")
+
+
+def _smart_truncate(text: str, max_size: int = 4000) -> str | None:
+    """Truncate long text keeping head and tail so failures are visible.
+
+    Short text (<= max_size) is returned as-is.  For long text, keeps a
+    small head (shows what ran) and a larger tail (shows the failure).
+    """
+    if not text:
+        return None
+    text = strip_ansi(text)
+    if len(text) <= max_size:
+        return text or None
+    head = max_size // 4
+    tail = max_size - head - 60  # room for the separator
+    mid = len(text) - head - tail
+    return f"{text[:head]}\n\n[... {mid} chars omitted ...]\n\n{text[-tail:]}"
+
+
+def _extract_inner_recap(text: str) -> str | None:
+    """Extract the last PLAY RECAP block from embedded ansible output.
+
+    For container exec tasks (podman_container_exec, command running
+    ansible-playbook), the stdout contains a nested ansible run.  The
+    PLAY RECAP at the end reveals which hosts failed.  Returns the last
+    RECAP block found, or None.
+    """
+    if not text or "PLAY RECAP" not in text:
+        return None
+    cleaned = strip_ansi(text)
+    lines = cleaned.splitlines()
+    last_recap_idx = None
+    for i, line in enumerate(lines):
+        if _PLAY_RECAP_RE.search(line):
+            last_recap_idx = i
+    if last_recap_idx is None:
+        return None
+    recap_lines = [lines[last_recap_idx]]
+    for j in range(last_recap_idx + 1, min(last_recap_idx + 20, len(lines))):
+        line = lines[j].strip()
+        if not line:
+            break
+        recap_lines.append(lines[j])
+    return "\n".join(recap_lines)
+
+
 def _parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
     """Parse job-output.json into playbook summaries and failed task details.
 
@@ -419,16 +466,18 @@ def _parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                     duration = task_info.get("duration", {})
                     for host, res in task.get("hosts", {}).items():
                         if res.get("failed"):
+                            raw_stdout = str(res.get("stdout", ""))
                             ft = clean(
                                 {
                                     "play": play_name,
                                     "task": task_name,
                                     "host": host,
-                                    "msg": str(res.get("msg", ""))[:4000],
+                                    "msg": _smart_truncate(str(res.get("msg", ""))),
                                     "rc": res.get("rc"),
                                     "cmd": res.get("cmd"),
-                                    "stderr": str(res.get("stderr", ""))[:4000] or None,
-                                    "stdout": str(res.get("stdout", ""))[:4000] or None,
+                                    "stderr": _smart_truncate(str(res.get("stderr", ""))),
+                                    "stdout": _smart_truncate(raw_stdout),
+                                    "inner_recap": _extract_inner_recap(raw_stdout),
                                     "invocation": _truncate_invocation(
                                         res.get("invocation", {}).get("module_args")
                                     ),

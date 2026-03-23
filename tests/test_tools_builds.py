@@ -359,10 +359,11 @@ class TestGetBuildFailures:
         assert "invocation" not in ft
 
     @respx.mock
-    async def test_stdout_truncation_increased(self, mock_ctx):
-        """stdout/stderr should be truncated to 4000 chars, not 1000."""
+    async def test_stdout_smart_truncation(self, mock_ctx):
+        """Long stdout should use smart truncation (head + tail, not just head)."""
         build = make_build(result="FAILURE")
-        long_output = "x" * 5000
+        # Build output where the failure is at the END (like container exec)
+        long_output = "startup line\n" * 500 + "PLAY RECAP ***\nlocalhost: ok=5 failed=1\n"
         job_output = [
             {
                 "phase": "run",
@@ -394,8 +395,69 @@ class TestGetBuildFailures:
             return_value=httpx.Response(200, json=job_output)
         )
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
-        stdout = result["failed_tasks"][0]["stdout"]
-        assert len(stdout) == 4000
+        ft = result["failed_tasks"][0]
+        # Smart truncation keeps tail — failure at end is visible
+        assert "PLAY RECAP" in ft["stdout"]
+        assert "failed=1" in ft["stdout"]
+        assert "omitted" in ft["stdout"]  # truncation marker present
+        assert len(ft["stdout"]) <= 4100  # within budget
+
+    @respx.mock
+    async def test_container_exec_inner_recap(self, mock_ctx):
+        """Container exec failures should extract inner PLAY RECAP."""
+        build = make_build(result="FAILURE")
+        # Simulate podman_container_exec with embedded ansible output
+        inner_ansible = (
+            "Using /etc/ansible.cfg\n" * 100
+            + "\x1b[0;32mok: [host1]\x1b[0m\n" * 50
+            + "PLAY RECAP *******\n"
+            + "\x1b[0;31mlocalhost\x1b[0m : ok=74 changed=30 unreachable=0 "
+            + "\x1b[0;31mfailed=1\x1b[0m skipped=29 rescued=1 ignored=0\n"
+        )
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"undercloud": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run shiftstack"},
+                        "tasks": [
+                            {
+                                "task": {
+                                    "name": "Run ocp_testing inside container",
+                                    "duration": {"end": "2025-01-01T02:20:00"},
+                                },
+                                "hosts": {
+                                    "undercloud": {
+                                        "failed": True,
+                                        "msg": "",
+                                        "rc": 2,
+                                        "stderr": "Please review the log for errors.",
+                                        "stdout": inner_ansible,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        # inner_recap extracted and ANSI-stripped
+        assert ft["inner_recap"] is not None
+        assert "PLAY RECAP" in ft["inner_recap"]
+        assert "failed=1" in ft["inner_recap"]
+        # No ANSI codes in any field
+        assert "\x1b" not in ft["inner_recap"]
+        assert "\x1b" not in (ft.get("stdout") or "")
 
 
 class TestGetBuildFailuresDecodingError:

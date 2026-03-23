@@ -285,6 +285,79 @@ class TestHandleErrors:
         assert "RuntimeError" in result["error"]
 
 
+class TestSmartTruncate:
+    def test_short_text_unchanged(self):
+        from mcp_zuul.tools import _smart_truncate
+
+        assert _smart_truncate("hello") == "hello"
+
+    def test_empty_returns_none(self):
+        from mcp_zuul.tools import _smart_truncate
+
+        assert _smart_truncate("") is None
+        assert _smart_truncate(None) is None
+
+    def test_long_text_keeps_head_and_tail(self):
+        from mcp_zuul.tools import _smart_truncate
+
+        text = "HEAD-" + "x" * 5000 + "-TAIL"
+        result = _smart_truncate(text)
+        assert result is not None
+        assert result.startswith("HEAD-")
+        assert result.endswith("-TAIL")
+        assert "omitted" in result
+        assert len(result) <= 4100
+
+    def test_ansi_stripped(self):
+        from mcp_zuul.tools import _smart_truncate
+
+        text = "\x1b[0;31mred text\x1b[0m"
+        result = _smart_truncate(text)
+        assert "\x1b" not in result
+        assert "red text" in result
+
+
+class TestExtractInnerRecap:
+    def test_no_recap_returns_none(self):
+        from mcp_zuul.tools import _extract_inner_recap
+
+        assert _extract_inner_recap("just some output\nno recap here") is None
+        assert _extract_inner_recap("") is None
+        assert _extract_inner_recap(None) is None
+
+    def test_extracts_last_recap(self):
+        from mcp_zuul.tools import _extract_inner_recap
+
+        text = (
+            "PLAY RECAP ***\nhost1 : ok=3 failed=0\n\n"
+            "more output\n"
+            "PLAY RECAP ***\nlocalhost : ok=74 failed=1\n"
+        )
+        recap = _extract_inner_recap(text)
+        assert recap is not None
+        assert "failed=1" in recap
+        # Should be the LAST recap, not the first
+        assert "localhost" in recap
+
+    def test_strips_ansi_from_recap(self):
+        from mcp_zuul.tools import _extract_inner_recap
+
+        text = "PLAY RECAP *****\n\x1b[0;31mlocalhost\x1b[0m : ok=5 \x1b[0;31mfailed=1\x1b[0m\n"
+        recap = _extract_inner_recap(text)
+        assert recap is not None
+        assert "\x1b" not in recap
+        assert "failed=1" in recap
+
+    def test_multiple_hosts(self):
+        from mcp_zuul.tools import _extract_inner_recap
+
+        text = "PLAY RECAP *****\nhost1 : ok=10 failed=0\nhost2 : ok=8 failed=1\n"
+        recap = _extract_inner_recap(text)
+        assert "host1" in recap
+        assert "host2" in recap
+        assert "failed=1" in recap
+
+
 class TestFmtBuild:
     def test_brief_format(self):
         build = {
