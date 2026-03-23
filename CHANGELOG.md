@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.4] - 2026-03-24
+
+### Added
+- Failure classifier (`classifier.py`) — categorizes build failures as INFRA_FLAKE, REAL_FAILURE, CONFIG_ERROR, or UNKNOWN with confidence levels and retryability flags
+- `diagnose_build` tool — structured failure analysis combining job-output.json parsing, log grep, and classification
+- `get_build_test_results` tool — JUnit XML test result extraction from build artifacts
+- `get_build_anomalies` tool — ML-based log anomaly detection via LogJuicer
+- `parsers.py` module — extracted `parse_playbooks()`, `smart_truncate()`, `extract_inner_recap()`, `grep_log_context()` for shared use across tools and classifier
+- Smart stdout truncation with ANSI stripping in job-output.json parsing
+
+### Changed
+- Split monolithic `tools.py` into `tools/` package with domain-specific modules (`_builds`, `_logs`, `_status`, `_config`, `_write`, `_tests`, `_logjuicer`)
+- `Config` refactored to use `from_env()` classmethod (raises instead of sys.exit)
+- Gzip fallback uses suffix loop over `.json.gz` → `.json` with uniform error handling
+
+### Fixed
+- `parse_playbooks()` crashes on null stats values from Zuul API (AttributeError on `.get()`)
+- Deduplicated `_RUN_END_MARKER` constant (was defined in both `_common.py` and `_logs.py`)
+- Replaced `__import__("re")` idiom with normal import in `_common.py`
+- Gzip `DecodingError` fallback now tries uncompressed JSON before text grep
+- `_no_log_url_error` used consistently across all log tools
+
 ## [0.3.3] - 2026-03-23
 
 ### Changed
@@ -127,6 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.3.4]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.4
 [0.3.3]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.3
 [0.3.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.2
 [0.3.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.1
