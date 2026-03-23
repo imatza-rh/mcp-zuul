@@ -237,16 +237,22 @@ class TestGetBuildFailures:
         assert len(result["failed_tasks"]) == 0
 
     @respx.mock
-    async def test_json_not_found(self, mock_ctx):
+    async def test_json_not_found_falls_through_to_text(self, mock_ctx):
+        """Both JSONs 404 — should fall through to text grep, not hard error."""
         build = make_build(result="FAILURE")
+        log_text = "some output\nfatal: [host]: UNREACHABLE!\nmore output"
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}job-output.json.gz").mock(return_value=httpx.Response(404))
         respx.get(f"{build['log_url']}job-output.json").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log_text.encode())
+        )
         result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
-        assert "error" in result
-        assert "not found" in result["error"]
+        assert "error" not in result
+        assert result["json_fallback"] is True
+        assert len(result["log_context"]) >= 1
 
     @respx.mock
     async def test_includes_passing_playbooks(self, mock_ctx):
@@ -462,23 +468,40 @@ class TestGetBuildFailures:
 
 class TestGetBuildFailuresDecodingError:
     @respx.mock
-    async def test_decoding_error_falls_through_to_log_grep(self, mock_ctx):
-        """DecodingError on job-output.json.gz should fall through to text log grep."""
+    async def test_decoding_error_gz_falls_back_to_json(self, mock_ctx):
+        """DecodingError on .json.gz should try .json before text grep."""
+        build = make_build(result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        # Should use structured JSON data from .json, not text fallback
+        assert "error" not in result
+        assert "json_fallback" not in result
+        assert len(result["failed_tasks"]) == 1
+        assert result["failed_tasks"][0]["task"] == "Run deployment"
+
+    @respx.mock
+    async def test_decoding_error_both_json_falls_through_to_text(self, mock_ctx):
+        """DecodingError on both .json.gz and .json should fall through to text grep."""
         build = make_build(result="FAILURE")
         log_text = "some log\nfatal: [host]: FAILED! => deploy error\nmore log"
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
             return_value=httpx.Response(200, json=build)
         )
-        # Both .gz and identity retry fail with DecodingError
         respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.json").mock(side_effect=httpx.DecodingError(""))
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=log_text.encode())
         )
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
-        # Should NOT be an error — should have fallen through to text diagnosis
         assert "error" not in result
         assert result["json_fallback"] is True
-        assert result["result"] == "FAILURE"
         assert len(result["log_context"]) >= 1
         fatal_lines = [
             line for block in result["log_context"] for line in block if line.get("match")
@@ -486,13 +509,14 @@ class TestGetBuildFailuresDecodingError:
         assert any("fatal" in line["text"] for line in fatal_lines)
 
     @respx.mock
-    async def test_decoding_error_both_logs_unavailable(self, mock_ctx):
-        """When both json.gz and txt are unavailable, return a clear message."""
+    async def test_decoding_error_all_logs_unavailable(self, mock_ctx):
+        """When all log formats are unavailable, return a clear message."""
         build = make_build(result="FAILURE")
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.json").mock(side_effect=httpx.DecodingError(""))
         respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
         assert result["json_fallback"] is True
@@ -582,26 +606,44 @@ class TestDiagnoseBuild:
 
 class TestDiagnoseBuildDecodingError:
     @respx.mock
-    async def test_falls_through_to_log_grep(self, mock_ctx):
-        """DecodingError on job-output.json should fall through to text log grep."""
+    async def test_gz_decoding_error_falls_back_to_json(self, mock_ctx):
+        """DecodingError on .json.gz should try .json before text grep."""
+        build = make_build(result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"no fatal lines here")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        assert "error" not in result
+        # Should have structured data from .json
+        assert len(result["failed_tasks"]) == 1
+        assert result["failed_tasks"][0]["task"] == "Run deployment"
+
+    @respx.mock
+    async def test_both_json_decoding_error_falls_through_to_text(self, mock_ctx):
+        """DecodingError on both JSON formats should fall through to text log grep."""
         build = make_build(result="FAILURE")
         log_text = "some log\nfatal: deployment failed\nmore log"
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
             return_value=httpx.Response(200, json=build)
         )
-        # job-output.json.gz triggers DecodingError (both attempts via fetch_log_url)
         respx.get(f"{build['log_url']}job-output.json.gz").mock(side_effect=httpx.DecodingError(""))
+        respx.get(f"{build['log_url']}job-output.json").mock(side_effect=httpx.DecodingError(""))
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=log_text.encode())
         )
         result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
-        # Should NOT be an error — should have fallen through to text diagnosis
         assert "error" not in result
         assert result["result"] == "FAILURE"
-        # Structured failures empty (json parsing failed), but log_context should exist
         assert result["failed_tasks"] == []
         assert len(result["log_context"]) >= 1
-        # Should have found "fatal:" in the log
         fatal_lines = [
             line for block in result["log_context"] for line in block if line.get("match")
         ]

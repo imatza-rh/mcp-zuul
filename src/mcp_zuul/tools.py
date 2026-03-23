@@ -553,21 +553,18 @@ async def get_build_failures(
     playbooks: list[dict] = []
     failed_tasks: list[dict] = []
     json_ok = False
-    try:
-        json_url = log_url.rstrip("/") + "/job-output.json.gz"
-        resp = await fetch_log_url(a, json_url)
-        if resp.status_code == 404:
-            json_url = log_url.rstrip("/") + "/job-output.json"
-            resp = await fetch_log_url(a, json_url)
-        if resp.status_code == 404:
-            return error("job-output.json not found")
-        resp.raise_for_status()
-        data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-        if isinstance(data, list):
-            playbooks, failed_tasks = _parse_playbooks(data)
-            json_ok = True
-    except (httpx.DecodingError, json.JSONDecodeError, KeyError):
-        pass  # Fall through to text-based fallback
+    for suffix in ("job-output.json.gz", "job-output.json"):
+        try:
+            resp = await fetch_log_url(a, log_url.rstrip("/") + "/" + suffix)
+            if resp.status_code != 200:
+                continue
+            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+            if isinstance(data, list):
+                playbooks, failed_tasks = _parse_playbooks(data)
+                json_ok = True
+                break
+        except (httpx.DecodingError, json.JSONDecodeError, KeyError):
+            continue  # Try next format or fall through to text
 
     if json_ok:
         return json.dumps(
@@ -660,22 +657,17 @@ async def diagnose_build(
     # --- 1. Parse job-output.json for structured failures ---
     playbooks: list[dict] = []
     failed_tasks: list[dict] = []
-    try:
-        json_url = log_url.rstrip("/") + "/job-output.json.gz"
-        resp = await fetch_log_url(a, json_url)
-        if resp.status_code == 404:
-            json_url = log_url.rstrip("/") + "/job-output.json"
-            resp = await fetch_log_url(a, json_url)
-
-        if resp.status_code == 200:
-            try:
-                data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-                if isinstance(data, list):
-                    playbooks, failed_tasks = _parse_playbooks(data)
-            except (json.JSONDecodeError, KeyError):
-                pass  # Fall through to log-based diagnosis
-    except httpx.DecodingError:
-        pass  # Corrupted gzip — fall through to log-based diagnosis
+    for suffix in ("job-output.json.gz", "job-output.json"):
+        try:
+            resp = await fetch_log_url(a, log_url.rstrip("/") + "/" + suffix)
+            if resp.status_code != 200:
+                continue
+            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+            if isinstance(data, list):
+                playbooks, failed_tasks = _parse_playbooks(data)
+                break
+        except (httpx.DecodingError, json.JSONDecodeError, KeyError):
+            continue  # Try next format or fall through to log-based diagnosis
 
     # --- 2. Grep job-output.txt for fatal/FAILED context ---
     log_context: list[list[dict]] = []
