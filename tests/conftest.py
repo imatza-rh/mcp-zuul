@@ -30,7 +30,7 @@ def config():
 
 
 @pytest.fixture
-def mock_ctx(config):
+async def mock_ctx(config):
     """Create a mock MCP Context with AppContext injected."""
     client = httpx.AsyncClient(
         base_url=config.base_url,
@@ -42,7 +42,9 @@ def mock_ctx(config):
 
     ctx = MagicMock()
     ctx.request_context.lifespan_context = app_ctx
-    return ctx
+    yield ctx
+    await client.aclose()
+    await log_client.aclose()
 
 
 # -- Sample API response factories --

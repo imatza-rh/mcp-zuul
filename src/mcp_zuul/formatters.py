@@ -117,7 +117,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     running = sum(1 for j in jobs if j.get("status") == "RUNNING")
     waiting = sum(1 for j in jobs if j.get("status") in ("WAITING", "QUEUED"))
     total = len(jobs)
-    progress_pct = int((completed / total) * 100)
+    progress_pct = round((completed / total) * 100)
 
     by_name: dict[str, dict] = {j["name"]: j for j in jobs}
     cache: dict[str, int | float] = {}

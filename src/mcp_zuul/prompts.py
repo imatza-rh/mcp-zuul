@@ -5,10 +5,36 @@ import json
 from mcp.server.fastmcp import Context
 
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
-from .helpers import api, app, clean, fetch_log_url, safepath
+from .helpers import api, app, fetch_log_url, safepath
 from .helpers import tenant as _tenant
 from .server import mcp
-from .tools import _MAX_JSON_LOG_BYTES
+from .tools import _MAX_JSON_LOG_BYTES, _parse_playbooks
+
+
+async def _fetch_failed_tasks(ctx: Context, build: dict) -> list[dict]:
+    """Fetch and parse failed tasks from a build's job-output.json.
+
+    Reuses _parse_playbooks() for consistent failure extraction across
+    tools and prompts.
+    """
+    log_url = build.get("log_url")
+    if not log_url or build.get("result") in ("SUCCESS", "SKIPPED"):
+        return []
+    try:
+        a = app(ctx)
+        json_url = log_url.rstrip("/") + "/job-output.json.gz"
+        resp = await fetch_log_url(a, json_url)
+        if resp.status_code == 404:
+            json_url = log_url.rstrip("/") + "/job-output.json"
+            resp = await fetch_log_url(a, json_url)
+        if resp.status_code == 200:
+            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+            if isinstance(data, list):
+                _playbooks, failed_tasks = _parse_playbooks(data)
+                return failed_tasks
+    except Exception:
+        pass
+    return []
 
 
 @mcp.prompt()
@@ -19,41 +45,7 @@ async def debug_build(uuid: str, tenant: str = "", ctx: Context | None = None) -
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     info = fmt_build(build, brief=False)
 
-    # Try to fetch structured failures from job-output.json
-    failures = []
-    log_url = build.get("log_url")
-    if log_url and build.get("result") not in ("SUCCESS", "SKIPPED"):
-        try:
-            a = app(ctx)
-            json_url = log_url.rstrip("/") + "/job-output.json.gz"
-            resp = await fetch_log_url(a, json_url)
-            if resp.status_code == 404:
-                json_url = log_url.rstrip("/") + "/job-output.json"
-                resp = await fetch_log_url(a, json_url)
-            if resp.status_code == 200:
-                data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-                if isinstance(data, list):
-                    for pb in data:
-                        if not any(s.get("failures", 0) > 0 for s in pb.get("stats", {}).values()):
-                            continue
-                        for play in pb.get("plays", []):
-                            for task in play.get("tasks", []):
-                                for host, res in task.get("hosts", {}).items():
-                                    if res.get("failed"):
-                                        failures.append(
-                                            clean(
-                                                {
-                                                    "task": task.get("task", {}).get("name", ""),
-                                                    "host": host,
-                                                    "msg": str(res.get("msg", ""))[:500],
-                                                    "rc": res.get("rc"),
-                                                    "stderr": str(res.get("stderr", ""))[:300]
-                                                    or None,
-                                                }
-                                            )
-                                        )
-        except Exception:
-            pass
+    failures = await _fetch_failed_tasks(ctx, build)
 
     parts = [
         "Investigate this Zuul CI build failure:\n",
@@ -117,48 +109,12 @@ async def compare_builds(
     ]
 
     # Fetch failures for failed builds
-    for label, build, _uuid in [("A", b1, uuid1), ("B", b2, uuid2)]:
-        if build.get("result") not in ("SUCCESS", "SKIPPED", None):
-            log_url = build.get("log_url")
-            if log_url:
-                try:
-                    a = app(ctx)
-                    json_url = log_url.rstrip("/") + "/job-output.json.gz"
-                    resp = await fetch_log_url(a, json_url)
-                    if resp.status_code == 404:
-                        json_url = log_url.rstrip("/") + "/job-output.json"
-                        resp = await fetch_log_url(a, json_url)
-                    if resp.status_code == 200:
-                        data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
-                        if isinstance(data, list):
-                            tasks = []
-                            for pb in data:
-                                if not any(
-                                    s.get("failures", 0) > 0 for s in pb.get("stats", {}).values()
-                                ):
-                                    continue
-                                for play in pb.get("plays", []):
-                                    for task in play.get("tasks", []):
-                                        for host, res in task.get("hosts", {}).items():
-                                            if res.get("failed"):
-                                                tasks.append(
-                                                    clean(
-                                                        {
-                                                            "task": task.get("task", {}).get(
-                                                                "name", ""
-                                                            ),
-                                                            "host": host,
-                                                            "msg": str(res.get("msg", ""))[:300],
-                                                        }
-                                                    )
-                                                )
-                            if tasks:
-                                parts.append(
-                                    f"## Build {label} Failures\n"
-                                    f"```json\n{json.dumps(tasks, indent=2)}\n```\n"
-                                )
-                except Exception:
-                    pass
+    for label, build in [("A", b1), ("B", b2)]:
+        tasks = await _fetch_failed_tasks(ctx, build)
+        if tasks:
+            parts.append(
+                f"## Build {label} Failures\n```json\n{json.dumps(tasks, indent=2)}\n```\n"
+            )
 
     parts.append(
         "## Analysis\n"

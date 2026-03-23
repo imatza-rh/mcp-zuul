@@ -200,12 +200,22 @@ async def get_change_status(
     if not data and change.isdigit():
         # Zuul status/change API doesn't match bare numbers to GitLab-style
         # refs. Fall back to filtering the full status by change number.
+        # Cap iteration to avoid unbounded memory on busy tenants.
         full = await api(ctx, f"/tenant/{safepath(t)}/status")
         items = []
+        _scanned = 0
+        _MAX_SCAN = 5000  # safety cap for very large tenants
         for p in full.get("pipelines", []):
+            if _scanned >= _MAX_SCAN:
+                break
             for queue in p.get("change_queues", []):
+                if _scanned >= _MAX_SCAN:
+                    break
                 for heads_group in queue.get("heads", []):
                     for item in heads_group:
+                        _scanned += 1
+                        if _scanned > _MAX_SCAN:
+                            break
                         for r in item.get("refs", []):
                             ref_str = r.get("ref", "")
                             if f"/{change}/" in ref_str:
@@ -817,10 +827,16 @@ async def get_build_log(
         except re.error as e:
             return error(f"Invalid regex: {e}")
         try:
+            # Truncate lines before matching to bound regex backtracking time.
+            # Without this, pathological patterns (e.g. "(a+)+b") on long lines
+            # could keep the thread pool worker busy indefinitely — the
+            # asyncio.wait_for timeout cancels the await but not the thread.
             matched = await asyncio.wait_for(
                 asyncio.get_running_loop().run_in_executor(
                     None,
-                    lambda: [(i + 1, line) for i, line in enumerate(all_lines) if pat.search(line)],
+                    lambda: [
+                        (i + 1, line) for i, line in enumerate(all_lines) if pat.search(line[:1000])
+                    ],
                 ),
                 timeout=10.0,
             )

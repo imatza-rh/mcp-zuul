@@ -57,7 +57,7 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
     """Make an authenticated GET request to the Zuul API.
 
     Retries once on 500/503 (transient server errors, LB hiccups) and
-    re-authenticates via Kerberos on 401/302.
+    re-authenticates via Kerberos on 401.
     """
     a = app(ctx)
     url = f"/api{path}"
@@ -66,7 +66,9 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
         resp = await a.client.get(url, params=params)
 
         # Re-authenticate if the session expired (Kerberos only).
-        if resp.status_code in (401, 302) and a.config.use_kerberos:
+        # Note: 302 is never seen here because client uses follow_redirects=True;
+        # httpx follows the OIDC redirect chain and we see the final 401.
+        if resp.status_code == 401 and a.config.use_kerberos:
             async with a._auth_lock:
                 log.info("Session expired, re-authenticating via Kerberos")
                 await kerberos_auth(a.client, a.config.base_url)
@@ -94,7 +96,7 @@ async def api_post(ctx: Context, path: str, body: dict) -> Any:
     if a.config.read_only:
         raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
     resp = await a.client.post(f"/api{path}", json=body)
-    if resp.status_code in (401, 302) and a.config.use_kerberos:
+    if resp.status_code == 401 and a.config.use_kerberos:
         async with a._auth_lock:
             await kerberos_auth(a.client, a.config.base_url)
         resp = await a.client.post(f"/api{path}", json=body)
@@ -114,7 +116,7 @@ async def api_delete(ctx: Context, path: str) -> Any:
     if a.config.read_only:
         raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
     resp = await a.client.delete(f"/api{path}")
-    if resp.status_code in (401, 302) and a.config.use_kerberos:
+    if resp.status_code == 401 and a.config.use_kerberos:
         async with a._auth_lock:
             await kerberos_auth(a.client, a.config.base_url)
         resp = await a.client.delete(f"/api{path}")
@@ -139,49 +141,55 @@ def _pick_client(a: AppContext, url: str) -> httpx.AsyncClient:
     return a.client if log_host == api_host else a.log_client
 
 
-async def _stream_with_limit(a: AppContext, url: str, max_bytes: int) -> tuple[bytes, bool]:
-    """Stream a URL with size limit. Returns (content, truncated).
+async def _stream_response(
+    a: AppContext,
+    url: str,
+    *,
+    max_bytes: int,
+    headers: dict[str, str] | None = None,
+) -> tuple[httpx.Response, bool]:
+    """Core streaming function with size limit and Kerberos re-auth.
 
-    Raises:
-        httpx.HTTPStatusError: on non-404 HTTP errors
-        FileNotFoundError: when the URL returns 404
+    Single implementation backing both ``fetch_log_url`` (returns Response)
+    and ``stream_log`` (returns bytes + truncated flag).
+
+    Returns:
+        Tuple of (response, truncated). Does not raise on 404 — callers
+        should check ``response.status_code``.
     """
     http = _pick_client(a, url)
-    chunks: list[bytes] = []
-    size = 0
-    truncated = False
 
-    async with http.stream("GET", url) as resp:
-        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
-            await resp.aclose()
-            async with a._auth_lock:
-                await kerberos_auth(a.client, a.config.base_url)
-            async with http.stream("GET", url) as resp2:
-                if resp2.status_code == 404:
-                    raise FileNotFoundError(url)
-                resp2.raise_for_status()
-                async for chunk in resp2.aiter_bytes():
+    async def _fetch() -> tuple[httpx.Response, bool]:
+        chunks: list[bytes] = []
+        size = 0
+        truncated = False
+        async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp:
+            status = resp.status_code
+            hdrs = resp.headers
+            req = resp.request
+            if status != 404:
+                async for chunk in resp.aiter_bytes():
                     size += len(chunk)
                     if size > max_bytes:
-                        # Include partial chunk up to the limit
                         overshoot = size - max_bytes
                         chunks.append(chunk[: len(chunk) - overshoot])
                         truncated = True
                         break
                     chunks.append(chunk)
-        else:
-            if resp.status_code == 404:
-                raise FileNotFoundError(url)
-            resp.raise_for_status()
-            async for chunk in resp.aiter_bytes():
-                size += len(chunk)
-                if size > max_bytes:
-                    overshoot = size - max_bytes
-                    chunks.append(chunk[: len(chunk) - overshoot])
-                    truncated = True
-                    break
-                chunks.append(chunk)
-    return b"".join(chunks), truncated
+        return httpx.Response(
+            status_code=status, headers=hdrs, content=b"".join(chunks), request=req
+        ), truncated
+
+    resp, truncated = await _fetch()
+
+    # Re-authenticate on 401 (Kerberos only, API client only)
+    if resp.status_code == 401 and a.config.use_kerberos and http is a.client:
+        async with a._auth_lock:
+            log.info("Session expired, re-authenticating via Kerberos")
+            await kerberos_auth(a.client, a.config.base_url)
+        resp, truncated = await _fetch()
+
+    return resp, truncated
 
 
 async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
@@ -190,89 +198,24 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
     Downloads up to _MAX_FETCH_BYTES (20 MB) via streaming to prevent
     unbounded memory consumption from large log files.
     """
-    http = _pick_client(a, url)
-
     try:
-        return await _fetch_log_stream(http, a, url, max_bytes=_MAX_FETCH_BYTES)
+        resp, _ = await _stream_response(a, url, max_bytes=_MAX_FETCH_BYTES)
+        return resp
     except httpx.DecodingError:
         # Corrupted gzip — retry without compression so the server
         # sends raw bytes instead of a broken Content-Encoding: gzip.
         log.info("DecodingError fetching %s, retrying without compression", url)
         try:
-            return await _fetch_log_stream(
-                http,
-                a,
-                url,
-                max_bytes=_MAX_FETCH_BYTES,
-                headers={"Accept-Encoding": "identity"},
+            resp, _ = await _stream_response(
+                a, url, max_bytes=_MAX_FETCH_BYTES, headers={"Accept-Encoding": "identity"}
             )
+            return resp
         except httpx.DecodingError:
             # Server ignored Accept-Encoding: identity and sent corrupt
             # Content-Encoding: gzip again.  Re-raise so callers can
             # fall back to text-based diagnosis.
             log.warning("DecodingError persists after identity retry for %s", url)
             raise
-
-
-async def _fetch_log_stream(
-    http: httpx.AsyncClient,
-    a: AppContext,
-    url: str,
-    *,
-    max_bytes: int,
-    headers: dict[str, str] | None = None,
-) -> httpx.Response:
-    """Internal: stream a log URL with size limit and optional custom headers."""
-    chunks: list[bytes] = []
-    size = 0
-
-    async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp:
-        if resp.status_code in (401, 302) and a.config.use_kerberos and http is a.client:
-            await resp.aclose()
-            async with a._auth_lock:
-                log.info("Log fetch: session expired, re-authenticating via Kerberos")
-                await kerberos_auth(a.client, a.config.base_url)
-            async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp2:
-                resp2_status = resp2.status_code
-                resp2_headers = resp2.headers
-                resp2_request = resp2.request
-                if resp2_status == 404:
-                    pass  # skip streaming, return empty content below
-                else:
-                    async for chunk in resp2.aiter_bytes():
-                        size += len(chunk)
-                        if size > max_bytes:
-                            overshoot = size - max_bytes
-                            chunks.append(chunk[: len(chunk) - overshoot])
-                            break
-                        chunks.append(chunk)
-            return httpx.Response(
-                status_code=resp2_status,
-                headers=resp2_headers,
-                content=b"".join(chunks),
-                request=resp2_request,
-            )
-
-        resp_status = resp.status_code
-        resp_headers = resp.headers
-        resp_request = resp.request
-        if resp_status == 404:
-            pass  # skip streaming, return empty content below
-        else:
-            async for chunk in resp.aiter_bytes():
-                size += len(chunk)
-                if size > max_bytes:
-                    overshoot = size - max_bytes
-                    chunks.append(chunk[: len(chunk) - overshoot])
-                    break
-                chunks.append(chunk)
-
-    return httpx.Response(
-        status_code=resp_status,
-        headers=resp_headers,
-        content=b"".join(chunks),
-        request=resp_request,
-    )
 
 
 async def stream_log(a: AppContext, url: str) -> tuple[bytes, bool]:
@@ -285,7 +228,12 @@ async def stream_log(a: AppContext, url: str) -> tuple[bytes, bool]:
         httpx.HTTPStatusError: on non-404 HTTP errors
         FileNotFoundError: when the log file returns 404
     """
-    return await _stream_with_limit(a, url, _MAX_LOG_BYTES)
+    resp, truncated = await _stream_response(a, url, max_bytes=_MAX_LOG_BYTES)
+    if resp.status_code == 404:
+        raise FileNotFoundError(url)
+    if resp.status_code >= 400:
+        resp.raise_for_status()
+    return resp.content, truncated
 
 
 def error(msg: str) -> str:
