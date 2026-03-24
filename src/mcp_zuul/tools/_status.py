@@ -50,31 +50,39 @@ async def get_status(
 
     all_pipelines = data.get("pipelines", [])
     if pipeline:
-        all_pipelines = [p for p in all_pipelines if p["name"] == pipeline]
+        all_pipelines = [p for p in all_pipelines if p.get("name") == pipeline]
 
     # Collect items per pipeline using the flattened iterator
+    _MAX_STATUS_ITEMS = 200
     by_pipeline: dict[str, list] = {}
+    total_items = 0
     for pname, item in iter_status_items(all_pipelines, project=project, active_only=active_only):
+        if total_items >= _MAX_STATUS_ITEMS:
+            break
         items = by_pipeline.setdefault(pname, [])
         if len(items) < 50:
             items.append(fmt_status_item(item))
+            total_items += 1
 
     result = []
     for p in all_pipelines:
-        items = by_pipeline.get(p["name"], [])
+        pname = p.get("name", "")
+        items = by_pipeline.get(pname, [])
         if items or not active_only:
-            result.append({"pipeline": p["name"], "item_count": len(items), "items": items})
+            result.append({"pipeline": pname, "item_count": len(items), "items": items})
 
     if active_only:
         result = [r for r in result if r["item_count"] > 0]
 
-    return json.dumps(
-        {
-            "zuul_version": data.get("zuul_version"),
-            "pipeline_count": len(result),
-            "pipelines": result,
-        }
-    )
+    out: dict[str, Any] = {
+        "zuul_version": data.get("zuul_version"),
+        "pipeline_count": len(result),
+        "pipelines": result,
+    }
+    if total_items >= _MAX_STATUS_ITEMS:
+        out["capped"] = True
+        out["cap_limit"] = _MAX_STATUS_ITEMS
+    return json.dumps(out)
 
 
 @mcp.tool(title="Change Status", annotations=_READ_ONLY)
@@ -141,7 +149,7 @@ async def get_change_status(
                             ref_str = r.get("ref", "")
                             if f"/{change}/" in ref_str:
                                 items.append(item)
-                                pipeline_map[item.get("id", "")] = p["name"]
+                                pipeline_map[item.get("id", "")] = p.get("name", "")
                                 break
         data = items
     if not data:

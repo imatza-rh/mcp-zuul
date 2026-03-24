@@ -1,6 +1,7 @@
 """Shared constants, annotations, and helpers used across tool sub-modules."""
 
 import json
+import logging
 import re
 
 import httpx
@@ -18,6 +19,8 @@ from ..parsers import (  # noqa: F401
     _smart_truncate,
     parse_playbooks,
 )
+
+log = logging.getLogger("zuul-mcp")
 
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -98,7 +101,15 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
             resp = await fetch_log_url(a, log_url.rstrip("/") + "/" + suffix)
             if resp.status_code != 200:
                 continue
-            data = json.loads(resp.content[:_MAX_JSON_LOG_BYTES])
+            # Skip JSON parsing if content hit the streaming size cap -
+            # truncated JSON will always fail to parse.
+            if len(resp.content) >= _MAX_JSON_LOG_BYTES:
+                log.info(
+                    "job-output.json truncated at %d bytes, falling back to text",
+                    len(resp.content),
+                )
+                continue
+            data = json.loads(resp.content)
             if isinstance(data, list):
                 playbooks, failed_tasks = parse_playbooks(data)
                 return playbooks, failed_tasks, True

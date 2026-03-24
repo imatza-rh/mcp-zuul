@@ -39,7 +39,7 @@ async def list_jobs(
     result = [
         clean(
             {
-                "name": j["name"],
+                "name": j.get("name", ""),
                 "description": (j.get("description") or "")[:100] or None,
                 "variants": len(j.get("variants", [])),
             }
@@ -103,7 +103,10 @@ async def list_pipelines(
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/pipelines")
     result = [
-        {"name": p["name"], "triggers": [tr["driver"] for tr in p.get("triggers", [])]}
+        {
+            "name": p.get("name", ""),
+            "triggers": [tr.get("driver", "") for tr in p.get("triggers", [])],
+        }
         for p in data
     ]
     return json.dumps({"pipelines": result, "count": len(result)})
@@ -176,7 +179,7 @@ async def list_projects(
     result = [
         clean(
             {
-                "name": p["name"],
+                "name": p.get("name", ""),
                 "connection": p.get("connection_name"),
                 "type": p.get("type"),
                 "canonical_name": p.get("canonical_name"),

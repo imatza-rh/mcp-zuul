@@ -1,9 +1,11 @@
 """Shared helpers for Zuul MCP server."""
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import re
+import time as _time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -27,6 +29,8 @@ class AppContext:
     log_client: httpx.AsyncClient
     config: Config
     _auth_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    _auth_generation: int = field(default=0, repr=False)
+    grep_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None, repr=False)
 
 
 def app(ctx: Context) -> AppContext:
@@ -69,9 +73,12 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
         # Note: 302 is never seen here because client uses follow_redirects=True;
         # httpx follows the OIDC redirect chain and we see the final 401.
         if resp.status_code == 401 and a.config.use_kerberos:
+            gen = a._auth_generation
             async with a._auth_lock:
-                log.info("Session expired, re-authenticating via Kerberos")
-                await kerberos_auth(a.client, a.config.base_url)
+                if a._auth_generation == gen:
+                    log.info("Session expired, re-authenticating via Kerberos")
+                    await kerberos_auth(a.client, a.config.base_url)
+                    a._auth_generation += 1
             resp = await a.client.get(url, params=params)
 
         # Retry once on 500/503 (transient server errors, LB hiccups).
@@ -108,8 +115,12 @@ async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = 
             resp = await a.client.delete(url)
 
         if resp.status_code == 401 and a.config.use_kerberos:
+            gen = a._auth_generation
             async with a._auth_lock:
-                await kerberos_auth(a.client, a.config.base_url)
+                if a._auth_generation == gen:
+                    log.info("Session expired, re-authenticating via Kerberos")
+                    await kerberos_auth(a.client, a.config.base_url)
+                    a._auth_generation += 1
             if method == "POST":
                 resp = await a.client.post(url, json=body)
             else:
@@ -143,6 +154,7 @@ async def api_delete(ctx: Context, path: str) -> Any:
 
 _MAX_LOG_BYTES = 10 * 1024 * 1024  # 10 MB
 _MAX_FETCH_BYTES = 20 * 1024 * 1024  # 20 MB (for JSON log files)
+_STREAM_DEADLINE_SECS = 300  # 5 minutes total streaming deadline
 
 
 def _pick_client(a: AppContext, url: str) -> httpx.AsyncClient:
@@ -174,12 +186,16 @@ async def _stream_response(
         chunks: list[bytes] = []
         size = 0
         truncated = False
+        deadline = _time.monotonic() + _STREAM_DEADLINE_SECS
         async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp:
             status = resp.status_code
             hdrs = resp.headers
             req = resp.request
             if status != 404:
                 async for chunk in resp.aiter_bytes():
+                    if _time.monotonic() > deadline:
+                        truncated = True
+                        break
                     size += len(chunk)
                     if size > max_bytes:
                         overshoot = size - max_bytes
@@ -195,9 +211,12 @@ async def _stream_response(
 
     # Re-authenticate on 401 (Kerberos only, API client only)
     if resp.status_code == 401 and a.config.use_kerberos and http is a.client:
+        gen = a._auth_generation
         async with a._auth_lock:
-            log.info("Session expired, re-authenticating via Kerberos")
-            await kerberos_auth(a.client, a.config.base_url)
+            if a._auth_generation == gen:
+                log.info("Session expired, re-authenticating via Kerberos")
+                await kerberos_auth(a.client, a.config.base_url)
+                a._auth_generation += 1
         resp, truncated = await _fetch()
 
     return resp, truncated

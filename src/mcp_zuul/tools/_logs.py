@@ -109,7 +109,7 @@ async def get_build_log(
             # asyncio.wait_for timeout cancels the await but not the thread.
             matched = await asyncio.wait_for(
                 asyncio.get_running_loop().run_in_executor(
-                    None,
+                    a.grep_executor,
                     lambda: [
                         (i + 1, line) for i, line in enumerate(all_lines) if pat.search(line[:1000])
                     ],

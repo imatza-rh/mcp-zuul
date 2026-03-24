@@ -48,7 +48,9 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
         out["event_timestamp"] = b.get("event_timestamp")
         out["nodeset"] = b.get("nodeset")
         out["error_detail"] = b.get("error_detail")
-        out["artifacts"] = [a["name"] for a in b.get("artifacts", [])]
+        out["artifacts"] = [
+            a.get("name", "") for a in b.get("artifacts", []) if isinstance(a, dict)
+        ]
         out["patchset"] = ref.get("patchset")
         out["branch"] = ref.get("branch")
     return clean(out)
@@ -183,6 +185,8 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     total = len(jobs)
     progress_pct = round((completed / total) * 100)
 
+    # Filter out jobs without a name — they can't participate in dependency resolution
+    jobs = [j for j in jobs if j.get("name")]
     by_name: dict[str, dict] = {j["name"]: j for j in jobs}
     cache: dict[str, int | float] = {}
     visiting: set[str] = set()  # cycle detection
@@ -261,7 +265,7 @@ def iter_status_items(pipelines: list, *, project: str = "", active_only: bool =
                             continue
                     if active_only and not item.get("active", False):
                         continue
-                    yield p["name"], item
+                    yield p.get("name", ""), item
 
 
 def _format_job(j: dict, now: float) -> dict:

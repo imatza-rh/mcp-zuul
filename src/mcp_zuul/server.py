@@ -1,5 +1,6 @@
 """FastMCP server instance and lifespan management."""
 
+import concurrent.futures
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -21,7 +22,13 @@ log = logging.getLogger("zuul-mcp")
 
 
 class _BearerAuth(httpx.Auth):
-    """httpx Auth that sends a Bearer token, stripping it on cross-origin redirects."""
+    """httpx Auth that sends a Bearer token on every request.
+
+    Cross-origin redirect protection is handled by httpx itself:
+    ``_redirect_headers()`` strips the ``Authorization`` header when
+    following redirects to a different origin (unless it's an
+    HTTP-to-HTTPS upgrade on the same host).
+    """
 
     def __init__(self, token: str) -> None:
         self.token = token
@@ -54,6 +61,7 @@ async def lifespan(server: FastMCP):
     config = Config.from_env()
     headers = {"Accept": "application/json"}
     auth = _BearerAuth(config.auth_token) if config.auth_token else None
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
     async with (
         httpx.AsyncClient(
             base_url=config.base_url,
@@ -93,7 +101,15 @@ async def lifespan(server: FastMCP):
             log.info("Tools disabled: %s", ", ".join(config.disabled_tools))
 
         log.info("Zuul MCP connected to %s", config.base_url)
-        yield AppContext(client=client, log_client=log_client, config=config)
+        try:
+            yield AppContext(
+                client=client,
+                log_client=log_client,
+                config=config,
+                grep_executor=executor,
+            )
+        finally:
+            executor.shutdown(wait=False)
 
 
 mcp = FastMCP("zuul-ci", lifespan=lifespan)

@@ -1,5 +1,6 @@
 """Shared test fixtures for mcp-zuul integration tests."""
 
+import concurrent.futures
 from unittest.mock import MagicMock
 
 import httpx
@@ -38,11 +39,15 @@ async def mock_ctx(config):
         timeout=config.timeout,
     )
     log_client = httpx.AsyncClient(timeout=config.timeout)
-    app_ctx = AppContext(client=client, log_client=log_client, config=config)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    app_ctx = AppContext(
+        client=client, log_client=log_client, config=config, grep_executor=executor
+    )
 
     ctx = MagicMock()
     ctx.request_context.lifespan_context = app_ctx
     yield ctx
+    executor.shutdown(wait=False)
     await client.aclose()
     await log_client.aclose()
 
