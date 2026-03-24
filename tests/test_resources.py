@@ -70,7 +70,8 @@ class TestJobResource:
         assert "nodeset" not in variant
         assert "timeout" not in variant
         assert "description" not in variant
-        assert variant["voting"] is True
+        # voting=True is the default and omitted to save tokens
+        assert "voting" not in variant
 
 
 class TestProjectResource:

@@ -29,8 +29,12 @@ class TestClean:
         assert clean({"a": 1, "b": None, "c": "x"}) == {"a": 1, "c": "x"}
 
     def test_keeps_falsy_non_none(self):
-        result = clean({"a": 0, "b": "", "c": False, "d": None})
-        assert result == {"a": 0, "b": "", "c": False}
+        result = clean({"a": 0, "b": False, "c": None})
+        assert result == {"a": 0, "b": False}
+
+    def test_strips_empty_strings_and_lists(self):
+        result = clean({"a": 1, "b": "", "c": [], "d": "x", "e": [1]})
+        assert result == {"a": 1, "d": "x", "e": [1]}
 
     def test_empty_dict(self):
         assert clean({}) == {}
@@ -428,8 +432,8 @@ class TestFmtStatusItem:
         result = fmt_status_item(item)
         assert result["buildset_uuid"] == "bs-uuid"
         assert result["jobs"][0]["name"] == "test-job"
-        # elapsed is computed from start_time for running jobs (not Zuul's stale value)
-        assert 100 < result["jobs"][0]["elapsed"] < 200  # ~120s (now in seconds)
+        # elapsed is now a human-readable string, recomputed from start_time (~120s = "2m Xs")
+        assert result["jobs"][0]["elapsed"].startswith("2m")
 
 
 class TestApiRetry:

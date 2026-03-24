@@ -25,25 +25,22 @@ def _format_duration(seconds: int | float | None) -> str | None:
 
 def fmt_build(b: dict, brief: bool = True) -> dict:
     """Format a build response into a compact representation."""
-    out = {
+    out: dict = {
         "uuid": b.get("uuid", "unknown"),
         "job": b.get("job_name", "unknown"),
         "result": b.get("result") or "IN_PROGRESS",
-        "pipeline": b.get("pipeline", ""),
+        "pipeline": b.get("pipeline"),
         "duration": b.get("duration"),
-        "voting": b.get("voting", True),
-        "start_time": b.get("start_time"),
-        "log_url": b.get("log_url"),
     }
+    if not b.get("voting", True):
+        out["voting"] = False
     ref = b.get("ref") or {}
     if ref:
-        out["project"] = ref.get("project", "")
+        out["project"] = ref.get("project")
         out["change"] = ref.get("change")
-        out["ref_url"] = ref.get("ref_url", "")
-    bs = b.get("buildset")
-    if bs:
-        out["buildset_uuid"] = bs.get("uuid")
     if not brief:
+        out["log_url"] = b.get("log_url")
+        out["start_time"] = b.get("start_time")
         out["end_time"] = b.get("end_time")
         out["event_timestamp"] = b.get("event_timestamp")
         out["nodeset"] = b.get("nodeset")
@@ -51,29 +48,34 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
         out["artifacts"] = [
             a.get("name", "") for a in b.get("artifacts", []) if isinstance(a, dict)
         ]
+        out["ref_url"] = ref.get("ref_url")
         out["patchset"] = ref.get("patchset")
         out["branch"] = ref.get("branch")
+        bs = b.get("buildset")
+        if bs:
+            out["buildset_uuid"] = bs.get("uuid")
     return clean(out)
 
 
 def fmt_buildset(bs: dict, brief: bool = True) -> dict:
     """Format a buildset response into a compact representation."""
-    out = {
+    out: dict = {
         "uuid": bs.get("uuid", "unknown"),
         "result": bs.get("result") or "IN_PROGRESS",
-        "pipeline": bs.get("pipeline", ""),
+        "pipeline": bs.get("pipeline"),
         "event_timestamp": bs.get("event_timestamp"),
     }
     refs = bs.get("refs", [])
     if refs:
         r = refs[0]
-        out["project"] = r.get("project", "")
+        out["project"] = r.get("project")
         out["change"] = r.get("change")
-        out["ref_url"] = r.get("ref_url", "")
     if not brief:
         out["message"] = bs.get("message")
         out["first_build_start"] = bs.get("first_build_start_time")
         out["last_build_end"] = bs.get("last_build_end_time")
+        if refs:
+            out["ref_url"] = refs[0].get("ref_url")
         if "builds" in bs:
             out["builds"] = [fmt_build(b) for b in bs["builds"]]
         if "events" in bs:
@@ -103,20 +105,19 @@ def fmt_job_variants(data: list, description_limit: int = 200) -> list[dict]:
     variants = []
     for v in data:
         sc = v.get("source_context") or {}
-        variants.append(
-            clean(
-                {
-                    "parent": v.get("parent"),
-                    "branches": v.get("branches", []) or None,
-                    "nodeset": v.get("nodeset"),
-                    "timeout": v.get("timeout"),
-                    "voting": v.get("voting", True),
-                    "abstract": v.get("abstract", False) or None,
-                    "description": (v.get("description") or "")[:description_limit] or None,
-                    "source_project": sc.get("project"),
-                }
-            )
-        )
+        entry: dict = {
+            "parent": v.get("parent"),
+            "branches": v.get("branches", []) or None,
+            "nodeset": v.get("nodeset"),
+            "timeout": v.get("timeout"),
+            "description": (v.get("description") or "")[:description_limit] or None,
+            "source_project": sc.get("project"),
+        }
+        if not v.get("voting", True):
+            entry["voting"] = False
+        if v.get("abstract"):
+            entry["abstract"] = True
+        variants.append(clean(entry))
     return variants
 
 
@@ -165,7 +166,8 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     """Compute pipeline chain progress and critical-path ETA.
 
     Walks the dependency graph to find the longest remaining-work path.
-    All times are in seconds.
+    All times are in seconds. Returns numeric values internally;
+    fmt_status_item converts to human-readable strings for output.
     """
     if not jobs:
         return {
@@ -175,7 +177,6 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
             "waiting": 0,
             "progress_pct": 0,
             "critical_path_remaining": 0,
-            "critical_path_remaining_str": "0s",
             "all_decided": False,
         }
 
@@ -209,9 +210,9 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
             visiting.discard(name)
             return 0
 
-        remaining = job.get("remaining")
-        estimated = job.get("estimated", 0) or 0
-        elapsed = job.get("elapsed", 0) or 0
+        remaining = job.get("_remaining_secs")
+        estimated = job.get("_estimated_secs", 0) or 0
+        elapsed = job.get("_elapsed_secs", 0) or 0
 
         if job.get("status") == "RUNNING":
             if remaining is not None:
@@ -244,7 +245,6 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
         "waiting": waiting,
         "progress_pct": progress_pct,
         "critical_path_remaining": critical_path,
-        "critical_path_remaining_str": _format_duration(critical_path),
         "all_decided": all_decided,
     }
 
@@ -273,6 +273,8 @@ def _format_job(j: dict, now: float) -> dict:
 
     Normalizes times to seconds, recomputing elapsed/remaining from
     start_time for running jobs (Zuul's values can be stale by minutes).
+    Numeric times are stored in _-prefixed keys for chain_summary computation;
+    human-readable strings are stored in the output keys.
     """
     elapsed = j.get("elapsed_time")
     start = j.get("start_time")
@@ -296,28 +298,30 @@ def _format_job(j: dict, now: float) -> dict:
         if remaining is not None:
             remaining = max(0, remaining // 1000)  # ms -> seconds
 
-    return clean(
-        {
-            "name": j.get("name", ""),
-            "uuid": j.get("uuid"),
-            "status": _job_status(j),
-            "result": j.get("result"),
-            "voting": j.get("voting", True),
-            "pre_fail": j.get("pre_fail"),
-            "elapsed": elapsed,
-            "elapsed_str": _format_duration(elapsed),
-            "remaining": remaining,
-            "remaining_str": _format_duration(remaining),
-            "estimated": estimated,
-            "start_time": start,
-            "report_url": j.get("report_url"),
-            "stream_url": j.get("url"),
-            "dependencies": j.get("dependencies") or None,
-            "waiting_status": j.get("waiting_status"),
-            "queued": j.get("queued"),
-            "tries": j.get("tries"),
-        }
-    )
+    out: dict = {
+        "name": j.get("name", ""),
+        "uuid": j.get("uuid"),
+        "status": _job_status(j),
+        "result": j.get("result"),
+        # Human-readable time strings (primary output)
+        "elapsed": _format_duration(elapsed),
+        "remaining": _format_duration(remaining),
+        "estimated": _format_duration(estimated),
+        # Numeric seconds for chain_summary computation (stripped before output)
+        "_elapsed_secs": elapsed,
+        "_remaining_secs": remaining,
+        "_estimated_secs": estimated,
+        "report_url": j.get("report_url"),
+        "stream_url": j.get("url"),
+        "dependencies": j.get("dependencies") or None,
+        "waiting_status": j.get("waiting_status"),
+    }
+    if not j.get("voting", True):
+        out["voting"] = False
+    if j.get("pre_fail"):
+        out["pre_fail"] = True
+
+    return clean(out)
 
 
 def fmt_status_item(item: dict) -> dict:
@@ -325,7 +329,7 @@ def fmt_status_item(item: dict) -> dict:
 
     Times are normalized to seconds. Each job includes a computed ``status``
     field (RUNNING, WAITING, QUEUED, SUCCESS, FAILURE, ...) and human-readable
-    ``elapsed_str``/``remaining_str``. A ``chain_summary`` with critical-path
+    ``elapsed``/``remaining``. A ``chain_summary`` with critical-path
     ETA is added when jobs are present.
     """
     out: dict = {
@@ -351,9 +355,23 @@ def fmt_status_item(item: dict) -> dict:
     if jobs:
         now = _time.time()
         formatted_jobs = [_format_job(j, now) for j in jobs]
-        out["jobs"] = formatted_jobs
 
-    out["chain_summary"] = _compute_chain_summary(formatted_jobs)
+    # Compute chain summary using numeric _-prefixed fields
+    summary = _compute_chain_summary(formatted_jobs)
+
+    # Convert chain summary: replace numeric critical_path with human-readable cp_eta
+    cp = summary.pop("critical_path_remaining")
+    summary["cp_eta"] = _format_duration(cp) or "0s"
+    out["chain_summary"] = summary
+
+    # Strip internal numeric fields from jobs before output
+    for job in formatted_jobs:
+        job.pop("_elapsed_secs", None)
+        job.pop("_remaining_secs", None)
+        job.pop("_estimated_secs", None)
+
+    if formatted_jobs:
+        out["jobs"] = formatted_jobs
 
     failing = item.get("failing_reasons", [])
     if failing:

@@ -254,12 +254,13 @@ class TestGetChangeStatus:
         )
         result = json.loads(await get_change_status(mock_ctx, "55555"))
         job = result[0]["jobs"][0]
-        # elapsed should be ~600s (recomputed from start_time)
-        assert job["elapsed"] > 500, f"Expected ~600s, got {job['elapsed']}"
-        assert "elapsed_str" in job
-        # remaining should be ~0 (estimated 300s - elapsed 600s, clamped to 0)
-        # NOT the stale 240s from Zuul
-        assert job["remaining"] == 0, f"Expected 0 (overdue), got {job['remaining']}"
+        # elapsed should be ~600s = "10m 0s" (recomputed from start_time)
+        assert "10m" in job["elapsed"] or "9m" in job["elapsed"], (
+            f"Expected ~10m, got {job['elapsed']}"
+        )
+        # remaining should be 0s (estimated 300s - elapsed 600s, clamped to 0)
+        # NOT the stale "4m 0s" from Zuul
+        assert job["remaining"] == "0s", f"Expected 0s (overdue), got {job['remaining']}"
 
     @respx.mock
     async def test_elapsed_preserved_for_completed_jobs(self, mock_ctx):
@@ -273,7 +274,7 @@ class TestGetChangeStatus:
         )
         result = json.loads(await get_change_status(mock_ctx, "44444"))
         elapsed = result[0]["jobs"][0]["elapsed"]
-        assert elapsed == 300, "Completed job elapsed should be 300s (300000ms / 1000)"
+        assert elapsed == "5m 0s", "Completed job elapsed should be 5m 0s (300000ms / 1000)"
 
     async def test_no_change_no_url_returns_error(self, mock_ctx):
         result = json.loads(await get_change_status(mock_ctx))
@@ -426,16 +427,24 @@ class TestChainSummary:
         assert 0 < summary["progress_pct"] < 100
 
     def test_critical_path_remaining(self):
-        from mcp_zuul.formatters import fmt_status_item
+        from mcp_zuul.formatters import _compute_chain_summary, fmt_status_item
 
         item = make_chained_status_item()
         formatted = fmt_status_item(item)
         summary = formatted["chain_summary"]
-        # Critical path: deploy-osp(remaining ~129m) + install-shiftstack(94m)
-        #   + run-adoption(179m) + run-after(40m) = ~442m = ~26520s
-        assert summary["critical_path_remaining"] > 20000  # > ~5.5h
-        assert summary["critical_path_remaining"] < 35000  # < ~9.7h
-        assert "h" in summary["critical_path_remaining_str"]
+        # cp_eta is human-readable, verify it shows hours
+        assert "h" in summary["cp_eta"]
+        # Also verify the numeric computation via internal function
+        # (fmt_status_item strips _-prefixed numeric fields, so test via _compute_chain_summary)
+        import time as _t
+
+        now = _t.time()
+        from mcp_zuul.formatters import _format_job
+
+        jobs = [_format_job(j, now) for j in item["jobs"]]
+        raw_summary = _compute_chain_summary(jobs)
+        assert raw_summary["critical_path_remaining"] > 20000  # > ~5.5h
+        assert raw_summary["critical_path_remaining"] < 35000  # < ~9.7h
 
     def test_all_completed(self):
         from mcp_zuul.formatters import fmt_status_item
@@ -451,7 +460,7 @@ class TestChainSummary:
         summary = formatted["chain_summary"]
         assert summary["completed"] == 7
         assert summary["progress_pct"] == 100
-        assert summary["critical_path_remaining"] == 0
+        assert summary["cp_eta"] == "0s"
 
     def test_single_job(self):
         from mcp_zuul.formatters import fmt_status_item
@@ -470,7 +479,7 @@ class TestChainSummary:
             j.pop("estimated_time", None)
         formatted = fmt_status_item(item)
         summary = formatted["chain_summary"]
-        assert summary["critical_path_remaining"] >= 0
+        assert summary["cp_eta"] == "0s"
 
     def test_empty_jobs(self):
         """Item with no jobs still gets a chain_summary."""
@@ -480,7 +489,7 @@ class TestChainSummary:
         item["jobs"] = []
         formatted = fmt_status_item(item)
         assert formatted["chain_summary"]["total"] == 0
-        assert formatted["chain_summary"]["critical_path_remaining"] == 0
+        assert formatted["chain_summary"]["cp_eta"] == "0s"
 
     def test_cycle_detection(self):
         """Circular dependencies don't cause infinite recursion."""
@@ -527,8 +536,7 @@ class TestChainSummary:
         item["jobs"][0]["start_time"] = time.time() + 10  # future (clock skew)
         item["jobs"][0]["result"] = None
         formatted = fmt_status_item(item)
-        assert formatted["jobs"][0]["elapsed"] == 0
-        assert formatted["jobs"][0]["elapsed_str"] == "0s"
+        assert formatted["jobs"][0]["elapsed"] == "0s"
 
     def test_remaining_recomputed_for_running_jobs(self):
         """Running jobs get fresh remaining from estimated - elapsed, not stale Zuul value."""
@@ -544,7 +552,6 @@ class TestChainSummary:
         item["jobs"][0]["result"] = None
         formatted = fmt_status_item(item)
         job = formatted["jobs"][0]
-        # Fresh remaining = estimated(6540) - elapsed(3600) = 2940s = 49m
-        # NOT the stale 5760s (96m)
-        assert 2800 < job["remaining"] < 3100, f"Expected ~2940s, got {job['remaining']}"
-        assert job["remaining_str"] == "49m 0s"
+        # Fresh remaining = estimated(6540) - elapsed(3600) = 2940s = 49m 0s
+        # NOT the stale "96m 0s" from Zuul
+        assert job["remaining"] == "49m 0s", f"Expected 49m 0s, got {job['remaining']}"

@@ -325,5 +325,5 @@ def parse_zuul_url(url: str) -> tuple[str, str, str] | None:
 
 
 def clean(d: dict) -> dict:
-    """Remove None values to save tokens."""
-    return {k: v for k, v in d.items() if v is not None}
+    """Remove None, empty string, and empty list values to save tokens."""
+    return {k: v for k, v in d.items() if v is not None and v != "" and v != []}

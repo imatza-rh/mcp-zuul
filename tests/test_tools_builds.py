@@ -234,7 +234,7 @@ class TestGetBuildFailures:
         )
         result = json.loads(await get_build_failures(mock_ctx, "build-uuid-1"))
         assert result["result"] == "FAILURE"
-        assert len(result["failed_tasks"]) == 0
+        assert len(result.get("failed_tasks", [])) == 0
 
     @respx.mock
     async def test_json_not_found_falls_through_to_text(self, mock_ctx):
@@ -642,7 +642,7 @@ class TestDiagnoseBuildDecodingError:
         result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
         assert "error" not in result
         assert result["result"] == "FAILURE"
-        assert result["failed_tasks"] == []
+        assert result.get("failed_tasks", []) == []
         assert len(result["log_context"]) >= 1
         fatal_lines = [
             line for block in result["log_context"] for line in block if line.get("match")

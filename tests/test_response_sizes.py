@@ -29,12 +29,12 @@ from tests.conftest import (
 )
 
 # Measured mock response sizes (bytes):
-#   list_builds(20, brief):  ~6,600
-#   get_build(full):           ~510
-#   get_buildset(full):        ~700
-#   list_buildsets(10, brief): ~2,000
-#   get_status(5 items):     ~3,800
-#   get_build_failures:        ~700
+#   list_builds(20, brief):  ~2,700
+#   get_build(full):           ~490
+#   get_buildset(full):        ~500
+#   list_buildsets(10, brief): ~1,400
+#   get_status(5 items):     ~2,800
+#   get_build_failures:        ~500
 #
 # Thresholds are ~2x measured to allow growth without masking bloat.
 
@@ -53,7 +53,7 @@ class TestResponseSizes:
         )
         result = await list_builds(mock_ctx, limit=20)
         size = len(result.encode())
-        assert size < 12 * KB, f"list_builds(20) bloat: {size} bytes (limit: {12 * KB})"
+        assert size < 6 * KB, f"list_builds(20) bloat: {size} bytes (limit: {6 * KB})"
 
     @respx.mock
     async def test_get_build_under_limit(self, mock_ctx):
@@ -84,7 +84,7 @@ class TestResponseSizes:
         )
         result = await list_buildsets(mock_ctx, limit=10)
         size = len(result.encode())
-        assert size < 4 * KB, f"list_buildsets(10) bloat: {size} bytes (limit: {4 * KB})"
+        assert size < 3 * KB, f"list_buildsets(10) bloat: {size} bytes (limit: {3 * KB})"
 
     @respx.mock
     async def test_get_status_5_items_under_limit(self, mock_ctx):
@@ -95,7 +95,7 @@ class TestResponseSizes:
         )
         result = await get_status(mock_ctx)
         size = len(result.encode())
-        assert size < 8 * KB, f"get_status(5 items) bloat: {size} bytes (limit: {8 * KB})"
+        assert size < 6 * KB, f"get_status(5 items) bloat: {size} bytes (limit: {6 * KB})"
 
     @respx.mock
     async def test_get_build_failures_under_limit(self, mock_ctx):

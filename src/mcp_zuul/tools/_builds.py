@@ -66,7 +66,7 @@ async def list_builds(
     data = await api(ctx, f"/tenant/{safepath(t)}/builds", params)
     has_more = len(data) > limit
     builds = [fmt_build(b) for b in data[:limit]]
-    return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more, "skip": skip})
+    return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more})
 
 
 @mcp.tool(title="Build Details", annotations=_READ_ONLY)
@@ -367,7 +367,6 @@ async def list_buildsets(
         "buildsets": buildsets,
         "count": len(buildsets),
         "has_more": has_more,
-        "skip": skip,
     }
     if fetch_errors:
         result_dict["fetch_errors"] = fetch_errors

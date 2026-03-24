@@ -10,6 +10,7 @@ from .helpers import clean, strip_ansi
 
 _FATAL_PATTERN = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
 _PLAY_RECAP_RE = re.compile(r"PLAY RECAP \*+")
+_GENERIC_MSGS = frozenset({"non-zero return code", "MODULE FAILURE"})
 
 
 def smart_truncate(text: str, max_size: int = 4000, *, _pre_stripped: bool = False) -> str | None:
@@ -106,23 +107,24 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
 
         if has_failure:
             for play in pb.get("plays", []):
-                play_name = play.get("play", {}).get("name", "")
                 for task in play.get("tasks", []):
                     task_info = task.get("task", {})
                     task_name = task_info.get("name", "")
-                    duration = task_info.get("duration", {})
                     for host, res in task.get("hosts", {}).items():
                         if res.get("failed"):
                             # Strip ANSI once per field, reuse for truncate + recap
                             raw_stdout = strip_ansi(str(res.get("stdout", "")))
                             raw_stderr = strip_ansi(str(res.get("stderr", "")))
                             raw_msg = strip_ansi(str(res.get("msg", "")))
+                            # Suppress generic msg when stderr has the real error
+                            msg = smart_truncate(raw_msg, _pre_stripped=True)
+                            if msg and raw_stderr and msg in _GENERIC_MSGS:
+                                msg = None
                             ft = clean(
                                 {
-                                    "play": play_name,
                                     "task": task_name,
                                     "host": host,
-                                    "msg": smart_truncate(raw_msg, _pre_stripped=True),
+                                    "msg": msg,
                                     "rc": res.get("rc"),
                                     "cmd": res.get("cmd"),
                                     "stderr": smart_truncate(raw_stderr, _pre_stripped=True),
@@ -133,15 +135,13 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                                     "invocation": _truncate_invocation(
                                         res.get("invocation", {}).get("module_args")
                                     ),
-                                    "duration": duration.get("end", ""),
-                                    "playbook": playbook,
                                 }
                             )
                             failed_tasks.append(ft)
     return playbooks, failed_tasks
 
 
-def grep_log_context(text: str, *, context_lines: int = 5) -> list[list[dict]]:
+def grep_log_context(text: str, *, context_lines: int = 3) -> list[list[dict]]:
     """Grep log text for fatal/FAILED lines and return context blocks."""
     all_lines = text.splitlines()
     total = len(all_lines)
@@ -155,7 +155,7 @@ def grep_log_context(text: str, *, context_lines: int = 5) -> list[list[dict]]:
     if not matched:
         return []
     ranges: list[tuple[int, int]] = []
-    for n, _text in matched[:30]:
+    for n, _text in matched[:15]:
         start = max(0, n - 1 - context_lines)
         end = min(total, n + context_lines)
         if ranges and start <= ranges[-1][1]:
@@ -163,11 +163,11 @@ def grep_log_context(text: str, *, context_lines: int = 5) -> list[list[dict]]:
         else:
             ranges.append((start, end))
     blocks: list[list[dict]] = []
-    for start, end in ranges[:10]:
+    for start, end in ranges[:7]:
         block = [
             {
                 "n": i + 1,
-                "text": all_lines[i][:500],
+                "text": all_lines[i][:300],
                 "match": i in match_set,
             }
             for i in range(start, end)

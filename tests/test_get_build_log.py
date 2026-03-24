@@ -200,5 +200,5 @@ class TestClean:
     def test_keeps_falsy_non_none(self):
         from mcp_zuul import clean
 
-        result = clean({"a": 0, "b": "", "c": False, "d": None})
-        assert result == {"a": 0, "b": "", "c": False}
+        result = clean({"a": 0, "b": False, "c": None})
+        assert result == {"a": 0, "b": False}
