@@ -6,6 +6,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
+import httpx
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
@@ -54,22 +55,29 @@ async def get_status(
 
     # Collect items per pipeline using the flattened iterator
     _MAX_STATUS_ITEMS = 200
+    _MAX_PER_PIPELINE = 50
     by_pipeline: dict[str, list] = {}
+    pipeline_capped: set[str] = set()
     total_items = 0
     for pname, item in iter_status_items(all_pipelines, project=project, active_only=active_only):
         if total_items >= _MAX_STATUS_ITEMS:
             break
         items = by_pipeline.setdefault(pname, [])
-        if len(items) < 50:
+        if len(items) < _MAX_PER_PIPELINE:
             items.append(fmt_status_item(item))
             total_items += 1
+        else:
+            pipeline_capped.add(pname)
 
     result = []
     for p in all_pipelines:
         pname = p.get("name", "")
         items = by_pipeline.get(pname, [])
         if items or not active_only:
-            result.append({"pipeline": pname, "item_count": len(items), "items": items})
+            entry: dict[str, Any] = {"pipeline": pname, "item_count": len(items), "items": items}
+            if pname in pipeline_capped:
+                entry["pipeline_capped"] = True
+            result.append(entry)
 
     if active_only:
         result = [r for r in result if r["item_count"] > 0]
@@ -124,6 +132,14 @@ async def get_change_status(
         change = ref_match.group(1)
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
+    if not data and change.isdigit():
+        # Digit-only change not found — retry with GitLab MR ref format.
+        # Some Zuul versions index GitLab MRs by full ref only, so
+        # /status/change/456 returns [] while /status/change/refs/merge-requests/456/head works.
+        data = await api(
+            ctx,
+            f"/tenant/{safepath(t)}/status/change/refs%2Fmerge-requests%2F{change}%2Fhead",
+        )
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save
         # the caller a list_buildsets + get_buildset round-trip.
@@ -141,7 +157,7 @@ async def get_change_status(
                         ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}"
                     )
                     result["latest_buildset"] = fmt_buildset(bs_detail, brief=False)
-        except Exception:
+        except (httpx.HTTPStatusError, httpx.ConnectError, KeyError):
             pass  # Best-effort — don't fail the whole call
         return json.dumps(result)
     base = app(ctx).config.base_url

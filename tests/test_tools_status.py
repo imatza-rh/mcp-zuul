@@ -98,6 +98,22 @@ class TestGetStatus:
         assert result["capped"] is True
         assert result["cap_limit"] == 200
 
+    @respx.mock
+    async def test_per_pipeline_cap_indicator(self, mock_ctx):
+        """Pipelines exceeding 50 items should show pipeline_capped=True."""
+        items = [make_status_item(change=i) for i in range(60)]
+        pipelines = [{"name": "check", "change_queues": [{"heads": [items]}]}]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={"zuul_version": "10.0.0", "pipelines": pipelines},
+            )
+        )
+        result = json.loads(await get_status(mock_ctx, active_only=False))
+        pipeline = result["pipelines"][0]
+        assert pipeline["item_count"] == 50
+        assert pipeline["pipeline_capped"] is True
+
 
 class TestGetChangeStatus:
     @respx.mock
@@ -117,10 +133,11 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/99999").mock(
             return_value=httpx.Response(200, json=[])
         )
-        # Bare digit triggers full status fallback scan
-        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
-            return_value=httpx.Response(200, json={"zuul_version": "10", "pipelines": []})
-        )
+        # GitLab MR ref fallback also returns empty
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F99999%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-latest"}])
         )
@@ -136,10 +153,11 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/88888").mock(
             return_value=httpx.Response(200, json=[])
         )
-        # Bare digit triggers full status fallback scan
-        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
-            return_value=httpx.Response(200, json={"zuul_version": "10", "pipelines": []})
-        )
+        # GitLab MR ref fallback also returns empty
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F88888%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -148,11 +166,31 @@ class TestGetChangeStatus:
         assert "latest_buildset" not in result
 
     @respx.mock
+    async def test_gitlab_mr_ref_fallback(self, mock_ctx):
+        """Digit-only change retries with refs/merge-requests/N/head for GitLab MRs."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        item = make_status_item(change=1925)
+        item["refs"][0]["ref"] = "refs/merge-requests/1925/head"
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F1925%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[item]))
+        result = json.loads(await get_change_status(mock_ctx, "1925"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @respx.mock
     async def test_digit_change_not_in_pipeline_skips_full_scan(self, mock_ctx):
         """Digit-only change with no direct match goes to buildset lookup, not full scan."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
             return_value=httpx.Response(200, json=[])
         )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F1925%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -166,6 +204,10 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/2001").mock(
             return_value=httpx.Response(200, json=[])
         )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F2001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-uuid-1"}])
         )
@@ -443,6 +485,12 @@ class TestFormatDuration:
         assert _format_duration(0.7) == "0s"
         assert _format_duration(65.9) == "1m 5s"
 
+    def test_inf_returns_none(self):
+        assert _format_duration(float("inf")) is None
+
+    def test_nan_returns_none(self):
+        assert _format_duration(float("nan")) is None
+
 
 class TestChainSummary:
     def test_chain_progress(self):
@@ -521,6 +569,32 @@ class TestChainSummary:
         formatted = fmt_status_item(item)
         assert formatted["chain_summary"]["total"] == 0
         assert formatted["chain_summary"]["cp_eta"] == "0s"
+
+    def test_dict_dependencies_handled(self):
+        """Dependencies as dicts (e.g. from future Zuul API) should not crash."""
+        from mcp_zuul.formatters import _compute_chain_summary
+
+        jobs = [
+            {
+                "name": "job-a",
+                "status": "RUNNING",
+                "result": None,
+                "_remaining_secs": 100,
+                "_estimated_secs": 200,
+                "_elapsed_secs": 100,
+            },
+            {
+                "name": "job-b",
+                "status": "WAITING",
+                "result": None,
+                "_remaining_secs": None,
+                "_estimated_secs": 300,
+                "_elapsed_secs": 0,
+                "dependencies": [{"name": "job-a", "soft": False}],
+            },
+        ]
+        summary = _compute_chain_summary(jobs)
+        assert summary["critical_path_remaining"] > 0
 
     def test_cycle_detection(self):
         """Circular dependencies don't cause infinite recursion."""

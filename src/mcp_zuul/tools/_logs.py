@@ -118,6 +118,9 @@ async def get_build_log(
             )
         except TimeoutError:
             return error("Regex search timed out (pattern may be too complex)")
+        # Build O(1) match set for context output — avoids re-running the
+        # user-supplied regex on the main asyncio thread (ReDoS protection).
+        match_set: set[int] = {n - 1 for n, _ in matched}  # 1-based -> 0-based
         ctx_n = max(0, min(context, 10))
         if ctx_n > 0 and matched:
             # Build merged context blocks — deduplicate overlapping ranges
@@ -136,7 +139,7 @@ async def get_build_log(
                     {
                         "n": i + 1,
                         "text": all_lines[i][:500],
-                        "match": pat.search(all_lines[i][:1000]) is not None,
+                        "match": i in match_set,
                     }
                     for i in range(start, end)
                 ]

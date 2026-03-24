@@ -11,11 +11,14 @@ def _format_duration(seconds: int | float | None) -> str | None:
     """Convert seconds to human-readable duration string.
 
     Returns "Xh Ym" for >=1h, "Xm Ys" for >=1m, "Xs" for <1m.
-    Returns None if input is None.
+    Returns None if input is None or non-finite (inf/nan).
     """
     if seconds is None:
         return None
-    seconds = max(0, int(seconds))
+    try:
+        seconds = max(0, int(seconds))
+    except (OverflowError, ValueError):
+        return None
     if seconds >= 3600:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
     if seconds >= 60:
@@ -226,7 +229,8 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
         else:
             # WAITING/QUEUED — full estimated duration plus dependency wait
             deps = job.get("dependencies") or []
-            dep_max = max((_remaining_through(d) for d in deps), default=0) if deps else 0
+            dep_names = [d["name"] if isinstance(d, dict) else d for d in deps]
+            dep_max = max((_remaining_through(n) for n in dep_names), default=0) if deps else 0
             own = estimated + dep_max
 
         cache[name] = own

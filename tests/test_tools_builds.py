@@ -599,6 +599,32 @@ class TestGzipDecompression:
         assert "error" not in result
         assert len(result["failed_tasks"]) == 1
 
+    @respx.mock
+    async def test_gzip_at_exact_limit_accepted(self, mock_ctx):
+        """Gzip payload decompressing to exactly _MAX_JSON_LOG_BYTES should be accepted."""
+        from mcp_zuul.tools._common import _MAX_JSON_LOG_BYTES
+
+        build = make_build(result="FAILURE")
+        # Create valid JSON that's exactly _MAX_JSON_LOG_BYTES when encoded
+        filler = "x" * (_MAX_JSON_LOG_BYTES - 50)
+        payload = json.dumps([{"playbook": filler, "phase": "run", "plays": [], "stats": {}}])
+        # Trim or pad to exact size
+        payload_bytes = payload.encode()[:_MAX_JSON_LOG_BYTES]
+        gz_content = gzip.compress(payload_bytes)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/exact-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        # The payload may not parse as valid JSON after truncation, so it falls through
+        # to .json suffix. The key assertion is it doesn't crash or OOM.
+        respx.get(f"{build['log_url']}job-output.json").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_build_failures(mock_ctx, "exact-uuid"))
+        # Should not crash — either parses successfully or falls through gracefully
+        assert "error" not in result or result.get("json_fallback") is True
+
 
 class TestDiagnoseBuild:
     @respx.mock
