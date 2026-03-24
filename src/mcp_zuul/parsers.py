@@ -83,8 +83,9 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
     Returns (playbooks, failed_tasks). Passing playbooks are compact;
     failed playbooks include stats and full path.
     """
-    playbooks = []
-    failed_tasks = []
+    _MAX_FAILED_TASKS = 50
+    playbooks: list[dict] = []
+    failed_tasks: list[dict] = []
     for pb in data:
         phase = pb.get("phase", "")
         playbook = pb.get("playbook", "")
@@ -109,12 +110,16 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
             }
         playbooks.append(pb_summary)
 
-        if has_failure:
+        if has_failure and len(failed_tasks) < _MAX_FAILED_TASKS:
             for play in pb.get("plays", []):
                 for task in play.get("tasks", []):
+                    if len(failed_tasks) >= _MAX_FAILED_TASKS:
+                        break
                     task_info = task.get("task", {})
                     task_name = task_info.get("name", "")
                     for host, res in task.get("hosts", {}).items():
+                        if len(failed_tasks) >= _MAX_FAILED_TASKS:
+                            break
                         if res.get("failed"):
                             # Strip ANSI once per field, reuse for truncate + recap
                             raw_stdout = strip_ansi(str(res.get("stdout", "")))

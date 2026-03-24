@@ -109,7 +109,7 @@ async def lifespan(server: FastMCP):
                 grep_executor=executor,
             )
         finally:
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 mcp = FastMCP("zuul-ci", lifespan=lifespan)

@@ -55,9 +55,12 @@ async def get_build_anomalies(
         return error(f"LogJuicer report creation failed: {resp.status_code}")
 
     report_data = resp.json()
-    report_id = report_data.get("id") or report_data.get("report_id")
+    report_id = str(report_data.get("id") or report_data.get("report_id") or "")
     if not report_id:
         return error("LogJuicer returned no report ID")
+    # Sanitize report_id to prevent path traversal in the URL
+    if "/" in report_id or ".." in report_id:
+        return error("LogJuicer returned invalid report ID")
 
     # Fetch the report JSON
     report_resp = await a.log_client.get(

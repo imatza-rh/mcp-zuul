@@ -340,6 +340,9 @@ async def list_buildsets(
     has_more = len(data) > limit
     trimmed = data[:limit]
 
+    if include_builds:
+        limit = min(limit, 10)  # cap detail fetches to prevent huge responses
+        trimmed = trimmed[:limit]
     if include_builds and trimmed:
         sem = asyncio.Semaphore(10)
 

@@ -53,7 +53,7 @@ class TestGetBuildAnomalies:
         )
         result = json.loads(await get_build_anomalies(mock_ctx, uuid="lj-uuid"))
         assert result["anomaly_count"] == 2
-        assert result["report_id"] == 99
+        assert result["report_id"] == "99"
         assert result["anomalies"][0]["line"] == "FATAL: connection refused"
         assert result["job"] == "test-job"
 

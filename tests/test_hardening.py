@@ -16,8 +16,11 @@ from mcp_zuul.helpers import (
     parse_zuul_url,
     stream_log,
 )
+from mcp_zuul.parsers import parse_playbooks
 from mcp_zuul.server import _BearerAuth
 from mcp_zuul.tools import list_jobs, list_projects
+from mcp_zuul.tools._config import list_nodes
+from mcp_zuul.tools._logjuicer import get_build_anomalies
 
 # -- parse_zuul_url single-tenant support --
 
@@ -353,3 +356,110 @@ class TestKerberosNoneTokenGuard:
                 with pytest.raises(RuntimeError, match="produced no token"):
                     await auth_mod.kerberos_auth(client, "https://zuul.example.com")
             await client.aclose()
+
+
+# -- list_nodes detail limit --
+
+
+class TestListNodesLimit:
+    @respx.mock
+    async def test_detail_respects_limit(self, mock_ctx):
+        nodes = [{"id": f"n-{i}", "type": ["centos"], "state": "ready"} for i in range(300)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=nodes)
+        )
+        result = json.loads(await list_nodes(mock_ctx, detail=True))
+        assert len(result["nodes"]) == 200
+        assert result["count"] == 300
+        assert result["detail_truncated"] is True
+
+    @respx.mock
+    async def test_detail_custom_limit(self, mock_ctx):
+        nodes = [{"id": f"n-{i}", "type": ["centos"], "state": "ready"} for i in range(50)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=nodes)
+        )
+        result = json.loads(await list_nodes(mock_ctx, detail=True, limit=10))
+        assert len(result["nodes"]) == 10
+        assert result["count"] == 50
+        assert result["detail_truncated"] is True
+
+    @respx.mock
+    async def test_summary_always_covers_all_nodes(self, mock_ctx):
+        nodes = [{"id": f"n-{i}", "type": ["centos"], "state": "ready"} for i in range(300)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/nodes").mock(
+            return_value=httpx.Response(200, json=nodes)
+        )
+        result = json.loads(await list_nodes(mock_ctx, detail=True, limit=10))
+        assert result["by_state"]["ready"] == 300
+
+
+# -- parse_playbooks failed_tasks cap --
+
+
+class TestParsePlaybooksFailedTasksCap:
+    def test_caps_at_50_failed_tasks(self):
+        # Build a job-output with 100 failed hosts
+        tasks = [
+            {
+                "task": {"name": "failing-task"},
+                "hosts": {
+                    f"host-{i}": {
+                        "failed": True,
+                        "msg": f"error on host {i}",
+                        "rc": 1,
+                        "stderr": "",
+                        "stdout": "",
+                    }
+                    for i in range(100)
+                },
+            }
+        ]
+        data = [
+            {
+                "phase": "run",
+                "playbook": "deploy.yaml",
+                "stats": {f"host-{i}": {"failures": 1} for i in range(100)},
+                "plays": [{"play": {"name": "test"}, "tasks": tasks}],
+            }
+        ]
+        _playbooks, failed_tasks = parse_playbooks(data)
+        assert len(failed_tasks) == 50
+
+
+# -- stream_log scheme validation --
+
+
+class TestStreamLogSchemeValidation:
+    async def test_rejects_non_http_scheme(self, mock_ctx):
+        a = mock_ctx.request_context.lifespan_context
+        with pytest.raises(ValueError, match="Invalid URL scheme"):
+            await stream_log(a, "file:///etc/passwd")
+
+    async def test_rejects_ftp_scheme(self, mock_ctx):
+        a = mock_ctx.request_context.lifespan_context
+        with pytest.raises(ValueError, match="Invalid URL scheme"):
+            await stream_log(a, "ftp://evil.com/file.txt")
+
+
+# -- LogJuicer report_id sanitization --
+
+
+class TestLogjuicerReportIdSanitization:
+    @respx.mock
+    async def test_rejects_traversal_in_report_id(self, mock_ctx):
+        from tests.conftest import make_build
+
+        mock_ctx.request_context.lifespan_context.config.logjuicer_url = (
+            "https://logjuicer.example.com"
+        )
+        build = make_build(uuid="lj-1")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/lj-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.put("https://logjuicer.example.com/api/report/new").mock(
+            return_value=httpx.Response(200, json={"id": "../../admin/delete"})
+        )
+        result = json.loads(await get_build_anomalies(mock_ctx, uuid="lj-1"))
+        assert "error" in result
+        assert "invalid" in result["error"].lower()

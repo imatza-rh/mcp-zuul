@@ -180,6 +180,9 @@ async def _stream_response(
         Tuple of (response, truncated). Does not raise on 404 — callers
         should check ``response.status_code``.
     """
+    scheme = urlparse(url).scheme
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Invalid URL scheme: {scheme!r}")
     http = _pick_client(a, url)
 
     async def _fetch() -> tuple[httpx.Response, bool]:

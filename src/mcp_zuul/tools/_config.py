@@ -200,6 +200,7 @@ async def list_nodes(
     ctx: Context,
     tenant: str = "",
     detail: bool = False,
+    limit: int = 200,
 ) -> str:
     """List nodepool nodes — shows what's available, in-use, or being provisioned.
 
@@ -209,6 +210,8 @@ async def list_nodes(
     Args:
         tenant: Tenant name (uses default if empty)
         detail: Include individual node list (default false, summary only)
+        limit: Max nodes in detail list (default 200, 0 for unlimited).
+               Summary stats always cover all nodes regardless of limit.
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/nodes")
@@ -254,6 +257,7 @@ async def list_nodes(
         },
     }
     if detail:
+        detail_data = data if limit <= 0 else data[:limit]
         out["nodes"] = [
             clean(
                 {
@@ -266,8 +270,10 @@ async def list_nodes(
                     "comment": n.get("comment"),
                 }
             )
-            for n in data
+            for n in detail_data
         ]
+        if limit > 0 and total_nodes > limit:
+            out["detail_truncated"] = True
     return json.dumps(out)
 
 
