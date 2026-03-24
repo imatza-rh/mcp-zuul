@@ -120,6 +120,8 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                     for host, res in task.get("hosts", {}).items():
                         if len(failed_tasks) >= _MAX_FAILED_TASKS:
                             break
+                        if not isinstance(res, dict):
+                            continue
                         if res.get("failed"):
                             # Strip ANSI once per field, reuse for truncate + recap
                             raw_stdout = strip_ansi(str(res.get("stdout", "")))

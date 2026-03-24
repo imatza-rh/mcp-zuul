@@ -6,6 +6,8 @@ import httpx
 import pytest
 import respx
 
+from mcp_zuul.classifier import classify_failure
+from mcp_zuul.formatters import _compute_chain_summary, fmt_buildset
 from mcp_zuul.helpers import (
     AppContext,
     _pick_client,
@@ -463,3 +465,106 @@ class TestLogjuicerReportIdSanitization:
         result = json.loads(await get_build_anomalies(mock_ctx, uuid="lj-1"))
         assert "error" in result
         assert "invalid" in result["error"].lower()
+
+
+# -- _compute_chain_summary all_decided with unnamed jobs --
+
+
+class TestChainSummaryAllDecidedUnnamedJobs:
+    def test_unnamed_running_job_prevents_all_decided(self):
+        """Unnamed running jobs must prevent all_decided from being True."""
+        jobs = [
+            {"name": "job-a", "result": "SUCCESS", "status": "SUCCESS"},
+            {"result": None, "status": "RUNNING"},  # unnamed, still running
+        ]
+        summary = _compute_chain_summary(jobs)
+        assert summary["all_decided"] is False
+
+    def test_all_named_completed_is_decided(self):
+        jobs = [
+            {"name": "job-a", "result": "SUCCESS", "status": "SUCCESS"},
+            {"name": "job-b", "result": "FAILURE", "status": "FAILURE"},
+        ]
+        summary = _compute_chain_summary(jobs)
+        assert summary["all_decided"] is True
+
+
+# -- parse_playbooks None host result --
+
+
+class TestParsePlaybooksNoneHostResult:
+    def test_none_host_result_skipped(self):
+        """Null host result in job-output.json should be skipped, not crash."""
+        data = [
+            {
+                "phase": "run",
+                "playbook": "deploy.yaml",
+                "stats": {"host-0": {"failures": 1}},
+                "plays": [
+                    {
+                        "play": {"name": "test"},
+                        "tasks": [
+                            {
+                                "task": {"name": "task-1"},
+                                "hosts": {"host-0": None, "host-1": {"failed": True, "msg": "err"}},
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        _playbooks, failed_tasks = parse_playbooks(data)
+        assert len(failed_tasks) == 1
+        assert failed_tasks[0]["host"] == "host-1"
+
+
+# -- fmt_buildset non-dict refs --
+
+
+class TestFmtBuildsetNonDictRefs:
+    def test_string_ref_handled(self):
+        bs = {
+            "uuid": "bs-1",
+            "result": "SUCCESS",
+            "pipeline": "check",
+            "refs": ["not-a-dict"],
+        }
+        result = fmt_buildset(bs)
+        assert result["uuid"] == "bs-1"
+        assert "project" not in result
+
+    def test_none_ref_handled(self):
+        bs = {
+            "uuid": "bs-2",
+            "result": "SUCCESS",
+            "pipeline": "check",
+            "refs": [None],
+        }
+        result = fmt_buildset(bs)
+        assert result["uuid"] == "bs-2"
+
+
+# -- classify_failure infra results without task data --
+
+
+class TestClassifyFailureInfraResults:
+    def test_node_failure_classified_as_infra(self):
+        c = classify_failure("NODE_FAILURE", [], [])
+        assert c.category == "INFRA_FLAKE"
+        assert c.retryable is True
+        assert "NODE_FAILURE" in c.reason
+
+    def test_retry_limit_classified_as_infra(self):
+        c = classify_failure("RETRY_LIMIT", [], [])
+        assert c.category == "INFRA_FLAKE"
+        assert c.retryable is True
+
+    def test_disk_full_classified_as_infra(self):
+        c = classify_failure("DISK_FULL", [], [])
+        assert c.category == "INFRA_FLAKE"
+        assert c.retryable is True
+
+    def test_merger_failure_classified_as_config_error(self):
+        c = classify_failure("MERGER_FAILURE", [], [])
+        assert c.category == "CONFIG_ERROR"
+        assert c.retryable is False

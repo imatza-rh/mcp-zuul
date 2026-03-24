@@ -70,16 +70,16 @@ def fmt_buildset(bs: dict, brief: bool = True) -> dict:
         "event_timestamp": bs.get("event_timestamp"),
     }
     refs = bs.get("refs", [])
-    if refs:
-        r = refs[0]
-        out["project"] = r.get("project")
-        out["change"] = r.get("change")
+    ref_dict = refs[0] if refs and isinstance(refs[0], dict) else {}
+    if ref_dict:
+        out["project"] = ref_dict.get("project")
+        out["change"] = ref_dict.get("change")
     if not brief:
         out["message"] = bs.get("message")
         out["first_build_start"] = bs.get("first_build_start_time")
         out["last_build_end"] = bs.get("last_build_end_time")
-        if refs:
-            out["ref_url"] = refs[0].get("ref_url")
+        if ref_dict:
+            out["ref_url"] = ref_dict.get("ref_url")
         if "builds" in bs:
             out["builds"] = [fmt_build(b) for b in bs["builds"]]
         if "events" in bs:
@@ -194,6 +194,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     progress_pct = round((completed / total) * 100)
 
     # Filter out jobs without a name — they can't participate in dependency resolution
+    all_jobs = jobs  # preserve original list for all_decided check
     jobs = [j for j in jobs if j.get("name")]
     by_name: dict[str, dict] = {j["name"]: j for j in jobs}
     cache: dict[str, int | float] = {}
@@ -243,7 +244,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
     # all_decided=True means every job's fate is known even if some are still
     # running in post-run cleanup - callers can stop rapid-polling.
     all_decided = total > 0 and all(
-        j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail") for j in jobs
+        j.get("result") in _TERMINAL_RESULTS or j.get("pre_fail") for j in all_jobs
     )
 
     return {

@@ -77,6 +77,8 @@ async def get_build_log(
     if start_line > 0:
         if start_line > total:
             return error(f"start_line {start_line} exceeds total {total} lines")
+        if end_line > 0 and end_line < start_line:
+            return error(f"end_line {end_line} is before start_line {start_line}")
         s = start_line - 1  # convert to 0-based
         e = (end_line if end_line > 0 else start_line + _MAX_LOG_LINES) - 1
         e = min(e, total - 1)

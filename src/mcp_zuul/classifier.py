@@ -254,13 +254,21 @@ def classify_failure(
             retryable=False,
         )
 
-    # No failed tasks, no pattern match
-    if result == "TIMED_OUT":
+    # No failed tasks, no pattern match — classify by result code
+    if result in ("TIMED_OUT", "NODE_FAILURE", "RETRY_LIMIT", "DISK_FULL"):
         return Classification(
             category="INFRA_FLAKE",
-            reason="Timed out (no structured failure data available)",
-            confidence="medium",
+            reason=f"{result} (no structured failure data available)",
+            confidence="medium" if result == "TIMED_OUT" else "high",
             retryable=True,
+        )
+
+    if result == "MERGER_FAILURE":
+        return Classification(
+            category="CONFIG_ERROR",
+            reason="Merge conflict or missing dependency",
+            confidence="high",
+            retryable=False,
         )
 
     return Classification(
