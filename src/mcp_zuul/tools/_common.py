@@ -115,8 +115,17 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
             # Manual gzip decompression: some log servers return raw gzip
             # bytes without Content-Encoding header, so httpx doesn't
             # auto-decompress.  Detect via gzip magic bytes (0x1f 0x8b).
+            # Use incremental decompression with a size cap to prevent
+            # gzip bombs (small compressed payload → huge decompressed output).
             if suffix.endswith(".gz") and content[:2] == b"\x1f\x8b":
-                content = gzip.decompress(content)
+                d = zlib.decompressobj(wbits=31)  # 31 = gzip format
+                content = d.decompress(content, _MAX_JSON_LOG_BYTES + 1)
+                if len(content) > _MAX_JSON_LOG_BYTES:
+                    log.info(
+                        "gzip decompressed output exceeds %d bytes, skipping",
+                        _MAX_JSON_LOG_BYTES,
+                    )
+                    continue
             data = json.loads(content)
             if isinstance(data, list):
                 playbooks, failed_tasks = parse_playbooks(data)

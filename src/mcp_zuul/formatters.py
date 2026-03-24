@@ -364,7 +364,7 @@ def fmt_status_item(item: dict) -> dict:
     summary = _compute_chain_summary(formatted_jobs)
 
     # Convert chain summary: replace numeric critical_path with human-readable cp_eta
-    cp = summary.pop("critical_path_remaining")
+    cp = summary.pop("critical_path_remaining", 0)
     summary["cp_eta"] = _format_duration(cp) or "0s"
     out["chain_summary"] = summary
 

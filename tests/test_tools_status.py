@@ -77,6 +77,27 @@ class TestGetStatus:
         assert len(items) == 1
         assert items[0]["project"] == "org/repo-a"
 
+    @respx.mock
+    async def test_status_capped_at_max_items(self, mock_ctx):
+        """Responses with more than _MAX_STATUS_ITEMS should be capped."""
+        # Per-pipeline cap is 50, so we need 5+ pipelines with 45 items each
+        # to exceed the global _MAX_STATUS_ITEMS=200 cap.
+        pipelines = []
+        for p_idx in range(6):
+            items = [make_status_item(change=p_idx * 1000 + i) for i in range(45)]
+            pipelines.append({"name": f"pipeline-{p_idx}", "change_queues": [{"heads": [items]}]})
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={"zuul_version": "10.0.0", "pipelines": pipelines},
+            )
+        )
+        result = json.loads(await get_status(mock_ctx, active_only=False))
+        total = sum(p["item_count"] for p in result["pipelines"])
+        assert total <= 200
+        assert result["capped"] is True
+        assert result["cap_limit"] == 200
+
 
 class TestGetChangeStatus:
     @respx.mock

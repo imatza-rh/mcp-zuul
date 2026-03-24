@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `get_change_status` skips full-status scan for digit-only changes — goes directly to buildset lookup
 
 ### Fixed
+- Gzip decompression in `_fetch_job_output` uses incremental `zlib.decompressobj` with size cap to prevent gzip bombs
 - Gzip fallback in `_fetch_job_output` now catches `gzip.BadGzipFile`, `zlib.error`, `EOFError`, `OSError`
 
 ## [0.3.4] - 2026-03-24

@@ -1,5 +1,6 @@
 """Integration tests for build and buildset tools."""
 
+import gzip
 import json
 
 import httpx
@@ -534,6 +535,69 @@ class TestGetBuildFailuresDecodingError:
         result = json.loads(await get_build_failures(mock_ctx, "in-prog"))
         assert "error" in result
         assert "in progress" in result["error"]
+
+
+class TestGzipDecompression:
+    """Tests for manual gzip decompression in _fetch_job_output."""
+
+    @respx.mock
+    async def test_manual_gzip_decompression(self, mock_ctx):
+        """Raw gzip bytes (no Content-Encoding) should be decompressed manually."""
+        build = make_build(result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        gz_content = gzip.compress(json.dumps(job_output).encode())
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # Return raw gzip bytes (no Content-Encoding header — httpx won't auto-decompress)
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        assert "error" not in result
+        assert len(result["failed_tasks"]) == 1
+        assert result["failed_tasks"][0]["task"] == "Run deployment"
+
+    @respx.mock
+    async def test_gzip_bomb_rejected(self, mock_ctx):
+        """Gzip payload that decompresses beyond _MAX_JSON_LOG_BYTES should be skipped."""
+        from mcp_zuul.tools._common import _MAX_JSON_LOG_BYTES
+
+        build = make_build(result="FAILURE")
+        # Create a gzip bomb: highly compressible data that exceeds limit
+        huge_payload = b"[" + b"0," * (_MAX_JSON_LOG_BYTES + 1000) + b"0]"
+        gz_bomb = gzip.compress(huge_payload)
+        assert len(gz_bomb) < _MAX_JSON_LOG_BYTES, "Compressed size must be under limit"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/bomb-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, content=gz_bomb)
+        )
+        # .json should also 404 so it falls through to text
+        respx.get(f"{build['log_url']}job-output.json").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_build_failures(mock_ctx, "bomb-uuid"))
+        # Should fall through to text fallback, not crash with OOM
+        assert result["json_fallback"] is True
+
+    @respx.mock
+    async def test_non_gzip_gz_falls_through(self, mock_ctx):
+        """A .gz URL returning non-gzip content should fall through gracefully."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # Return plain text for .gz URL (no gzip magic bytes)
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, content=b"not gzip at all")
+        )
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        assert "error" not in result
+        assert len(result["failed_tasks"]) == 1
 
 
 class TestDiagnoseBuild:
