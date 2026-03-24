@@ -221,19 +221,18 @@ async def diagnose_build(
     if not log_url:
         return _no_log_url_error(build, uuid)
 
-    # --- 1. Parse job-output.json for structured failures ---
-    playbooks, failed_tasks, _json_ok = await _fetch_job_output(ctx, log_url)
+    # --- 1+2. Fetch structured failures and text log in parallel ---
+    async def _fetch_log_context() -> tuple[list[list[dict]], bool]:
+        try:
+            log_bytes, trunc = await stream_log(app(ctx), log_url.rstrip("/") + "/job-output.txt")
+            return grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace"))), trunc
+        except Exception:
+            return [], False
 
-    # --- 2. Grep job-output.txt for fatal/FAILED context ---
-    log_context: list[list[dict]] = []
-    log_truncated = False
-    try:
-        log_bytes, log_truncated = await stream_log(
-            app(ctx), log_url.rstrip("/") + "/job-output.txt"
-        )
-        log_context = grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace")))
-    except Exception:
-        pass  # Log unavailable - structured data still useful
+    (playbooks, failed_tasks, _json_ok), (log_context, log_truncated) = await asyncio.gather(
+        _fetch_job_output(ctx, log_url),
+        _fetch_log_context(),
+    )
 
     # --- 3. Classify the failure and determine phase ---
     classification: Classification | None = None
