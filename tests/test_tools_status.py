@@ -602,14 +602,18 @@ class TestChainSummary:
             {
                 "name": "a",
                 "status": "WAITING",
-                "estimated": 100,
+                "_estimated_secs": 100,
+                "_remaining_secs": None,
+                "_elapsed_secs": 0,
                 "dependencies": ["b"],
                 "waiting_status": "b",
             },
             {
                 "name": "b",
                 "status": "WAITING",
-                "estimated": 200,
+                "_estimated_secs": 200,
+                "_remaining_secs": None,
+                "_elapsed_secs": 0,
                 "dependencies": ["a"],
                 "waiting_status": "a",
             },
@@ -617,7 +621,9 @@ class TestChainSummary:
         summary = _compute_chain_summary(jobs)
         # Should not hang or raise RecursionError
         assert summary["total"] == 2
-        assert summary["critical_path_remaining"] >= 0
+        # With cycle broken (one dep resolves to 0), critical path = max(a_own, b_own)
+        # a_own = 100 + dep_b, b_own = 200 + dep_a; cycle breaks one to 0
+        assert summary["critical_path_remaining"] > 0
 
     def test_negative_remaining_clamped(self):
         """Overdue RUNNING jobs (negative remaining) don't produce negative ETA."""
@@ -625,9 +631,9 @@ class TestChainSummary:
             {
                 "name": "overdue",
                 "status": "RUNNING",
-                "remaining": -60,
-                "elapsed": 7200,
-                "estimated": 7140,
+                "_remaining_secs": -60,
+                "_elapsed_secs": 7200,
+                "_estimated_secs": 7140,
             },
         ]
         summary = _compute_chain_summary(jobs)
