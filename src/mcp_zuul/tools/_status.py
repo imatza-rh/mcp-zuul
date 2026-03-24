@@ -131,15 +131,30 @@ async def get_change_status(
     if ref_match:
         change = ref_match.group(1)
     t = _tenant(ctx, tenant)
-    data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
+    # The /status/change/ endpoint returns 404 on some Zuul instances when
+    # the change isn't in the live pipeline (others return []).  Catch 404
+    # so the fallback logic below can fetch the latest completed buildset.
+    try:
+        data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            data = []
+        else:
+            raise
     if not data and change.isdigit():
         # Digit-only change not found — retry with GitLab MR ref format.
         # Some Zuul versions index GitLab MRs by full ref only, so
         # /status/change/456 returns [] while /status/change/refs/merge-requests/456/head works.
-        data = await api(
-            ctx,
-            f"/tenant/{safepath(t)}/status/change/refs%2Fmerge-requests%2F{change}%2Fhead",
-        )
+        try:
+            data = await api(
+                ctx,
+                f"/tenant/{safepath(t)}/status/change/refs%2Fmerge-requests%2F{change}%2Fhead",
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                data = []
+            else:
+                raise
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save
         # the caller a list_buildsets + get_buildset round-trip.
