@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+- Auth generation counter prevents thundering-herd Kerberos re-auth under concurrent tool calls
+- Streaming deadline (5 min) caps total log transfer time independently of per-chunk progress
+- Grep context blocks now truncate lines to 1000 chars before regex matching (consistent with executor), preventing ReDoS on the main asyncio thread
+
+### Changed
+- **BREAKING**: `clean()` now strips empty strings (`""`) and empty lists (`[]`) in addition to `None` — reduces token output but removes previously-present keys with empty values from JSON responses
+- **BREAKING**: `elapsed`, `remaining`, `estimated` in status responses are now human-readable strings (`"2m 30s"`) instead of raw seconds; `elapsed_str`/`remaining_str` removed (redundant)
+- `chain_summary.critical_path_remaining` replaced by `chain_summary.cp_eta` (human-readable string)
+- `voting` field omitted from builds and jobs when `True` (default) — only emitted when `False`
+- `buildset_uuid`, `log_url`, `start_time`, `ref_url` moved to non-brief output in `fmt_build`
+
+### Performance
+- Token output reduced ~50% on `list_builds`, ~30% on `get_status` via conditional field inclusion
+- `grep_log_context` uses single-pass regex with cached match indices (O(n) instead of O(n×m))
+- `parse_playbooks` strips ANSI once per field, reuses for truncate + recap extraction
+- Thread pool executor for user-supplied grep patterns with 10s timeout
+- `get_change_status` skips full-status scan for digit-only changes — goes directly to buildset lookup
+
+### Fixed
+- Gzip fallback in `_fetch_job_output` now catches `gzip.BadGzipFile`, `zlib.error`, `EOFError`, `OSError`
+
 ## [0.3.4] - 2026-03-24
 
 ### Added

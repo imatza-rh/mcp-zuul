@@ -136,7 +136,7 @@ async def get_build_log(
                     {
                         "n": i + 1,
                         "text": all_lines[i][:500],
-                        "match": pat.search(all_lines[i]) is not None,
+                        "match": pat.search(all_lines[i][:1000]) is not None,
                     }
                     for i in range(start, end)
                 ]
