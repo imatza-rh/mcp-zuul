@@ -412,6 +412,16 @@ class TestFormatDuration:
     def test_large_duration(self):
         assert _format_duration(36000) == "10h 0m"
 
+    def test_negative_clamped_to_zero(self):
+        """Negative durations (clock skew) should clamp to 0s."""
+        assert _format_duration(-5) == "0s"
+        assert _format_duration(-61) == "0s"
+        assert _format_duration(-3601) == "0s"
+
+    def test_float_truncated(self):
+        assert _format_duration(0.7) == "0s"
+        assert _format_duration(65.9) == "1m 5s"
+
 
 class TestChainSummary:
     def test_chain_progress(self):

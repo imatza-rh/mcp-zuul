@@ -530,6 +530,25 @@ class TestFindFlakyJobs:
         assert result["failure_rate"] == 0.0
         assert result["flaky"] is False
 
+    @respx.mock
+    async def test_builds_use_change_not_full_ref(self, mock_ctx):
+        """Build entries should include compact change field, not full ref dict."""
+        builds = [
+            {
+                "uuid": "u1",
+                "result": "SUCCESS",
+                "duration": 100,
+                "ref": {"project": "org/repo", "change": 42, "branch": "main", "ref_url": "url"},
+            },
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="j"))
+        build_entry = result["builds"][0]
+        assert build_entry["change"] == 42
+        assert "ref" not in build_entry  # full ref dict should not be present
+
 
 class TestGetBuildTimes:
     @respx.mock

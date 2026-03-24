@@ -246,7 +246,6 @@ async def diagnose_build(
             failed_tasks=failed_tasks,
             playbooks=playbooks,
             log_context=log_context,
-            duration=build.get("duration"),
         )
         failure_phase = determine_failure_phase(playbooks)
         if failure_phase:

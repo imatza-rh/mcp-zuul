@@ -26,7 +26,7 @@ def smart_truncate(text: str, max_size: int = 4000, *, _pre_stripped: bool = Fal
     if len(text) <= max_size:
         return text or None
     head = max_size // 4
-    tail = max_size - head - 60  # room for the separator
+    tail = max(1, max_size - head - 60)  # room for the separator
     mid = len(text) - head - tail
     return f"{text[:head]}\n\n[... {mid} chars omitted ...]\n\n{text[-tail:]}"
 
@@ -67,9 +67,13 @@ def _truncate_invocation(module_args: dict | None, max_size: int = 4000) -> dict
     relevant = {k: v for k, v in module_args.items() if k in relevant_keys and v is not None}
     if not relevant:
         return None
-    for k, v in relevant.items():
+    for k, v in list(relevant.items()):
         if isinstance(v, str) and len(v) > max_size:
             relevant[k] = v[:max_size] + "..."
+        elif isinstance(v, (dict, list)):
+            s = str(v)
+            if len(s) > max_size:
+                relevant[k] = s[:max_size] + "..."
     return relevant
 
 

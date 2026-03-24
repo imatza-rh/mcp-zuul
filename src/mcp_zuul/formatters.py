@@ -15,7 +15,7 @@ def _format_duration(seconds: int | float | None) -> str | None:
     """
     if seconds is None:
         return None
-    seconds = int(seconds)
+    seconds = max(0, int(seconds))
     if seconds >= 3600:
         return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
     if seconds >= 60:
@@ -34,10 +34,11 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
     }
     if not b.get("voting", True):
         out["voting"] = False
-    ref = b.get("ref") or {}
-    if ref:
-        out["project"] = ref.get("project")
-        out["change"] = ref.get("change")
+    ref = b.get("ref")
+    ref_dict = ref if isinstance(ref, dict) else {}
+    if ref_dict:
+        out["project"] = ref_dict.get("project")
+        out["change"] = ref_dict.get("change")
     if not brief:
         out["log_url"] = b.get("log_url")
         out["start_time"] = b.get("start_time")
@@ -48,9 +49,9 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
         out["artifacts"] = [
             a.get("name", "") for a in b.get("artifacts", []) if isinstance(a, dict)
         ]
-        out["ref_url"] = ref.get("ref_url")
-        out["patchset"] = ref.get("patchset")
-        out["branch"] = ref.get("branch")
+        out["ref_url"] = ref_dict.get("ref_url")
+        out["patchset"] = ref_dict.get("patchset")
+        out["branch"] = ref_dict.get("branch")
         bs = b.get("buildset")
         if bs:
             out["buildset_uuid"] = bs.get("uuid")
@@ -130,7 +131,10 @@ def fmt_project(data: dict, name: str = "") -> dict:
             jobs = []
             for j in pip.get("jobs", []):
                 if isinstance(j, list):
-                    jobs.append(j[0]["name"] if j else "")
+                    if j and isinstance(j[0], dict):
+                        jobs.append(j[0].get("name", ""))
+                    else:
+                        jobs.append("")
                 elif isinstance(j, dict):
                     jobs.append(j.get("name", ""))
             if jobs:

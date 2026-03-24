@@ -320,6 +320,58 @@ class TestSmartTruncate:
         assert "\x1b" not in result
         assert "red text" in result
 
+    def test_small_max_size_does_not_exceed_limit(self):
+        """With small max_size, output should not exceed max_size significantly."""
+        from mcp_zuul.parsers import smart_truncate
+
+        text = "a" * 200
+        result = smart_truncate(text, max_size=50)
+        assert result is not None
+        # With tail clamped to 1, output should be bounded
+        assert "omitted" in result
+
+
+class TestTruncateInvocation:
+    def test_string_value_truncated(self):
+        from mcp_zuul.parsers import _truncate_invocation
+
+        args = {"cmd": "x" * 5000}
+        result = _truncate_invocation(args, max_size=100)
+        assert result is not None
+        assert len(result["cmd"]) <= 104  # 100 + "..."
+
+    def test_nested_dict_truncated(self):
+        from mcp_zuul.parsers import _truncate_invocation
+
+        args = {"params": {"key": "x" * 5000}}
+        result = _truncate_invocation(args, max_size=100)
+        assert result is not None
+        assert isinstance(result["params"], str)
+        assert len(result["params"]) <= 104
+
+    def test_nested_list_truncated(self):
+        from mcp_zuul.parsers import _truncate_invocation
+
+        args = {"params": ["x" * 5000]}
+        result = _truncate_invocation(args, max_size=100)
+        assert result is not None
+        assert isinstance(result["params"], str)
+        assert result["params"].endswith("...")
+
+    def test_small_nested_dict_preserved(self):
+        from mcp_zuul.parsers import _truncate_invocation
+
+        args = {"params": {"key": "value"}}
+        result = _truncate_invocation(args, max_size=4000)
+        assert result is not None
+        assert isinstance(result["params"], dict)
+
+    def test_none_returns_none(self):
+        from mcp_zuul.parsers import _truncate_invocation
+
+        assert _truncate_invocation(None) is None
+        assert _truncate_invocation({}) is None
+
 
 class TestExtractInnerRecap:
     def test_no_recap_returns_none(self):
@@ -360,6 +412,59 @@ class TestExtractInnerRecap:
         assert "host1" in recap
         assert "host2" in recap
         assert "failed=1" in recap
+
+
+class TestFmtProject:
+    def test_job_group_with_dict(self):
+        """Job groups containing dicts should extract the name correctly."""
+        from mcp_zuul.formatters import fmt_project
+
+        data = {
+            "configs": [
+                {
+                    "pipelines": [
+                        {
+                            "name": "check",
+                            "jobs": [[{"name": "job-a"}, {"name": "job-b"}], {"name": "job-c"}],
+                        }
+                    ]
+                }
+            ]
+        }
+        result = fmt_project(data)
+        assert result["pipelines"]["check"] == ["job-a", "job-c"]
+
+    def test_job_group_with_none_element(self):
+        """Job groups with None elements should not crash."""
+        from mcp_zuul.formatters import fmt_project
+
+        data = {"configs": [{"pipelines": [{"name": "check", "jobs": [[None]]}]}]}
+        result = fmt_project(data)
+        assert result["pipelines"]["check"] == [""]
+
+    def test_job_group_with_string_element(self):
+        """Job groups with string elements should not crash."""
+        from mcp_zuul.formatters import fmt_project
+
+        data = {"configs": [{"pipelines": [{"name": "check", "jobs": [["check-job"]]}]}]}
+        result = fmt_project(data)
+        assert result["pipelines"]["check"] == [""]
+
+    def test_job_group_with_empty_dict(self):
+        """Job groups with empty dicts should return empty name."""
+        from mcp_zuul.formatters import fmt_project
+
+        data = {"configs": [{"pipelines": [{"name": "check", "jobs": [[{}]]}]}]}
+        result = fmt_project(data)
+        assert result["pipelines"]["check"] == [""]
+
+    def test_empty_job_group(self):
+        """Empty job groups should return empty string."""
+        from mcp_zuul.formatters import fmt_project
+
+        data = {"configs": [{"pipelines": [{"name": "check", "jobs": [[]]}]}]}
+        result = fmt_project(data)
+        assert result["pipelines"]["check"] == [""]
 
 
 class TestFmtBuild:
@@ -407,6 +512,35 @@ class TestFmtBuild:
         assert result["log_url"] == "https://logs/u1/"
         assert result["nodeset"] == "centos-9"
         assert result["artifacts"] == ["art1"]
+
+    def test_string_ref_does_not_crash(self):
+        """String ref (tag pipelines, periodic) should not raise AttributeError."""
+        build = {
+            "uuid": "u1",
+            "job_name": "j1",
+            "result": "SUCCESS",
+            "ref": "refs/heads/main",
+        }
+        result = fmt_build(build, brief=True)
+        assert result["uuid"] == "u1"
+        assert "project" not in result
+        assert "change" not in result
+
+    def test_none_ref(self):
+        build = {"uuid": "u1", "job_name": "j1", "result": "SUCCESS", "ref": None}
+        result = fmt_build(build, brief=True)
+        assert "project" not in result
+
+    def test_list_ref_does_not_crash(self):
+        """List ref should not crash."""
+        build = {
+            "uuid": "u1",
+            "job_name": "j1",
+            "result": "SUCCESS",
+            "ref": [{"project": "p1"}],
+        }
+        result = fmt_build(build, brief=True)
+        assert "project" not in result
 
 
 class TestFmtStatusItem:

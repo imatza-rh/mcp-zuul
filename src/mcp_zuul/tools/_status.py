@@ -124,8 +124,6 @@ async def get_change_status(
         change = ref_match.group(1)
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
-    # Track which pipeline each item belongs to
-    pipeline_map: dict[str, str] = {}
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save
         # the caller a list_buildsets + get_buildset round-trip.
@@ -148,13 +146,8 @@ async def get_change_status(
         return json.dumps(result)
     base = app(ctx).config.base_url
     formatted = [fmt_status_item(item) for item in data]
-    # Enrich with status_url, pipeline, tenant
+    # Enrich with status_url and tenant
     for raw, fmt in zip(data, formatted, strict=True):
-        # Add pipeline name if available (from fallback full-status scan)
-        item_id = raw.get("id", "")
-        if item_id in pipeline_map:
-            fmt["pipeline"] = pipeline_map[item_id]
-        # Always include tenant for caller convenience
         fmt["tenant"] = t
         refs = raw.get("refs", [])
         if refs:
@@ -231,7 +224,9 @@ async def find_flaky_jobs(
                 "duration": b.get("duration"),
                 "start_time": b.get("start_time"),
                 "pipeline": b.get("pipeline"),
-                "ref": b.get("ref"),
+                "change": b.get("ref", {}).get("change")
+                if isinstance(b.get("ref"), dict)
+                else None,
             }
         )
         for b in data

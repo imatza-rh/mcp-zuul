@@ -175,7 +175,6 @@ def classify_failure(
     failed_tasks: list[dict[str, Any]],
     playbooks: list[dict[str, Any]],
     log_context: list[Any] | None = None,
-    duration: int | None = None,
 ) -> Classification:
     """Classify a build failure from structured diagnosis data.
 
@@ -184,7 +183,6 @@ def classify_failure(
         failed_tasks: Failed task details from _parse_playbooks
         playbooks: Playbook summaries from _parse_playbooks
         log_context: Optional log grep context blocks
-        duration: Build duration in seconds
     """
     # TIMED_OUT with no failed tasks = infra flake (killed mid-execution)
     if result == "TIMED_OUT" and not failed_tasks:
