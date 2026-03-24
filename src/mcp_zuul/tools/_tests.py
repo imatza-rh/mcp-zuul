@@ -1,10 +1,12 @@
 """JUnit XML test results parsing tools."""
 
+import asyncio
 import contextlib
 import json
 from typing import Any
 
 import defusedxml.ElementTree as ET
+import httpx
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
@@ -161,15 +163,18 @@ async def get_build_test_results(
         except Exception:
             pass
 
-    # Step 2: Fallback — try common paths if no manifest
+    # Step 2: Fallback — probe common paths in parallel if no manifest
     if not xml_paths:
         common_paths = [
             "controller/ci-framework-data/tests/test_operator/tempest-tests-tempest/tempest_results.xml",
             "controller/ci-framework-data/tests/test_operator/tobiko-tests-tobiko/tobiko_results.xml",
         ]
-        for path in common_paths:
-            resp = await fetch_log_url(a, f"{base}/{path}")
-            if resp.status_code == 200:
+        probes = await asyncio.gather(
+            *[fetch_log_url(a, f"{base}/{path}") for path in common_paths],
+            return_exceptions=True,
+        )
+        for path, resp in zip(common_paths, probes, strict=True):
+            if not isinstance(resp, BaseException) and resp.status_code == 200:
                 xml_paths.append(path)
 
     if not xml_paths:
@@ -178,13 +183,24 @@ async def get_build_test_results(
             "if tests ran and where results are stored."
         )
 
-    # Step 3: Fetch and parse each XML file
+    # Step 3: Fetch and parse XML files in parallel
+    sem = asyncio.Semaphore(5)
+
+    async def _fetch_xml(path: str) -> tuple[str, httpx.Response | None]:
+        async with sem:
+            try:
+                return path, await fetch_log_url(a, f"{base}/{path}")
+            except Exception:
+                return path, None
+
+    xml_results: list[tuple[str, httpx.Response | None]] = await asyncio.gather(
+        *[_fetch_xml(p) for p in xml_paths[:10]]
+    )
     test_suites = []
-    for xml_path in xml_paths[:10]:  # Cap at 10 files
-        resp = await fetch_log_url(a, f"{base}/{xml_path}")
-        if resp.status_code != 200:
+    for xml_path, xml_resp in xml_results:
+        if xml_resp is None or xml_resp.status_code != 200:
             continue
-        content = resp.content[:_MAX_XML_BYTES].decode("utf-8", errors="replace")
+        content = xml_resp.content[:_MAX_XML_BYTES].decode("utf-8", errors="replace")
         parsed = _parse_junit_xml(content, xml_path)
         if parsed:
             test_suites.append(parsed)

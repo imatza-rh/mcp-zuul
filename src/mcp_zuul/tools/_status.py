@@ -124,34 +124,8 @@ async def get_change_status(
         change = ref_match.group(1)
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status/change/{safepath(change)}")
-    # Track which pipeline each item belongs to (enriched from fallback path)
+    # Track which pipeline each item belongs to
     pipeline_map: dict[str, str] = {}
-    if not data and change.isdigit():
-        # Zuul status/change API doesn't match bare numbers to GitLab-style
-        # refs. Fall back to filtering the full status by change number.
-        # Cap iteration to avoid unbounded memory on busy tenants.
-        full = await api(ctx, f"/tenant/{safepath(t)}/status")
-        items = []
-        _scanned = 0
-        _MAX_SCAN = 5000  # safety cap for very large tenants
-        for p in full.get("pipelines", []):
-            if _scanned >= _MAX_SCAN:
-                break
-            for queue in p.get("change_queues", []):
-                if _scanned >= _MAX_SCAN:
-                    break
-                for heads_group in queue.get("heads", []):
-                    for item in heads_group:
-                        _scanned += 1
-                        if _scanned > _MAX_SCAN:
-                            break
-                        for r in item.get("refs", []):
-                            ref_str = r.get("ref", "")
-                            if f"/{change}/" in ref_str:
-                                items.append(item)
-                                pipeline_map[item.get("id", "")] = p.get("name", "")
-                                break
-        data = items
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save
         # the caller a list_buildsets + get_buildset round-trip.

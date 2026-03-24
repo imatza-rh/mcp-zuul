@@ -187,7 +187,15 @@ async def _stream_response(
         size = 0
         truncated = False
         deadline = _time.monotonic() + _STREAM_DEADLINE_SECS
-        async with http.stream("GET", url, follow_redirects=True, headers=headers) as resp:
+        # Use a longer read timeout for streaming — the client-level timeout
+        # (default 30s) is too short for large logs.  The deadline timer above
+        # caps total transfer time independently.
+        stream_timeout = httpx.Timeout(
+            connect=30.0, read=_STREAM_DEADLINE_SECS, write=30.0, pool=30.0
+        )
+        async with http.stream(
+            "GET", url, follow_redirects=True, headers=headers, timeout=stream_timeout
+        ) as resp:
             status = resp.status_code
             hdrs = resp.headers
             req = resp.request

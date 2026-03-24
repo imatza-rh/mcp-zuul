@@ -127,50 +127,35 @@ class TestGetChangeStatus:
         assert "latest_buildset" not in result
 
     @respx.mock
-    async def test_gitlab_ref_fallback(self, mock_ctx):
-        """Bare change number with no direct match falls back to full status scan."""
+    async def test_digit_change_not_in_pipeline_skips_full_scan(self, mock_ctx):
+        """Digit-only change with no direct match goes to buildset lookup, not full scan."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
             return_value=httpx.Response(200, json=[])
         )
-        item = make_status_item(change=1925)
-        item["refs"][0]["ref"] = "refs/merge-requests/1925/head"
-        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "zuul_version": "10.0.0",
-                    "pipelines": [{"name": "check", "change_queues": [{"heads": [[item]]}]}],
-                },
-            )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[])
         )
         result = json.loads(await get_change_status(mock_ctx, "1925"))
-        assert isinstance(result, list)
-        assert len(result) == 1
+        assert result["status"] == "not_in_pipeline"
+        assert "latest_buildset" not in result
 
     @respx.mock
-    async def test_gitlab_ref_fallback_enriches_pipeline(self, mock_ctx):
-        """Fallback full-status scan enriches items with pipeline name and tenant."""
+    async def test_digit_change_not_in_pipeline_fetches_buildset(self, mock_ctx):
+        """Digit-only change not in pipeline fetches latest buildset."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/2001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        item = make_status_item(change=2001)
-        item["refs"][0]["ref"] = "refs/merge-requests/2001/head"
-        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-uuid-1"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid-1").mock(
             return_value=httpx.Response(
-                200,
-                json={
-                    "zuul_version": "10.0.0",
-                    "pipelines": [
-                        {"name": "gate", "change_queues": [{"heads": [[item]]}]},
-                    ],
-                },
+                200, json={"uuid": "bs-uuid-1", "result": "SUCCESS", "builds": []}
             )
         )
         result = json.loads(await get_change_status(mock_ctx, "2001"))
-        assert isinstance(result, list)
-        assert len(result) == 1
-        assert result[0]["pipeline"] == "gate"
-        assert result[0]["tenant"] == "test-tenant"
+        assert result["status"] == "not_in_pipeline"
+        assert "latest_buildset" in result
 
     @respx.mock
     async def test_pre_fail_preserved_in_output(self, mock_ctx):
