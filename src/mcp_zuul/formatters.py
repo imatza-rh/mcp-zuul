@@ -229,7 +229,7 @@ def _compute_chain_summary(jobs: list[dict]) -> dict:
         else:
             # WAITING/QUEUED — full estimated duration plus dependency wait
             deps = job.get("dependencies") or []
-            dep_names = [d["name"] if isinstance(d, dict) else d for d in deps]
+            dep_names = [d.get("name", "") if isinstance(d, dict) else d for d in deps]
             dep_max = max((_remaining_through(n) for n in dep_names), default=0) if deps else 0
             own = estimated + dep_max
 

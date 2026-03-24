@@ -596,6 +596,35 @@ class TestChainSummary:
         summary = _compute_chain_summary(jobs)
         assert summary["critical_path_remaining"] > 0
 
+    def test_malformed_dependency_dict_no_name(self):
+        """Dependency dict missing 'name' key should not crash."""
+        from mcp_zuul.formatters import _compute_chain_summary
+
+        jobs = [
+            {
+                "name": "job-a",
+                "status": "RUNNING",
+                "result": None,
+                "_remaining_secs": 50,
+                "_estimated_secs": 100,
+                "_elapsed_secs": 50,
+            },
+            {
+                "name": "job-b",
+                "status": "WAITING",
+                "result": None,
+                "_remaining_secs": None,
+                "_estimated_secs": 200,
+                "_elapsed_secs": 0,
+                # Malformed: dict without "name" key
+                "dependencies": [{"soft": False}],
+            },
+        ]
+        summary = _compute_chain_summary(jobs)
+        # job-b has estimated=200 but its dep resolves to "" (unknown) → 0
+        assert summary["critical_path_remaining"] == 200
+        assert summary["total"] == 2
+
     def test_cycle_detection(self):
         """Circular dependencies don't cause infinite recursion."""
         jobs = [
