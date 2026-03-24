@@ -9,7 +9,7 @@ Classifications:
     CONFIG_ERROR: Zuul configuration problem, terminal.
     UNKNOWN: Cannot determine from available data.
 
-Pattern source: proven signatures from RHOSO CI production monitoring.
+Pattern source: production CI monitoring across Zuul deployments.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ _INFRA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Subscription (when visible — usually hidden by no_log)
     (
         re.compile(r"subscription-manager.*error", re.IGNORECASE),
-        "RHSM subscription registration failure",
+        "Subscription registration failure",
     ),
     # Ansible connectivity
     (
