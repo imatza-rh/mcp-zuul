@@ -1,8 +1,10 @@
 """Shared constants, annotations, and helpers used across tool sub-modules."""
 
+import gzip
 import json
 import logging
 import re
+import zlib
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -109,10 +111,25 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
                     len(resp.content),
                 )
                 continue
-            data = json.loads(resp.content)
+            content = resp.content
+            # Manual gzip decompression: some log servers return raw gzip
+            # bytes without Content-Encoding header, so httpx doesn't
+            # auto-decompress.  Detect via gzip magic bytes (0x1f 0x8b).
+            if suffix.endswith(".gz") and content[:2] == b"\x1f\x8b":
+                content = gzip.decompress(content)
+            data = json.loads(content)
             if isinstance(data, list):
                 playbooks, failed_tasks = parse_playbooks(data)
                 return playbooks, failed_tasks, True
-        except (httpx.DecodingError, json.JSONDecodeError, KeyError):
+        except (
+            httpx.DecodingError,
+            json.JSONDecodeError,
+            KeyError,
+            UnicodeDecodeError,
+            gzip.BadGzipFile,
+            zlib.error,
+            EOFError,
+            OSError,
+        ):
             continue
     return playbooks, failed_tasks, False
