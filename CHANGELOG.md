@@ -5,30 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-03-24
 
 ### Security
 - Auth generation counter prevents thundering-herd Kerberos re-auth under concurrent tool calls
 - Streaming deadline (5 min) caps total log transfer time independently of per-chunk progress
 - Grep context blocks now truncate lines to 1000 chars before regex matching (consistent with executor), preventing ReDoS on the main asyncio thread
+- LogJuicer report ID sanitized against path traversal before URL construction
 
 ### Changed
 - **BREAKING**: `clean()` now strips empty strings (`""`) and empty lists (`[]`) in addition to `None` — reduces token output but removes previously-present keys with empty values from JSON responses
 - **BREAKING**: `elapsed`, `remaining`, `estimated` in status responses are now human-readable strings (`"2m 30s"`) instead of raw seconds; `elapsed_str`/`remaining_str` removed (redundant)
+- **BREAKING**: `voting` field omitted from builds and jobs when `True` (default) — only emitted when `False`. Callers checking `build["voting"]` must use `.get("voting", True)`
+- **BREAKING**: `buildset_uuid`, `log_url`, `start_time`, `ref_url` moved to non-brief output in `fmt_build` — `list_builds` no longer includes these fields
 - `chain_summary.critical_path_remaining` replaced by `chain_summary.cp_eta` (human-readable string)
-- `voting` field omitted from builds and jobs when `True` (default) — only emitted when `False`
-- `buildset_uuid`, `log_url`, `start_time`, `ref_url` moved to non-brief output in `fmt_build`
+- Removed product-specific references from classifier (generic Zuul CI patterns only)
 
 ### Performance
 - Token output reduced ~50% on `list_builds`, ~30% on `get_status` via conditional field inclusion
 - `grep_log_context` uses single-pass regex with cached match indices (O(n) instead of O(n×m))
 - `parse_playbooks` strips ANSI once per field, reuses for truncate + recap extraction
 - Thread pool executor for user-supplied grep patterns with 10s timeout
-- `get_change_status` skips full-status scan for digit-only changes — goes directly to buildset lookup
+- `get_change_status` retries digit-only changes with `refs/merge-requests/N/head` format before buildset lookup (replaces O(n) full-status scan)
+- `diagnose_build` fetches job-output.json and job-output.txt in parallel via `asyncio.gather`
+- `get_build_test_results` probes fallback paths and fetches XML files in parallel (Semaphore(5))
+- Streaming uses per-request `httpx.Timeout(read=300s)` so 5-minute deadline is reachable (client-level 30s was killing large log downloads)
 
 ### Fixed
-- Gzip decompression in `_fetch_job_output` uses incremental `zlib.decompressobj` with size cap to prevent gzip bombs
-- Gzip fallback in `_fetch_job_output` now catches `gzip.BadGzipFile`, `zlib.error`, `EOFError`, `OSError`
+- Gzip decompression in `_fetch_job_output` detects gzip magic bytes (0x1f 0x8b) and uses incremental `zlib.decompressobj` with size cap to prevent gzip bombs
+- Gzip fallback in `_fetch_job_output` now catches `gzip.BadGzipFile`, `zlib.error`, `EOFError`, `OSError`, `UnicodeDecodeError`
+- `get_change_status` best-effort buildset fallback now catches `TimeoutException` and `ValueError` (was silently dropping the "not_in_pipeline" response on slow APIs)
+- `_compute_chain_summary` handles dict-style dependencies (`{"name": "x"}`) and nameless jobs
+- `_format_duration` handles `inf`, `nan`, and negative values without crashing
+- `fmt_project` handles list-type jobs where first element is not a dict
+- `_truncate_invocation` handles dict/list values and avoids dict mutation during iteration
+- `parse_playbooks` caps failed tasks at 50 and guards against non-dict host results
+- Defensive `.get()` throughout formatters and config tools (prevents KeyError on unexpected API data)
 
 ## [0.3.4] - 2026-03-24
 
@@ -174,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.4.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.0
 [0.3.4]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.4
 [0.3.3]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.3
 [0.3.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.2

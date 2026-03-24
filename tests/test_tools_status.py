@@ -149,6 +149,23 @@ class TestGetChangeStatus:
         assert result["latest_buildset"]["uuid"] == "bs-latest"
 
     @respx.mock
+    async def test_change_not_in_pipeline_timeout_graceful(self, mock_ctx):
+        """Timeout during best-effort buildset fetch degrades gracefully."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/77777").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F77777%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            side_effect=httpx.ReadTimeout("timed out")
+        )
+        result = json.loads(await get_change_status(mock_ctx, "77777"))
+        assert result["status"] == "not_in_pipeline"
+        assert "latest_buildset" not in result
+
+    @respx.mock
     async def test_change_not_in_pipeline_no_buildsets(self, mock_ctx):
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/88888").mock(
             return_value=httpx.Response(200, json=[])

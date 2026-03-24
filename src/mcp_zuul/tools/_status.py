@@ -157,7 +157,13 @@ async def get_change_status(
                         ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}"
                     )
                     result["latest_buildset"] = fmt_buildset(bs_detail, brief=False)
-        except (httpx.HTTPStatusError, httpx.ConnectError, KeyError):
+        except (
+            httpx.HTTPStatusError,
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            KeyError,
+            ValueError,
+        ):
             pass  # Best-effort — don't fail the whole call
         return json.dumps(result)
     base = app(ctx).config.base_url
