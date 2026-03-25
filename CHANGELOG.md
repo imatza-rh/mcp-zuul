@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] - 2026-03-26
+
+### Security
+- URL-decode `log_name` and `path` parameters before path traversal check - percent-encoded sequences (`%2e%2e/%2f`) can no longer bypass `..` detection
+- Reject user-supplied regex patterns with nested quantifiers (e.g. `(a+)+`) before compilation to prevent ReDoS thread consumption
+- CI: ignore CVE-2026-4539 (pygments ReDoS, CVSS 3.3 Low, transitive dev dep) with staleness guard that forces re-evaluation on update
+
+### Added
+- `get_build_failures` and `diagnose_build` now surface `ref_url`, `project`, `change`, and `files_in_failure` (repo-relative file paths extracted from failure output) to help cross-reference failing files against the change's file list
+
+### Fixed
+- `get_change_status` handles 404 from `/status/change/` endpoint (some Zuul instances return 404 instead of `[]` for changes not in pipeline) - previously killed the call before fallback logic could run
+- SSL certificate errors detected at startup with actionable suggestion (`ZUUL_VERIFY_SSL=false`) instead of raw tracebacks
+- Kerberos setup: added Linux prerequisites, CLI setup form, GUI client PATH note, and troubleshooting section to README
+- `isinstance` type guard for refs elements in `fmt_status_item` and `get_change_status` - prevents `AttributeError` on non-dict refs from Zuul API
+- Removed spurious `KeyError` from `_fetch_job_output` exception list
+
 ## [0.4.0] - 2026-03-24
 
 ### Security
@@ -186,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.4.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.1
 [0.4.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.0
 [0.3.4]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.4
 [0.3.3]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.3
