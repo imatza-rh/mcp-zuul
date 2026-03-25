@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from typing import Any
 
 from mcp.server.fastmcp import Context
@@ -14,6 +15,63 @@ from ..helpers import tenant as _tenant
 from ..parsers import grep_log_context
 from ..server import mcp
 from ._common import _READ_ONLY, _fetch_job_output, _no_log_url_error, _resolve
+
+# Matches repo-relative file paths like roles/deploy_loki/README.md
+# Requires: at least one dir/ component, a filename with extension.
+# Supports dotfile dirs (.github/, .zuul.d/) via optional leading dot.
+# Rejects: absolute paths (/etc/...), URLs (://), path traversal (../).
+_REPO_FILE_RE = re.compile(
+    r"(?<![/\w])"  # not preceded by / or word char (avoids matching inside absolute paths)
+    r"((?:\.?[a-zA-Z0-9_][\w.-]*/)+[\w.-]+\.\w{1,10})"
+)
+_FILE_PATH_NOISE = re.compile(
+    r"site-packages|/home/|/root/|/tmp/|/var/|/usr/|/etc/"
+    r"|\.com/|\.io/|\.org/|\.net/"  # URL-derived fragments
+)
+
+
+def _ref_meta(build: dict) -> dict:
+    """Extract ref metadata (ref_url, project, change) from a Zuul build object."""
+    ref = build.get("ref")
+    ref_dict = ref if isinstance(ref, dict) else {}
+    return clean(
+        {
+            "ref_url": ref_dict.get("ref_url"),
+            "project": ref_dict.get("project"),
+            "change": ref_dict.get("change"),
+        }
+    )
+
+
+def _extract_file_paths(failed_tasks: list[dict]) -> list[str] | None:
+    """Extract repo-relative file paths mentioned in failure output.
+
+    Scans msg, stdout, stderr of failed tasks for paths like
+    ``roles/deploy_loki/README.md``. Returns sorted unique paths,
+    or None if no paths found. Used to help consumers cross-reference
+    failing files against the change's file list.
+
+    Note: operates on already-truncated task fields (max 4000 chars
+    each via smart_truncate). Paths in the omitted middle section of
+    very long output will not be found. Treat results as hints, not
+    a complete inventory.
+    """
+    paths: set[str] = set()
+    for task in failed_tasks:
+        for field in ("msg", "stdout", "stderr"):
+            text = task.get(field)
+            if not text or not isinstance(text, str):
+                continue
+            for m in _REPO_FILE_RE.finditer(text):
+                path = m.group(1)
+                # Check matched path and ~20 chars before it for noise markers
+                # (enough to catch /home/, /tmp/, :// prefixes in context)
+                start = max(0, m.start() - 20)
+                context = text[start : m.end()]
+                if _FILE_PATH_NOISE.search(context):
+                    continue
+                paths.add(path)
+    return sorted(paths) or None
 
 
 @mcp.tool(title="Search Builds", annotations=_READ_ONLY)
@@ -103,6 +161,11 @@ async def get_build_failures(
     Parses Zuul's structured job-output.json for precise failure data.
     Start here when investigating build failures — much more accurate than log parsing.
 
+    Failure responses include ref_url/project/change and files_in_failure
+    (file paths extracted from error output). Use these to check whether
+    failing files are part of the change before concluding if a failure is
+    change-related or a pre-existing repo issue.
+
     Args:
         uuid: Build UUID
         tenant: Tenant name (uses default if empty)
@@ -112,6 +175,7 @@ async def get_build_failures(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     result = build.get("result", "")
     log_url = build.get("log_url")
+    ref_meta = _ref_meta(build)
 
     # Short-circuit for non-failure builds — no need to download job-output.json
     if result in ("SUCCESS", "SKIPPED"):
@@ -145,6 +209,8 @@ async def get_build_failures(
                     "result": build.get("result", ""),
                     "log_url": log_url,
                     "duration": build.get("duration"),
+                    **ref_meta,
+                    "files_in_failure": _extract_file_paths(failed_tasks),
                     "playbook_count": len(playbooks),
                     "playbooks": playbooks,
                     "failed_tasks": failed_tasks,
@@ -167,6 +233,7 @@ async def get_build_failures(
                 "result": build.get("result", ""),
                 "log_url": log_url,
                 "duration": build.get("duration"),
+                **ref_meta,
                 "json_fallback": True,
                 "failed_tasks": failed_tasks,
                 "log_context": log_context or None,
@@ -193,6 +260,9 @@ async def diagnose_build(
     targeted log grep (surrounding context from job-output.txt). Returns
     everything needed to understand a failure in a single call.
 
+    Includes ref_url/project/change and files_in_failure so consumers can
+    check whether failing files are part of the change or pre-existing.
+
     Use this instead of calling get_build_failures + get_build_log separately.
 
     Args:
@@ -204,6 +274,7 @@ async def diagnose_build(
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     result = build.get("result", "")
     log_url = build.get("log_url")
+    ref_meta = _ref_meta(build)
 
     if result in ("SUCCESS", "SKIPPED"):
         return json.dumps(
@@ -270,6 +341,8 @@ async def diagnose_build(
         "duration": build.get("duration"),
         "start_time": build.get("start_time"),
         "end_time": build.get("end_time"),
+        **ref_meta,
+        "files_in_failure": _extract_file_paths(failed_tasks),
         "node_name": node_name,
         "pipeline": build.get("pipeline"),
         "playbook_count": len(playbooks),
