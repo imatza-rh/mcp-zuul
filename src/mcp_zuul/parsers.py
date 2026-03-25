@@ -26,7 +26,8 @@ def smart_truncate(text: str, max_size: int = 4000, *, _pre_stripped: bool = Fal
     if len(text) <= max_size:
         return text or None
     head = max_size // 4
-    tail = max(1, max_size - head - 60)  # room for the separator
+    # Separator: "\n\n[... N chars omitted ...]\n\n" is ~32-37 chars; 64 is a safe ceiling
+    tail = max(1, max_size - head - 64)
     mid = len(text) - head - tail
     return f"{text[:head]}\n\n[... {mid} chars omitted ...]\n\n{text[-tail:]}"
 

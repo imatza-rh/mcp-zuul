@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from mcp_zuul.classifier import classify_failure
-from mcp_zuul.formatters import _compute_chain_summary, fmt_buildset
+from mcp_zuul.formatters import _compute_chain_summary, fmt_buildset, fmt_status_item
 from mcp_zuul.helpers import (
     AppContext,
     _pick_client,
@@ -18,11 +18,13 @@ from mcp_zuul.helpers import (
     parse_zuul_url,
     stream_log,
 )
-from mcp_zuul.parsers import parse_playbooks
+from mcp_zuul.parsers import parse_playbooks, smart_truncate
 from mcp_zuul.server import _BearerAuth
 from mcp_zuul.tools import list_jobs, list_projects
 from mcp_zuul.tools._config import list_nodes
 from mcp_zuul.tools._logjuicer import get_build_anomalies
+from mcp_zuul.tools._logs import browse_build_logs, get_build_log, tail_build_log
+from tests.conftest import make_build
 
 # -- parse_zuul_url single-tenant support --
 
@@ -626,3 +628,225 @@ class TestClassifyFailureInfraResults:
         c = classify_failure("MERGER_FAILURE", [], [])
         assert c.category == "CONFIG_ERROR"
         assert c.retryable is False
+
+
+# -- refs[0] type guard --
+
+
+class TestRefsTypeGuard:
+    def test_fmt_status_item_with_non_dict_refs(self):
+        """Non-dict refs elements must not crash fmt_status_item."""
+        item = {
+            "id": "123,1",
+            "active": True,
+            "live": True,
+            "refs": ["some-string-ref"],
+            "jobs": [],
+        }
+        result = fmt_status_item(item)
+        assert "project" not in result
+        assert "change" not in result
+
+    def test_fmt_status_item_with_empty_refs(self):
+        item = {
+            "id": "123,1",
+            "active": True,
+            "live": True,
+            "refs": [],
+            "jobs": [],
+        }
+        result = fmt_status_item(item)
+        assert "project" not in result
+
+    def test_fmt_status_item_with_dict_refs(self):
+        """Normal dict refs should still work."""
+        item = {
+            "id": "123,1",
+            "active": True,
+            "live": True,
+            "refs": [{"project": "org/repo", "change": 42, "ref": "refs/changes/42/42/1"}],
+            "jobs": [],
+        }
+        result = fmt_status_item(item)
+        assert result["project"] == "org/repo"
+        assert result["change"] == 42
+
+    def test_fmt_buildset_with_non_dict_refs(self):
+        """Non-dict refs in buildset must not crash."""
+        bs = {
+            "uuid": "bs-1",
+            "result": "SUCCESS",
+            "refs": [42],  # int, not dict
+        }
+        result = fmt_buildset(bs)
+        assert result["uuid"] == "bs-1"
+        # Should not have extracted ref fields
+        assert "project" not in result
+
+
+# -- URL-encoded path traversal --
+
+
+class TestUrlEncodedPathTraversal:
+    @respx.mock
+    async def test_percent_encoded_dotdot_in_log_name(self, mock_ctx):
+        """log_name with %2e%2e should be rejected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "b1", log_name="%2e%2e/%2e%2e/etc/passwd")
+        )
+        assert "error" in result
+
+    @respx.mock
+    async def test_percent_encoded_slash_in_log_name(self, mock_ctx):
+        """log_name with %2f-encoded traversal should be rejected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "b1", log_name="foo%2f..%2fbar"))
+        assert "error" in result
+
+    @respx.mock
+    async def test_percent_encoded_dotdot_in_browse_path(self, mock_ctx):
+        """browse_build_logs path with %2e%2e should be rejected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await browse_build_logs(mock_ctx, "b1", path="%2e%2e/%2e%2e/etc/passwd")
+        )
+        assert "error" in result
+
+    @respx.mock
+    async def test_literal_traversal_still_blocked(self, mock_ctx):
+        """Original literal .. traversal must still be blocked."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "b1", log_name="../../etc/passwd"))
+        assert "error" in result
+
+    @respx.mock
+    async def test_percent_encoded_dotdot_in_tail_log_name(self, mock_ctx):
+        """tail_build_log log_name with %2e%2e should be rejected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(
+            await tail_build_log(mock_ctx, "b1", log_name="%2e%2e/%2e%2e/etc/passwd")
+        )
+        assert "error" in result
+
+    @respx.mock
+    async def test_literal_traversal_blocked_in_tail(self, mock_ctx):
+        """tail_build_log must also block literal .. traversal."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, "b1", log_name="../../etc/passwd"))
+        assert "error" in result
+
+    @respx.mock
+    async def test_valid_log_name_not_blocked(self, mock_ctx):
+        """Normal log names like 'job-output.txt' must not be blocked."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_url = build["log_url"] + "job-output.txt"
+        respx.get(log_url).mock(return_value=httpx.Response(200, content=b"ok\n"))
+        result = json.loads(await get_build_log(mock_ctx, "b1", log_name="job-output.txt"))
+        assert "error" not in result
+
+
+# -- ReDoS pre-validation --
+
+
+class TestRedosPreValidation:
+    @respx.mock
+    async def test_nested_plus_plus_rejected(self, mock_ctx):
+        """Pattern (a+)+ should be rejected before compilation."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_url = build["log_url"] + "job-output.txt"
+        respx.get(log_url).mock(return_value=httpx.Response(200, content=b"test\n"))
+        result = json.loads(await get_build_log(mock_ctx, "b1", grep="(a+)+b"))
+        assert "error" in result
+        assert (
+            "nested quantifier" in result["error"].lower()
+            or "backtracking" in result["error"].lower()
+        )
+
+    @respx.mock
+    async def test_nested_star_plus_rejected(self, mock_ctx):
+        """Pattern (a*)+b should be rejected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_url = build["log_url"] + "job-output.txt"
+        respx.get(log_url).mock(return_value=httpx.Response(200, content=b"test\n"))
+        result = json.loads(await get_build_log(mock_ctx, "b1", grep="(a*)+b"))
+        assert "error" in result
+
+    @respx.mock
+    async def test_simple_alternation_allowed(self, mock_ctx):
+        """Pattern error|failed should be allowed (no nested quantifiers)."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_url = build["log_url"] + "job-output.txt"
+        respx.get(log_url).mock(return_value=httpx.Response(200, content=b"an error here\n"))
+        result = json.loads(await get_build_log(mock_ctx, "b1", grep="error|failed"))
+        assert "error" not in result
+
+    @respx.mock
+    async def test_simple_quantifier_allowed(self, mock_ctx):
+        """Pattern like a+ (simple quantifier, not nested) should be allowed."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_url = build["log_url"] + "job-output.txt"
+        respx.get(log_url).mock(return_value=httpx.Response(200, content=b"aaaa\n"))
+        result = json.loads(await get_build_log(mock_ctx, "b1", grep="a+"))
+        assert "error" not in result
+
+
+# -- smart_truncate size accuracy --
+
+
+class TestSmartTruncateSize:
+    def test_output_within_max_size(self):
+        """Truncated output must not exceed max_size."""
+        text = "x" * 10000
+        for max_size in [100, 200, 500, 1000, 4000]:
+            result = smart_truncate(text, max_size)
+            assert result is not None
+            assert len(result) <= max_size, f"max_size={max_size}, actual={len(result)}"
+
+    def test_short_text_returned_as_is(self):
+        result = smart_truncate("short text", 100)
+        assert result == "short text"
+
+    def test_empty_text_returns_none(self):
+        assert smart_truncate("") is None
+        assert smart_truncate("", 100) is None
+
+    def test_separator_present_in_truncated_output(self):
+        text = "x" * 10000
+        result = smart_truncate(text, 200)
+        assert result is not None
+        assert "[..." in result
+        assert "chars omitted" in result

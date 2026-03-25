@@ -347,7 +347,7 @@ def fmt_status_item(item: dict) -> dict:
         "live": item.get("live", False),
     }
     refs = item.get("refs", [])
-    if refs:
+    if refs and isinstance(refs[0], dict):
         r = refs[0]
         out["project"] = r.get("project", "")
         out["change"] = r.get("change") or r.get("ref", "")

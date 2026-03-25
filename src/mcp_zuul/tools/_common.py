@@ -133,7 +133,6 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
         except (
             httpx.DecodingError,
             json.JSONDecodeError,
-            KeyError,
             UnicodeDecodeError,
             gzip.BadGzipFile,
             zlib.error,

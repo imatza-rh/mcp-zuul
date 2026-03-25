@@ -187,7 +187,7 @@ async def get_change_status(
     for raw, fmt in zip(data, formatted, strict=True):
         fmt["tenant"] = t
         refs = raw.get("refs", [])
-        if refs:
+        if refs and isinstance(refs[0], dict):
             ref_id = refs[0].get("id", "")
             if ref_id:
                 fmt["status_url"] = (

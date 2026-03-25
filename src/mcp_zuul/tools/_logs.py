@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from mcp.server.fastmcp import Context
 
@@ -21,6 +21,10 @@ from ._common import (
     _no_log_url_error,
     _resolve,
 )
+
+# Detect nested quantifiers that cause catastrophic backtracking (ReDoS).
+# Matches patterns like (x+)+, (x*)+, (x+)*, (x{2,})+ etc.
+_NESTED_QUANTIFIER_RE = re.compile(r"[+*}\?]\)?[+*{]")
 
 
 @mcp.tool(title="Read Build Log", annotations=_READ_ONLY)
@@ -62,8 +66,8 @@ async def get_build_log(
     if not log_url:
         return _no_log_url_error(build, uuid)
 
-    # Sanitize log_name to prevent path traversal
-    if ".." in log_name.split("/"):
+    # Sanitize log_name to prevent path traversal (decode first to catch %2e%2e/%2f)
+    if ".." in unquote(log_name).split("/"):
         return error(f"Invalid log_name: {log_name!r}")
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
 
@@ -100,6 +104,8 @@ async def get_build_log(
         # Auto-fix common shell-grep-to-python-regex mistake: \| -> |
         if r"\|" in grep and "|" not in grep.replace(r"\|", ""):
             grep = grep.replace(r"\|", "|")
+        if _NESTED_QUANTIFIER_RE.search(grep):
+            return error("Regex rejected: nested quantifiers can cause catastrophic backtracking")
         try:
             pat = re.compile(grep, re.IGNORECASE)
         except re.error as e:
@@ -234,8 +240,8 @@ async def browse_build_logs(
     if parsed.scheme not in ("http", "https"):
         return error(f"Invalid log URL scheme: {parsed.scheme}")
 
-    # Prevent path traversal
-    if ".." in path.split("/"):
+    # Prevent path traversal (decode first to catch %2e%2e/%2f)
+    if ".." in unquote(path).split("/"):
         return error("Path traversal not allowed")
 
     a = app(ctx)
@@ -312,7 +318,7 @@ async def tail_build_log(
     log_url = build.get("log_url")
     if not log_url:
         return _no_log_url_error(build, uuid)
-    if ".." in log_name.split("/"):
+    if ".." in unquote(log_name).split("/"):
         return error(f"Invalid log_name: {log_name!r}")
 
     a = app(ctx)
