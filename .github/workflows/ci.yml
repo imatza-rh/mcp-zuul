@@ -57,4 +57,15 @@ jobs:
       - name: Mypy
         run: uv run mypy src/mcp_zuul/
       - name: Audit dependencies
-        run: uv run pip-audit
+        run: |
+          # Ignored: CVE-2026-4539 - ReDoS in pygments AdlLexer (CVSS 3.3 Low).
+          # pygments is a transitive dev dep (pytest/rich), not used by mcp-zuul.
+          # No fix available as of 2026-03-25. Staleness guard below will catch updates.
+          uv run pip-audit --ignore-vuln CVE-2026-4539
+      - name: Check stale audit ignores
+        run: |
+          version=$(uv run python -c "import pygments; print(pygments.__version__)")
+          if [ "$version" != "2.19.2" ]; then
+            echo "::error::pygments updated to $version - re-evaluate CVE-2026-4539 ignore in 'Audit dependencies' step"
+            exit 1
+          fi
