@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from .helpers import error
+from .helpers import error, is_ssl_error
 
 log = logging.getLogger("zuul-mcp")
 
@@ -46,7 +46,12 @@ def handle_errors(
                 "Use get_build_log with grep='FAILED|fatal' for text-based diagnosis, "
                 "or diagnose_build which falls back automatically."
             )
-        except httpx.ConnectError:
+        except httpx.ConnectError as e:
+            if is_ssl_error(e):
+                return error(
+                    "SSL certificate verification failed. "
+                    "If using self-signed certificates, set ZUUL_VERIFY_SSL=false"
+                )
             return error("Cannot connect to Zuul API")
         except httpx.TimeoutException:
             return error("Request timed out")

@@ -329,6 +329,64 @@ class TestFmtBuildMissingJobName:
         assert result["job"] == "unknown"
 
 
+# -- Kerberos auth SSL error hint --
+
+
+class TestKerberosSSLError:
+    def _mock_kerberos_config(self, mock_config):
+        """Set up a mock Config for Kerberos lifespan tests."""
+        cfg = mock_config.return_value
+        cfg.base_url = "https://zuul.example.com"
+        cfg.auth_token = None
+        cfg.timeout = 30
+        cfg.verify_ssl = True
+        cfg.use_kerberos = True
+        cfg.transport = "stdio"
+        cfg.enabled_tools = None
+        cfg.disabled_tools = None
+        cfg.read_only = True
+        cfg.logjuicer_url = None
+        return cfg
+
+    async def test_ssl_error_gives_actionable_hint(self):
+        """Kerberos auth SSL failure should suggest ZUUL_VERIFY_SSL=false."""
+        from unittest.mock import AsyncMock, patch
+
+        from mcp_zuul.server import lifespan
+        from tests._factories import make_ssl_connect_error
+
+        mock_server = AsyncMock()
+        with (
+            patch("mcp_zuul.server.Config.from_env") as mock_config,
+            patch("mcp_zuul.server.kerberos_auth") as mock_auth,
+        ):
+            self._mock_kerberos_config(mock_config)
+            mock_auth.side_effect = make_ssl_connect_error()
+
+            with pytest.raises(RuntimeError, match="ZUUL_VERIFY_SSL"):
+                async with lifespan(mock_server):
+                    pass
+
+    async def test_non_ssl_connect_error_reraises(self):
+        """Non-SSL ConnectError during Kerberos auth should re-raise as-is."""
+        from unittest.mock import AsyncMock, patch
+
+        from mcp_zuul.server import lifespan
+        from tests._factories import make_connect_error
+
+        mock_server = AsyncMock()
+        with (
+            patch("mcp_zuul.server.Config.from_env") as mock_config,
+            patch("mcp_zuul.server.kerberos_auth") as mock_auth,
+        ):
+            self._mock_kerberos_config(mock_config)
+            mock_auth.side_effect = make_connect_error("Connection refused")
+
+            with pytest.raises(httpx.ConnectError, match="Connection refused"):
+                async with lifespan(mock_server):
+                    pass
+
+
 # -- Kerberos auth None token guard --
 
 

@@ -194,7 +194,7 @@ All clients use the same JSON structure. Add to your client's MCP config file:
 }
 ```
 
-**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`), and other MCP clients use the same format.
+**Claude Desktop** (`claude_desktop_config.json`), **Cursor** (`.cursor/mcp.json`), and other MCP clients use the same format. GUI-based clients don't inherit your shell `PATH` - use the full path to `uvx` (run `which uvx` to find it).
 
 Or via CLI:
 ```bash
@@ -236,16 +236,40 @@ For Docker, forward without a value to inherit from host:
 
 ### Kerberos / SPNEGO
 
-For Zuul behind OIDC + Kerberos. Requires a valid Kerberos ticket (`kinit`) and the `gssapi` package:
+For Zuul behind OIDC + Kerberos. Requires a valid Kerberos ticket (`kinit`) and the `gssapi` package.
 
+**Linux prerequisites** - `gssapi` has no pre-built Linux wheels and must compile from source:
+```bash
+# Fedora/RHEL/CentOS
+sudo dnf install krb5-devel python3-devel gcc
+
+# Debian/Ubuntu
+sudo apt install libkrb5-dev python3-dev gcc
+```
+
+macOS and Windows have pre-built wheels - no extra packages needed.
+
+Then install with Kerberos support:
 ```bash
 pip install mcp-zuul[kerberos]    # or: uvx --with "mcp-zuul[kerberos]" mcp-zuul
 ```
 
+Via CLI:
+```bash
+claude mcp add -s user \
+               -e ZUUL_URL=https://internal-zuul.example.com/zuul \
+               -e ZUUL_DEFAULT_TENANT=my-tenant \
+               -e ZUUL_USE_KERBEROS=true \
+               -e ZUUL_VERIFY_SSL=false \
+               zuul -- uvx --with "mcp-zuul[kerberos]" mcp-zuul
+```
+
+Or via JSON config:
 ```json
 {
   "zuul-internal": {
-    "command": "mcp-zuul",
+    "command": "uvx",
+    "args": ["--with", "mcp-zuul[kerberos]", "mcp-zuul"],
     "env": {
       "ZUUL_URL": "https://internal-zuul.example.com/zuul",
       "ZUUL_USE_KERBEROS": "true",
@@ -282,6 +306,37 @@ Add separate entries per Zuul instance:
     }
   }
 }
+```
+
+## Troubleshooting
+
+**`krb5-config: not found` or `Python.h: No such file`** when installing `mcp-zuul[kerberos]` on Linux:
+
+`gssapi` has no pre-built Linux wheels - it compiles from source. Install system packages first:
+```bash
+# Fedora/RHEL/CentOS
+sudo dnf install krb5-devel python3-devel gcc
+
+# Debian/Ubuntu
+sudo apt install libkrb5-dev python3-dev gcc
+```
+
+**`uvx: command not found`** in Cursor or Claude Desktop:
+
+GUI-based MCP clients don't inherit your shell `PATH`. Use the full path to `uvx`:
+```bash
+which uvx    # find the path, e.g. /usr/bin/uvx or ~/.local/bin/uvx
+```
+Then use that absolute path as `command` in your MCP config:
+```json
+"command": "/usr/bin/uvx"
+```
+
+**Permission errors** on `~/.local/share/uv/`:
+
+If `uv` was previously run with `sudo`, the cache directory may be root-owned:
+```bash
+sudo chown -R $(whoami) ~/.local/share/uv/
 ```
 
 ## Usage Examples

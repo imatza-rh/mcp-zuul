@@ -50,8 +50,11 @@ class Config:
                 import gssapi  # noqa: F401
             except ImportError:
                 raise ValueError(
-                    "ZUUL_USE_KERBEROS=true but 'gssapi' is not installed. "
-                    "Install with: pip install mcp-zuul[kerberos]"
+                    "ZUUL_USE_KERBEROS=true but 'gssapi' is not installed.\n"
+                    "Install with: pip install mcp-zuul[kerberos]\n"
+                    "On Linux, system packages are required first (no pre-built wheels):\n"
+                    "  Fedora/RHEL: sudo dnf install krb5-devel python3-devel gcc\n"
+                    "  Debian/Ubuntu: sudo apt install libkrb5-dev python3-dev gcc"
                 ) from None
         transport = os.environ.get("MCP_TRANSPORT", "stdio")
         if transport not in ("stdio", "sse", "streamable-http"):

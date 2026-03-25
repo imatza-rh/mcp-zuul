@@ -17,11 +17,33 @@ from mcp_zuul.helpers import (
     clean,
     error,
     fetch_log_url,
+    is_ssl_error,
     parse_zuul_url,
     safepath,
     strip_ansi,
     tenant,
 )
+from tests._factories import make_connect_error, make_ssl_connect_error
+
+
+class TestIsSSLError:
+    def test_detects_ssl_cert_verification_error(self):
+        exc = make_ssl_connect_error()
+        assert is_ssl_error(exc) is True
+
+    def test_rejects_non_ssl_connect_error(self):
+        exc = make_connect_error("Connection refused")
+        assert is_ssl_error(exc) is False
+
+    def test_rejects_bare_connect_error(self):
+        """ConnectError with no cause chain (manually constructed)."""
+        exc = httpx.ConnectError("some error")
+        assert is_ssl_error(exc) is False
+
+    def test_rejects_hostname_with_ssl(self):
+        """Hostname containing 'ssl' must not trigger detection."""
+        exc = make_connect_error("All connection attempts failed for ssl.example.com")
+        assert is_ssl_error(exc) is False
 
 
 class TestClean:
@@ -248,10 +270,30 @@ class TestHandleErrors:
     async def test_wraps_connect_error(self):
         @handle_errors
         async def failing():
-            raise httpx.ConnectError("")
+            raise make_connect_error("Connection refused")
 
         result = json.loads(await failing())
         assert "Cannot connect" in result["error"]
+
+    async def test_wraps_ssl_connect_error(self):
+        @handle_errors
+        async def failing():
+            raise make_ssl_connect_error()
+
+        result = json.loads(await failing())
+        assert "SSL certificate verification failed" in result["error"]
+        assert "ZUUL_VERIFY_SSL" in result["error"]
+
+    async def test_ssl_hostname_no_false_positive(self):
+        """ConnectError to ssl.example.com must NOT trigger the SSL hint."""
+
+        @handle_errors
+        async def failing():
+            raise make_connect_error("All connection attempts failed for ssl.example.com")
+
+        result = json.loads(await failing())
+        assert "Cannot connect" in result["error"]
+        assert "ZUUL_VERIFY_SSL" not in result["error"]
 
     async def test_wraps_timeout(self):
         @handle_errors

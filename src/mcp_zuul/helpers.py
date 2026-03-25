@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import logging
 import re
+import ssl
 import time as _time
 from dataclasses import dataclass, field
 from typing import Any
@@ -325,6 +326,22 @@ def parse_zuul_url(url: str) -> tuple[str, str, str] | None:
     if m:
         return "", m.group(1), m.group(2)
     return None
+
+
+def is_ssl_error(exc: httpx.ConnectError) -> bool:
+    """Check if a ConnectError was caused by an SSL/TLS failure.
+
+    Inspects the exception cause chain instead of string-matching the
+    message, which avoids false positives (e.g. hostnames containing
+    "ssl") and is stable across httpx/httpcore versions.
+
+    The chain is: httpx.ConnectError -> httpcore.ConnectError -> ssl.SSLError.
+    """
+    cause = exc.__cause__
+    if cause is None:
+        return False
+    inner = getattr(cause, "__context__", None) or getattr(cause, "__cause__", None)
+    return isinstance(inner, ssl.SSLError)
 
 
 def clean(d: dict) -> dict:

@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from .auth import kerberos_auth
 from .config import Config
-from .helpers import AppContext
+from .helpers import AppContext, is_ssl_error
 
 # Logging (stderr only — mandatory for stdio transport)
 logging.basicConfig(
@@ -78,7 +78,15 @@ async def lifespan(server: FastMCP):
         ) as log_client,
     ):
         if config.use_kerberos:
-            await kerberos_auth(client, config.base_url)
+            try:
+                await kerberos_auth(client, config.base_url)
+            except httpx.ConnectError as e:
+                if is_ssl_error(e):
+                    raise RuntimeError(
+                        "SSL certificate verification failed during Kerberos authentication. "
+                        "Set ZUUL_VERIFY_SSL=false for self-signed certificates"
+                    ) from e
+                raise
 
         # Remove write tools when in read-only mode (default)
         _WRITE_TOOLS = {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
