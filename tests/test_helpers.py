@@ -318,7 +318,7 @@ class TestHandleErrors:
 
         result = json.loads(await failing())
         assert "decompression failed" in result["error"]
-        assert "get_build_log" in result["error"]
+        assert "diagnose_build" in result["error"]
         # Must NOT contain "Internal error" — it's a known exception
         assert "Internal error" not in result["error"]
 

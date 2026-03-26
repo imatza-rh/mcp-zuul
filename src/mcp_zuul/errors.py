@@ -43,8 +43,8 @@ def handle_errors(
         except httpx.DecodingError:
             return error(
                 "Log file decompression failed (corrupted gzip). "
-                "Use get_build_log with grep='FAILED|fatal' for text-based diagnosis, "
-                "or diagnose_build which falls back automatically."
+                "Use diagnose_build which reads job-output.json (usually not corrupted) "
+                "and falls back to text grep automatically."
             )
         except httpx.ConnectError as e:
             if is_ssl_error(e):
