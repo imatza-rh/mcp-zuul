@@ -623,6 +623,118 @@ class TestExtractedErrors:
         assert any("deploy failed" in err for err in ft["extracted_errors"])
 
 
+class TestInnerFailures:
+    """Tests for inner_failures — structured data from nested ansible playbooks."""
+
+    @respx.mock
+    async def test_inner_failures_extracted_from_container_exec(self, mock_ctx):
+        """When inner_recap shows failed=1, inner fatal blocks should be extracted."""
+        build = make_build(result="FAILURE")
+        # Simulate container exec running ansible-playbook with a nested failure
+        inner_ansible = (
+            "Using /etc/ansible.cfg\n"
+            + "ok: [host1]\n" * 50
+            + "TASK [install : Wait for OCP bootstrap] ****\n"
+            + 'fatal: [localhost]: FAILED! => {"msg": "bootstrap timeout", '
+            + '"rc": 4, "cmd": "openshift-install wait-for install-complete", '
+            + '"stderr": "failed to provision control-plane machines"}\n'
+            + "ok: [host1]\n" * 50
+            + "PLAY RECAP *******\n"
+            + "localhost : ok=74 changed=30 unreachable=0 failed=1 skipped=29\n"
+        )
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"undercloud": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {
+                                    "name": "Run playbook in container",
+                                    "duration": {},
+                                },
+                                "hosts": {
+                                    "undercloud": {
+                                        "failed": True,
+                                        "msg": "non-zero return code",
+                                        "rc": 2,
+                                        "stdout": inner_ansible,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert ft["inner_recap"] is not None
+        assert "failed=1" in ft["inner_recap"]
+        # Inner failures should be extracted
+        assert "inner_failures" in ft
+        assert len(ft["inner_failures"]) == 1
+        inner = ft["inner_failures"][0]
+        assert inner["host"] == "localhost"
+        assert inner["task"] == "install : Wait for OCP bootstrap"
+        assert inner["msg"] == "bootstrap timeout"
+        assert inner["rc"] == 4
+        assert "control-plane machines" in inner["stderr_excerpt"]
+
+    @respx.mock
+    async def test_no_inner_failures_when_recap_shows_zero_failures(self, mock_ctx):
+        """When inner_recap shows failed=0, inner_failures should not be present."""
+        build = make_build(result="FAILURE")
+        inner_ansible = (
+            "ok: [host1]\n" * 100
+            + "PLAY RECAP *******\n"
+            + "localhost : ok=10 changed=5 unreachable=0 failed=0\n"
+        )
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Run playbook", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "non-zero return code",
+                                        "rc": 2,
+                                        "stdout": inner_ansible,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert "inner_failures" not in ft
+
+
 class TestGetBuildFailuresDecodingError:
     @respx.mock
     async def test_decoding_error_gz_falls_back_to_json(self, mock_ctx):

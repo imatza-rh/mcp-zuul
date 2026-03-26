@@ -907,3 +907,80 @@ class TestExtractErrors:
 
         text = "normal output\n" * 500
         assert extract_errors(text) is None
+
+
+class TestExtractInnerFailures:
+    """Unit tests for extract_inner_failures()."""
+
+    def test_extracts_single_fatal_block(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        text = (
+            'TASK [install : Wait for cluster] ****\n'
+            'ok: [host1]\n'
+            'fatal: [localhost]: FAILED! => {"msg": "bootstrap timeout", "rc": 4, '
+            '"cmd": "openshift-install wait-for install-complete"}\n'
+            'PLAY RECAP ***\n'
+            'localhost: ok=5 failed=1\n'
+        )
+        result = extract_inner_failures(text, _pre_stripped=True)
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["host"] == "localhost"
+        assert result[0]["task"] == "install : Wait for cluster"
+        assert result[0]["msg"] == "bootstrap timeout"
+        assert result[0]["rc"] == 4
+        assert "openshift-install" in result[0]["cmd"]
+
+    def test_extracts_multiple_failures(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        text = (
+            'TASK [first_task] ****\n'
+            'fatal: [host1]: FAILED! => {"msg": "error 1"}\n'
+            'TASK [second_task] ****\n'
+            'fatal: [host2]: FAILED! => {"msg": "error 2"}\n'
+        )
+        result = extract_inner_failures(text, _pre_stripped=True)
+        assert result is not None
+        assert len(result) == 2
+        assert result[0]["task"] == "first_task"
+        assert result[1]["task"] == "second_task"
+
+    def test_returns_none_without_failed_blocks(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        text = 'TASK [test] ****\nok: [host]\nPLAY RECAP ***\nhost: ok=1 failed=0\n'
+        assert extract_inner_failures(text, _pre_stripped=True) is None
+
+    def test_handles_malformed_json(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        text = 'fatal: [host]: FAILED! => {broken json here\n'
+        result = extract_inner_failures(text, _pre_stripped=True)
+        assert result is not None
+        assert "raw" in result[0]
+
+    def test_includes_stderr_excerpt(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        text = (
+            'TASK [deploy] ****\n'
+            'fatal: [host]: FAILED! => {"msg": "failed", "rc": 1, '
+            '"stderr": "Error: machines not provisioned in time"}\n'
+        )
+        result = extract_inner_failures(text, _pre_stripped=True)
+        assert result is not None
+        assert "machines not provisioned" in result[0]["stderr_excerpt"]
+
+    def test_caps_at_max_failures(self):
+        from mcp_zuul.parsers import extract_inner_failures
+
+        lines = []
+        for i in range(10):
+            lines.append(f'TASK [task_{i}] ****')
+            lines.append(f'fatal: [host]: FAILED! => {{"msg": "err {i}"}}')
+        text = "\n".join(lines) + "\n"
+        result = extract_inner_failures(text, max_failures=3, _pre_stripped=True)
+        assert result is not None
+        assert len(result) == 3

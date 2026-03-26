@@ -4,6 +4,7 @@ Pure functions that extract structured failure data from Zuul build
 artifacts. No I/O - callers fetch the data, parsers transform it.
 """
 
+import json
 import re
 
 from .helpers import clean, strip_ansi
@@ -15,6 +16,13 @@ _ERROR_EXTRACT_RE = re.compile(
     r"fatal:\s*\[|level=error msg=|FAILED!|Error:|error\]:",
     re.IGNORECASE,
 )
+# Matches: fatal: [host]: FAILED! => {json...}
+_ANSIBLE_FATAL_RE = re.compile(
+    r"^fatal:\s*\[([^\]]+)\](?:\s*->\s*[^\]]*\])?\s*:\s*FAILED!\s*=>\s*(.+)",
+    re.MULTILINE,
+)
+# Matches: TASK [role : name] ***
+_ANSIBLE_TASK_RE = re.compile(r"^TASK\s*\[([^\]]+)\]", re.MULTILINE)
 
 
 def smart_truncate(text: str, max_size: int = 4000, *, _pre_stripped: bool = False) -> str | None:
@@ -62,6 +70,72 @@ def extract_inner_recap(text: str, *, _pre_stripped: bool = False) -> str | None
             break
         recap_lines.append(lines[j])
     return "\n".join(recap_lines)
+
+
+def extract_inner_failures(
+    text: str, *, max_failures: int = 5, _pre_stripped: bool = False
+) -> list[dict] | None:
+    """Extract structured failure data from nested Ansible output.
+
+    Parses ``fatal: [host]: FAILED! => {json}`` blocks from embedded
+    ansible-playbook stdout. For each block, extracts host, task name
+    (from the nearest preceding TASK header), msg, rc, cmd, and a
+    truncated stderr excerpt.
+
+    Called when inner_recap shows failures but the full stdout would be
+    lost to truncation. Returns None if no fatal blocks found.
+    """
+    if not text:
+        return None
+    cleaned = text if _pre_stripped else strip_ansi(text)
+    # Quick check before expensive regex
+    if "FAILED!" not in cleaned:
+        return None
+
+    # Build task name index: position -> task name
+    task_positions: list[tuple[int, str]] = []
+    for m in _ANSIBLE_TASK_RE.finditer(cleaned):
+        task_positions.append((m.start(), m.group(1)))
+
+    def _find_task_name(pos: int) -> str:
+        """Find the nearest TASK header before position."""
+        name = ""
+        for tpos, tname in task_positions:
+            if tpos > pos:
+                break
+            name = tname
+        return name
+
+    failures: list[dict] = []
+    for m in _ANSIBLE_FATAL_RE.finditer(cleaned):
+        if len(failures) >= max_failures:
+            break
+        host = m.group(1)
+        json_str = m.group(2).strip()
+        task_name = _find_task_name(m.start())
+
+        entry: dict = {"host": host, "task": task_name}
+        # Try to parse the JSON payload after =>
+        try:
+            data = json.loads(json_str)
+            if isinstance(data, dict):
+                for key in ("msg", "rc", "cmd"):
+                    if key in data and data[key] is not None:
+                        val = data[key]
+                        if isinstance(val, str) and len(val) > 500:
+                            val = val[:500] + "..."
+                        entry[key] = val
+                # Include a stderr excerpt if present
+                stderr = data.get("stderr", "")
+                if isinstance(stderr, str) and stderr:
+                    entry["stderr_excerpt"] = stderr[:500]
+        except (json.JSONDecodeError, ValueError):
+            # JSON spans multiple lines or is malformed - include raw snippet
+            entry["raw"] = json_str[:500]
+
+        failures.append(clean(entry))
+
+    return failures or None
 
 
 def extract_errors(
@@ -167,6 +241,17 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                             msg = smart_truncate(raw_msg, _pre_stripped=True)
                             if msg and raw_stderr and msg in _GENERIC_MSGS:
                                 msg = None
+                            inner_recap = extract_inner_recap(
+                                raw_stdout, _pre_stripped=True
+                            )
+                            # Extract inner failures when recap shows failed > 0
+                            inner_failures = None
+                            if inner_recap and "failed=" in inner_recap:
+                                # Check if any host has failed > 0
+                                if re.search(r"failed=[1-9]", inner_recap):
+                                    inner_failures = extract_inner_failures(
+                                        raw_stdout, _pre_stripped=True
+                                    )
                             ft = clean(
                                 {
                                     "task": task_name,
@@ -177,9 +262,8 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                                     "stderr": smart_truncate(raw_stderr, _pre_stripped=True),
                                     "stdout": smart_truncate(raw_stdout, _pre_stripped=True),
                                     "extracted_errors": extracted,
-                                    "inner_recap": extract_inner_recap(
-                                        raw_stdout, _pre_stripped=True
-                                    ),
+                                    "inner_recap": inner_recap,
+                                    "inner_failures": inner_failures,
                                     "invocation": _truncate_invocation(
                                         res.get("invocation", {}).get("module_args")
                                     ),
@@ -228,5 +312,6 @@ def grep_log_context(text: str, *, context_lines: int = 3) -> list[list[dict]]:
 _smart_truncate = smart_truncate
 _extract_inner_recap = extract_inner_recap
 _extract_errors = extract_errors
+_extract_inner_failures = extract_inner_failures
 _parse_playbooks = parse_playbooks
 _grep_log_context = grep_log_context
