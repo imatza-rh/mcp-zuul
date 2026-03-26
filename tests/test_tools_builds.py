@@ -627,6 +627,107 @@ class TestExtractedErrors:
         assert any("deploy failed" in err for err in ft["extracted_errors"])
 
 
+class TestSessionFindingsScenario:
+    """End-to-end test reproducing the exact scenario from docs/session-findings.md."""
+
+    @respx.mock
+    async def test_nested_playbook_with_buried_error(self, mock_ctx):
+        """Reproduce F1+F3: 1.7M stdout, error at 850K, with nested PLAY RECAP.
+
+        Before the fix: diagnose_build returned inner_recap="failed=1" but
+        couldn't show WHAT failed (error lost in truncated middle).
+        After the fix: extracted_errors and inner_failures surface the root cause.
+        """
+        build = make_build(result="FAILURE")
+        # Build realistic nested ansible output
+        ansible_header = "Using /etc/ansible/ansible.cfg as config file\n"
+        ok_tasks = "".join(f"TASK [task_{i}] ****\nok: [osp-undercloud-0]\n" for i in range(200))
+        # The buried error at ~850K position
+        fatal_block = (
+            "TASK [install : Wait for OCP bootstrap] ****\n"
+            'fatal: [localhost]: FAILED! => {"changed": false, '
+            '"cmd": "openshift-install create cluster --dir /home/zuul/ocp --log-level info", '
+            '"msg": "non-zero return code", "rc": 4, '
+            '"stderr": "failed to provision control-plane machines: '
+            'machines are not ready: client rate limiter Wait returned an error"}\n'
+        )
+        more_tasks = "".join(
+            f"TASK [task_{i}] ****\nok: [osp-undercloud-0]\n" for i in range(200, 400)
+        )
+        recap = (
+            "PLAY RECAP *******\n"
+            "osp-undercloud-0: ok=26 changed=10 unreachable=0 failed=1 skipped=5\n"
+        )
+        profile_tasks = "".join(
+            f"containers.podman.podman_container_exec -- {300 + i}.00s\n" for i in range(50)
+        )
+        nested_stdout = ansible_header + ok_tasks + fatal_block + more_tasks + recap + profile_tasks
+        # Verify this is realistically large
+        assert len(nested_stdout) > 10000, "Must be large enough to trigger truncation"
+
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/home/zuul/ansible/run.yaml",
+                "stats": {"osp-undercloud-0": {"failures": 1, "ok": 26}},
+                "plays": [
+                    {
+                        "play": {"name": "Run shiftstack playbook"},
+                        "tasks": [
+                            {
+                                "task": {
+                                    "name": "Run shiftstack playbook with host override",
+                                    "duration": {"end": "2025-01-01T02:20:00"},
+                                },
+                                "hosts": {
+                                    "osp-undercloud-0": {
+                                        "failed": True,
+                                        "msg": "non-zero return code",
+                                        "rc": 2,
+                                        "stdout": nested_stdout,
+                                        "stderr": "Please review the log for errors.",
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"no fatal lines")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+
+        # The stdout IS truncated (error is in the omitted middle)
+        assert "omitted" in ft["stdout"]
+
+        # But the error is preserved in extracted_errors
+        assert "extracted_errors" in ft
+        assert any("control-plane machines" in e for e in ft["extracted_errors"])
+
+        # Inner recap shows the failure
+        assert "failed=1" in ft["inner_recap"]
+
+        # Inner failures has the structured root cause
+        assert "inner_failures" in ft
+        inner = ft["inner_failures"][0]
+        assert inner["host"] == "localhost"
+        assert inner["task"] == "install : Wait for OCP bootstrap"
+        assert inner["rc"] == 4
+        assert "control-plane machines" in inner.get("stderr_excerpt", "")
+
+        # Classification should use inner failure details
+        assert result["classification"] == "REAL_FAILURE"
+
+
 class TestInnerFailures:
     """Tests for inner_failures — structured data from nested ansible playbooks."""
 

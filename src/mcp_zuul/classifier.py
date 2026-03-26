@@ -24,7 +24,7 @@ from typing import Any
 
 _INFRA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # SSH / connectivity
-    (re.compile(r"UNREACHABLE", re.IGNORECASE), "SSH unreachable (transient network)"),
+    (re.compile(r"UNREACHABLE!", re.IGNORECASE), "SSH unreachable (transient network)"),
     (
         re.compile(r"kex_exchange_identification|ssh_exchange_identification", re.IGNORECASE),
         "SSH key exchange failed (transient)",
