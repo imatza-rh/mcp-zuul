@@ -159,7 +159,8 @@ async def get_build_failures(
     """Analyze a failed build — returns exactly which task failed, on which host, with error message and return code.
 
     Parses Zuul's structured job-output.json for precise failure data.
-    Start here when investigating build failures — much more accurate than log parsing.
+    For most use cases, prefer diagnose_build which includes all this data
+    plus failure classification, log context, and timing details.
 
     Failure responses include ref_url/project/change and files_in_failure
     (file paths extracted from error output). Use these to check whether
