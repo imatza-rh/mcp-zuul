@@ -916,12 +916,12 @@ class TestExtractInnerFailures:
         from mcp_zuul.parsers import extract_inner_failures
 
         text = (
-            'TASK [install : Wait for cluster] ****\n'
-            'ok: [host1]\n'
+            "TASK [install : Wait for cluster] ****\n"
+            "ok: [host1]\n"
             'fatal: [localhost]: FAILED! => {"msg": "bootstrap timeout", "rc": 4, '
             '"cmd": "openshift-install wait-for install-complete"}\n'
-            'PLAY RECAP ***\n'
-            'localhost: ok=5 failed=1\n'
+            "PLAY RECAP ***\n"
+            "localhost: ok=5 failed=1\n"
         )
         result = extract_inner_failures(text, _pre_stripped=True)
         assert result is not None
@@ -936,9 +936,9 @@ class TestExtractInnerFailures:
         from mcp_zuul.parsers import extract_inner_failures
 
         text = (
-            'TASK [first_task] ****\n'
+            "TASK [first_task] ****\n"
             'fatal: [host1]: FAILED! => {"msg": "error 1"}\n'
-            'TASK [second_task] ****\n'
+            "TASK [second_task] ****\n"
             'fatal: [host2]: FAILED! => {"msg": "error 2"}\n'
         )
         result = extract_inner_failures(text, _pre_stripped=True)
@@ -950,13 +950,13 @@ class TestExtractInnerFailures:
     def test_returns_none_without_failed_blocks(self):
         from mcp_zuul.parsers import extract_inner_failures
 
-        text = 'TASK [test] ****\nok: [host]\nPLAY RECAP ***\nhost: ok=1 failed=0\n'
+        text = "TASK [test] ****\nok: [host]\nPLAY RECAP ***\nhost: ok=1 failed=0\n"
         assert extract_inner_failures(text, _pre_stripped=True) is None
 
     def test_handles_malformed_json(self):
         from mcp_zuul.parsers import extract_inner_failures
 
-        text = 'fatal: [host]: FAILED! => {broken json here\n'
+        text = "fatal: [host]: FAILED! => {broken json here\n"
         result = extract_inner_failures(text, _pre_stripped=True)
         assert result is not None
         assert "raw" in result[0]
@@ -965,7 +965,7 @@ class TestExtractInnerFailures:
         from mcp_zuul.parsers import extract_inner_failures
 
         text = (
-            'TASK [deploy] ****\n'
+            "TASK [deploy] ****\n"
             'fatal: [host]: FAILED! => {"msg": "failed", "rc": 1, '
             '"stderr": "Error: machines not provisioned in time"}\n'
         )
@@ -978,7 +978,7 @@ class TestExtractInnerFailures:
 
         lines = []
         for i in range(10):
-            lines.append(f'TASK [task_{i}] ****')
+            lines.append(f"TASK [task_{i}] ****")
             lines.append(f'fatal: [host]: FAILED! => {{"msg": "err {i}"}}')
         text = "\n".join(lines) + "\n"
         result = extract_inner_failures(text, max_failures=3, _pre_stripped=True)

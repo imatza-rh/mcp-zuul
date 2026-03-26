@@ -538,7 +538,11 @@ class TestExtractedErrors:
     async def test_extracted_errors_from_stderr(self, mock_ctx):
         """Error patterns in long stderr should also be extracted."""
         build = make_build(result="FAILURE")
-        long_stderr = "normal log output line\n" * 300 + "level=error msg=cluster bootstrap timed out\n" + "more output\n" * 300
+        long_stderr = (
+            "normal log output line\n" * 300
+            + "level=error msg=cluster bootstrap timed out\n"
+            + "more output\n" * 300
+        )
         job_output = [
             {
                 "phase": "run",

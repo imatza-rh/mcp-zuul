@@ -138,9 +138,7 @@ def extract_inner_failures(
     return failures or None
 
 
-def extract_errors(
-    text: str, *, max_errors: int = 5, context_chars: int = 200
-) -> list[str] | None:
+def extract_errors(text: str, *, max_errors: int = 5, context_chars: int = 200) -> list[str] | None:
     """Extract error-bearing lines from text with surrounding context.
 
     Scans the full text for error patterns (fatal, FAILED, level=error)
@@ -241,17 +239,17 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                             msg = smart_truncate(raw_msg, _pre_stripped=True)
                             if msg and raw_stderr and msg in _GENERIC_MSGS:
                                 msg = None
-                            inner_recap = extract_inner_recap(
-                                raw_stdout, _pre_stripped=True
-                            )
+                            inner_recap = extract_inner_recap(raw_stdout, _pre_stripped=True)
                             # Extract inner failures when recap shows failed > 0
                             inner_failures = None
-                            if inner_recap and "failed=" in inner_recap:
-                                # Check if any host has failed > 0
-                                if re.search(r"failed=[1-9]", inner_recap):
-                                    inner_failures = extract_inner_failures(
-                                        raw_stdout, _pre_stripped=True
-                                    )
+                            if (
+                                inner_recap
+                                and "failed=" in inner_recap
+                                and re.search(r"failed=[1-9]", inner_recap)
+                            ):
+                                inner_failures = extract_inner_failures(
+                                    raw_stdout, _pre_stripped=True
+                                )
                             ft = clean(
                                 {
                                     "task": task_name,
