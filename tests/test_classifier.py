@@ -201,6 +201,58 @@ class TestClassifyFailure:
         c = Classification("INFRA_FLAKE", "test", "high", True)
         assert c.category == "INFRA_FLAKE"
 
+    def test_inner_failures_used_for_classification(self):
+        """Infra pattern in inner_failures should classify as INFRA_FLAKE."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "task": "Run playbook in container",
+                "inner_failures": [
+                    {
+                        "host": "localhost",
+                        "task": "Wait for OCP",
+                        "msg": "Connection timed out waiting for cluster",
+                    }
+                ],
+            }
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+        assert "timed out" in result.reason.lower()
+
+    def test_inner_failures_fallback_reason_includes_inner_task(self):
+        """When no pattern matches, fallback reason should use inner failure details."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "task": "Run playbook in container",
+                "inner_failures": [
+                    {
+                        "host": "localhost",
+                        "task": "install : Wait for bootstrap",
+                        "msg": "bootstrap timeout (rc=4)",
+                    }
+                ],
+            }
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "REAL_FAILURE"
+        assert "bootstrap timeout" in result.reason
+        assert "Inner playbook" in result.reason
+
+    def test_extracted_errors_used_for_classification(self):
+        """Infra pattern in extracted_errors should classify as INFRA_FLAKE."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "task": "Deploy",
+                "extracted_errors": ["fatal: [host]: UNREACHABLE! host is down"],
+            }
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+        assert "UNREACHABLE" in result.reason or "SSH" in result.reason
+
 
 class TestDetermineFailurePhase:
     def test_run_phase_failure(self):

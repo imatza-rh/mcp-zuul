@@ -247,10 +247,21 @@ def classify_failure(
         first = failed_tasks[0]
         task_name = first.get("task", "unknown task")
         msg = (first.get("msg") or "")[:100]
+        # Use inner failure details for a more specific reason
+        inner_list = first.get("inner_failures") or []
+        if inner_list:
+            inner = inner_list[0]
+            inner_task = inner.get("task", "")
+            inner_msg = (inner.get("msg") or inner.get("raw") or "")[:100]
+            reason = f"Inner playbook: '{inner_task}' failed: {inner_msg}".rstrip()
+            confidence = "medium"
+        else:
+            reason = f"Task '{task_name}' failed: {msg}".rstrip()
+            confidence = "medium"
         return Classification(
             category="REAL_FAILURE",
-            reason=f"Task '{task_name}' failed: {msg}".rstrip(),
-            confidence="medium",
+            reason=reason,
+            confidence=confidence,
             retryable=False,
         )
 
@@ -311,18 +322,34 @@ _MAX_ERROR_TEXT = 50_000  # Cap total text scanned by regex patterns
 
 
 def _collect_error_text(failed_tasks: list[dict[str, Any]]) -> str:
-    """Collect searchable text from failed task fields."""
-    parts = []
+    """Collect searchable text from failed task fields.
+
+    Includes inner_failures and extracted_errors so the classifier can
+    see root causes that would otherwise be lost to stdout truncation.
+    """
+    parts: list[str] = []
     size = 0
+
+    def _add(val: Any, limit: int = 2000) -> None:
+        nonlocal size
+        if not val:
+            return
+        chunk = str(val)[:limit]
+        parts.append(chunk)
+        size += len(chunk)
+
     for t in failed_tasks:
         for field in ("msg", "stderr", "stdout"):
-            val = t.get(field)
-            if val:
-                chunk = str(val)[:2000]
-                parts.append(chunk)
-                size += len(chunk)
-                if size >= _MAX_ERROR_TEXT:
-                    return " ".join(parts)
+            _add(t.get(field))
+            if size >= _MAX_ERROR_TEXT:
+                return " ".join(parts)
+        # Inner failures from nested ansible playbooks
+        for inner in t.get("inner_failures") or []:
+            for field in ("msg", "stderr_excerpt", "cmd", "raw"):
+                _add(inner.get(field), 500)
+        # Extracted errors from pre-truncation scan
+        for err in t.get("extracted_errors") or []:
+            _add(err, 500)
     return " ".join(parts)
 
 
