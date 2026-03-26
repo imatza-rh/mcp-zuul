@@ -233,8 +233,12 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                             raw_stderr = strip_ansi(str(res.get("stderr", "")))
                             raw_msg = strip_ansi(str(res.get("msg", "")))
                             # Extract errors from full text BEFORE truncation
-                            # so patterns in the middle (lost by smart_truncate) are preserved
-                            extracted = extract_errors(raw_stdout) or extract_errors(raw_stderr)
+                            # so patterns in the middle (lost by smart_truncate) are preserved.
+                            # Check both stdout and stderr — stdout errors alone may be
+                            # false positives while stderr has the real root cause.
+                            stdout_errs = extract_errors(raw_stdout) or []
+                            stderr_errs = extract_errors(raw_stderr) or []
+                            extracted = (stdout_errs + stderr_errs)[:5] or None
                             # Suppress generic msg when stderr has the real error
                             msg = smart_truncate(raw_msg, _pre_stripped=True)
                             if msg and raw_stderr and msg in _GENERIC_MSGS:

@@ -909,6 +909,55 @@ class TestExtractErrors:
         assert extract_errors(text) is None
 
 
+class TestExtractErrorsCombined:
+    """Tests for combined stdout+stderr error extraction in parse_playbooks."""
+
+    def test_both_stdout_and_stderr_errors_included(self):
+        """Errors from both stdout and stderr should be in extracted_errors."""
+        from mcp_zuul.parsers import parse_playbooks
+
+        long_stdout = (
+            "normal task output line\n" * 300
+            + 'fatal: [host]: FAILED! => {"msg": "stdout err"}\n'
+            + "more task output\n" * 300
+        )
+        long_stderr = (
+            "normal log output line here\n" * 300
+            + "level=error msg=stderr error here\n"
+            + "more log output\n" * 300
+        )
+        data = [
+            {
+                "phase": "run",
+                "playbook": "/run.yaml",
+                "stats": {"h": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Task", "duration": {}},
+                                "hosts": {
+                                    "h": {
+                                        "failed": True,
+                                        "msg": "err",
+                                        "stdout": long_stdout,
+                                        "stderr": long_stderr,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        _, failed = parse_playbooks(data)
+        assert len(failed) == 1
+        errs = failed[0].get("extracted_errors", [])
+        assert any("stdout err" in e for e in errs), "Should include stdout error"
+        assert any("stderr error" in e for e in errs), "Should include stderr error"
+
+
 class TestExtractInnerFailures:
     """Unit tests for extract_inner_failures()."""
 
