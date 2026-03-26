@@ -11,6 +11,10 @@ from .helpers import clean, strip_ansi
 _FATAL_PATTERN = re.compile(r"fatal:|FAILED!", re.IGNORECASE)
 _PLAY_RECAP_RE = re.compile(r"PLAY RECAP \*+")
 _GENERIC_MSGS = frozenset({"non-zero return code", "MODULE FAILURE"})
+_ERROR_EXTRACT_RE = re.compile(
+    r"fatal:\s*\[|level=error msg=|FAILED!|Error:|error\]:",
+    re.IGNORECASE,
+)
 
 
 def smart_truncate(text: str, max_size: int = 4000, *, _pre_stripped: bool = False) -> str | None:
@@ -58,6 +62,34 @@ def extract_inner_recap(text: str, *, _pre_stripped: bool = False) -> str | None
             break
         recap_lines.append(lines[j])
     return "\n".join(recap_lines)
+
+
+def extract_errors(
+    text: str, *, max_errors: int = 5, context_chars: int = 200
+) -> list[str] | None:
+    """Extract error-bearing lines from text with surrounding context.
+
+    Scans the full text for error patterns (fatal, FAILED, level=error)
+    and returns matching lines with context. Designed to be called on the
+    full stdout/stderr BEFORE smart_truncate discards the middle section.
+
+    Returns None if no errors found (so clean() strips the field).
+    """
+    if not text or len(text) <= 4000:
+        # Short text won't be truncated — no need to extract
+        return None
+    matches: list[str] = []
+    for m in _ERROR_EXTRACT_RE.finditer(text):
+        if len(matches) >= max_errors:
+            break
+        start = text.rfind("\n", max(0, m.start() - context_chars), m.start())
+        start = start + 1 if start >= 0 else max(0, m.start() - context_chars)
+        end = text.find("\n", m.end(), m.end() + context_chars)
+        end = end if end >= 0 else min(len(text), m.end() + context_chars)
+        snippet = text[start:end].strip()
+        if snippet and snippet not in matches:
+            matches.append(snippet)
+    return matches or None
 
 
 def _truncate_invocation(module_args: dict | None, max_size: int = 4000) -> dict | None:
@@ -128,6 +160,9 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                             raw_stdout = strip_ansi(str(res.get("stdout", "")))
                             raw_stderr = strip_ansi(str(res.get("stderr", "")))
                             raw_msg = strip_ansi(str(res.get("msg", "")))
+                            # Extract errors from full text BEFORE truncation
+                            # so patterns in the middle (lost by smart_truncate) are preserved
+                            extracted = extract_errors(raw_stdout) or extract_errors(raw_stderr)
                             # Suppress generic msg when stderr has the real error
                             msg = smart_truncate(raw_msg, _pre_stripped=True)
                             if msg and raw_stderr and msg in _GENERIC_MSGS:
@@ -141,6 +176,7 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                                     "cmd": res.get("cmd"),
                                     "stderr": smart_truncate(raw_stderr, _pre_stripped=True),
                                     "stdout": smart_truncate(raw_stdout, _pre_stripped=True),
+                                    "extracted_errors": extracted,
                                     "inner_recap": extract_inner_recap(
                                         raw_stdout, _pre_stripped=True
                                     ),
@@ -191,5 +227,6 @@ def grep_log_context(text: str, *, context_lines: int = 3) -> list[list[dict]]:
 # Backward-compatible aliases (tests and tools import underscore-prefixed names)
 _smart_truncate = smart_truncate
 _extract_inner_recap = extract_inner_recap
+_extract_errors = extract_errors
 _parse_playbooks = parse_playbooks
 _grep_log_context = grep_log_context

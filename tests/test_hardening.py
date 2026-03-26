@@ -850,3 +850,60 @@ class TestSmartTruncateSize:
         assert result is not None
         assert "[..." in result
         assert "chars omitted" in result
+
+
+class TestExtractErrors:
+    """Unit tests for extract_errors()."""
+
+    def test_returns_none_for_short_text(self):
+        from mcp_zuul.parsers import extract_errors
+
+        assert extract_errors("short text with fatal: error") is None
+
+    def test_extracts_fatal_pattern(self):
+        from mcp_zuul.parsers import extract_errors
+
+        filler = "normal line\n" * 300
+        text = filler + 'fatal: [host]: FAILED! => {"msg": "timeout"}\n' + filler
+        result = extract_errors(text)
+        assert result is not None
+        assert len(result) == 1
+        assert "timeout" in result[0]
+
+    def test_extracts_level_error_pattern(self):
+        from mcp_zuul.parsers import extract_errors
+
+        filler = "normal\n" * 300
+        text = filler + "level=error msg=bootstrap failed\n" + filler
+        result = extract_errors(text)
+        assert result is not None
+        assert any("bootstrap failed" in e for e in result)
+
+    def test_caps_at_max_errors(self):
+        from mcp_zuul.parsers import extract_errors
+
+        filler = "normal output line\n" * 300
+        errors = "".join(
+            f'fatal: [host-{i}]: FAILED! => {{"msg": "error {i}"}}\n' for i in range(20)
+        )
+        text = filler + errors + filler
+        result = extract_errors(text, max_errors=3)
+        assert result is not None
+        assert len(result) == 3
+
+    def test_deduplicates_identical_matches(self):
+        from mcp_zuul.parsers import extract_errors
+
+        filler = "normal output line with content\n" * 300
+        # Same error appearing twice at different positions
+        err = 'fatal: [host]: FAILED! => {"msg": "same error"}\n'
+        text = filler + err + filler + err + filler
+        result = extract_errors(text)
+        assert result is not None
+        assert len(result) == 1
+
+    def test_returns_none_when_no_patterns_match(self):
+        from mcp_zuul.parsers import extract_errors
+
+        text = "normal output\n" * 500
+        assert extract_errors(text) is None

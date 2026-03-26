@@ -467,6 +467,162 @@ class TestGetBuildFailures:
         assert "\x1b" not in (ft.get("stdout") or "")
 
 
+class TestExtractedErrors:
+    """Tests for extracted_errors — error patterns preserved from truncated stdout."""
+
+    @respx.mock
+    async def test_errors_extracted_from_middle_of_long_stdout(self, mock_ctx):
+        """Errors in the middle of 1.7M stdout should be extracted before truncation."""
+        build = make_build(result="FAILURE")
+        # Simulate the real scenario: error at position ~850K in 1.7M stdout
+        filler_before = "ok: [host] some normal output\n" * 300
+        error_block = 'fatal: [localhost]: FAILED! => {"msg": "bootstrap timeout", "rc": 4}\n'
+        filler_after = "ok: [host] more output\n" * 300
+        long_output = filler_before + error_block + filler_after
+        assert len(long_output) > 4000  # must be long enough to trigger truncation
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Run inner playbook", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "non-zero return code",
+                                        "rc": 2,
+                                        "stdout": long_output,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        # The error IS in the truncated stdout's omitted section
+        assert "omitted" in ft["stdout"]
+        # But it's preserved in extracted_errors
+        assert "extracted_errors" in ft
+        assert any("bootstrap timeout" in err for err in ft["extracted_errors"])
+
+    @respx.mock
+    async def test_no_extracted_errors_for_short_stdout(self, mock_ctx):
+        """Short stdout shouldn't have extracted_errors (it's not truncated)."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        # Short stderr "Error: connection refused" is under 4000 chars — not truncated
+        assert "extracted_errors" not in ft
+
+    @respx.mock
+    async def test_extracted_errors_from_stderr(self, mock_ctx):
+        """Error patterns in long stderr should also be extracted."""
+        build = make_build(result="FAILURE")
+        long_stderr = "normal log output line\n" * 300 + "level=error msg=cluster bootstrap timed out\n" + "more output\n" * 300
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Install", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "non-zero return code",
+                                        "rc": 1,
+                                        "stdout": "short output",
+                                        "stderr": long_stderr,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert "extracted_errors" in ft
+        assert any("bootstrap timed out" in err for err in ft["extracted_errors"])
+
+    @respx.mock
+    async def test_diagnose_build_includes_extracted_errors(self, mock_ctx):
+        """diagnose_build should also include extracted_errors."""
+        build = make_build(result="FAILURE")
+        filler = "ok: [host]\n" * 300
+        error_line = 'fatal: [host]: FAILED! => {"msg": "deploy failed"}\n'
+        long_output = filler + error_line + filler
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "/path/to/run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Deploy", "duration": {}},
+                                "hosts": {
+                                    "ctrl": {
+                                        "failed": True,
+                                        "msg": "err",
+                                        "rc": 1,
+                                        "stdout": long_output,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"no fatal lines here")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+        ft = result["failed_tasks"][0]
+        assert "extracted_errors" in ft
+        assert any("deploy failed" in err for err in ft["extracted_errors"])
+
+
 class TestGetBuildFailuresDecodingError:
     @respx.mock
     async def test_decoding_error_gz_falls_back_to_json(self, mock_ctx):
