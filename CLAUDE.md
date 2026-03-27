@@ -94,32 +94,14 @@ CI tests against Python 3.11, 3.12, 3.13.
 
 ### Release
 
-Version lives in `pyproject.toml` and `server.json` (2 occurrences). Commit convention: `[CHORE] Bump version to X.Y.Z`.
+Version lives in `pyproject.toml` and `server.json` (2 occurrences). Automated via `release.sh`.
 
 ```bash
-# 1. Bump version
-#    Edit pyproject.toml (line 3) and server.json (lines 4, 15)
-
-# 2. Validate
-uv run pytest tests/ -v && uv run ruff check src/ tests/ && uv run mypy src/mcp_zuul/
-
-# 3. Commit and push
-git add pyproject.toml server.json
-git commit -s -m "[CHORE] Bump version to X.Y.Z"
-git push origin main
-
-# 4. Tag (triggers Docker multi-platform build via docker.yml)
-git tag -a vX.Y.Z -m "vX.Y.Z: brief summary"
-git push origin vX.Y.Z
-
-# 5. Publish to PyPI
-uv build && uv publish  # requires UV_PUBLISH_TOKEN
-
-# 6. Publish to MCP Registry (manual workflow dispatch)
-gh workflow run publish-registry.yml
-
-# 7. Create GitHub Release
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "changelog"
+./release.sh 0.5.0          # explicit version
+./release.sh patch          # auto-bump (patch|minor|major)
+make release V=minor        # via Makefile
 ```
+
+The script runs: pre-flight checks → validate (test+lint+format+mypy) → bump versions → commit → push → tag (triggers Docker) → PyPI publish → GitHub Release (from CHANGELOG.md) → MCP Registry workflow. Requires CHANGELOG.md entry for the target version.
 
 After release, update tool counts and version in CLAUDE.md if tools were added.
