@@ -129,7 +129,7 @@ info "Publishing to PyPI"
 rm -rf dist/
 uv build
 
-UV_PUBLISH_TOKEN=$(security find-generic-password -a pypi -s mcp-zuul -w) uv publish
+( set +x; UV_PUBLISH_TOKEN=$(security find-generic-password -a pypi -s mcp-zuul -w) uv publish )
 ok "Published to PyPI"
 
 # ── GitHub Release ───────────────────────────────────────────────────────────
