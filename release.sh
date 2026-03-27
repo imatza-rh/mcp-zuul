@@ -68,6 +68,9 @@ security find-generic-password -a pypi -s mcp-zuul -w >/dev/null 2>&1 \
 
 git tag -l "v${VERSION}" | grep -q . && die "Tag v${VERSION} already exists"
 
+grep -q "^## \\[${VERSION}\\]" CHANGELOG.md \
+    || die "No CHANGELOG.md entry for [${VERSION}] - add it before releasing"
+
 ok "All pre-flight checks passed"
 
 # ── Validate ─────────────────────────────────────────────────────────────────
