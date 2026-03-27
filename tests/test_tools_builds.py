@@ -1149,6 +1149,23 @@ class TestListBuildsets:
         result = json.loads(await list_buildsets(mock_ctx, include_builds=True))
         assert "builds" in result["buildsets"][0]
 
+    @respx.mock
+    async def test_include_builds_has_more_when_capped(self, mock_ctx):
+        """When include_builds caps at 10, has_more should reflect trimmed data."""
+        # 15 buildsets returned, user requested limit=20
+        buildsets = [make_buildset(uuid=f"bs-{i}") for i in range(15)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=buildsets)
+        )
+        for i in range(10):
+            respx.get(f"https://zuul.example.com/api/tenant/test-tenant/buildset/bs-{i}").mock(
+                return_value=httpx.Response(200, json=make_buildset(uuid=f"bs-{i}"))
+            )
+        result = json.loads(await list_buildsets(mock_ctx, limit=20, include_builds=True))
+        # Only 10 returned due to include_builds cap, but 15 exist
+        assert result["count"] == 10
+        assert result["has_more"] is True
+
 
 class TestGetJobDurations:
     @respx.mock

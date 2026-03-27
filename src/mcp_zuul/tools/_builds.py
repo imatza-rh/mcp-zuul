@@ -46,15 +46,12 @@ def _ref_meta(build: dict) -> dict:
 def _extract_file_paths(failed_tasks: list[dict]) -> list[str] | None:
     """Extract repo-relative file paths mentioned in failure output.
 
-    Scans msg, stdout, stderr of failed tasks for paths like
-    ``roles/deploy_loki/README.md``. Returns sorted unique paths,
-    or None if no paths found. Used to help consumers cross-reference
-    failing files against the change's file list.
-
-    Note: operates on already-truncated task fields (max 4000 chars
-    each via smart_truncate). Paths in the omitted middle section of
-    very long output will not be found. Treat results as hints, not
-    a complete inventory.
+    Scans msg, stdout, stderr of failed tasks plus extracted_errors
+    (pre-truncation error snippets) and inner_failures (nested playbook
+    failure details) for paths like ``roles/deploy_loki/README.md``.
+    Returns sorted unique paths, or None if no paths found. Used to
+    help consumers cross-reference failing files against the change's
+    file list. Treat results as hints, not a complete inventory.
     """
     paths: set[str] = set()
 
@@ -426,8 +423,10 @@ async def list_buildsets(
     trimmed = data[:limit]
 
     if include_builds:
-        limit = min(limit, 10)  # cap detail fetches to prevent huge responses
-        trimmed = trimmed[:limit]
+        cap = min(limit, 10)  # cap detail fetches to prevent huge responses
+        if len(trimmed) > cap:
+            has_more = True  # more data available than returned
+        trimmed = trimmed[:cap]
     if include_builds and trimmed:
         sem = asyncio.Semaphore(10)
 
