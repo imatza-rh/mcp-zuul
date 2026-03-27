@@ -530,3 +530,65 @@ class TestTailBuildLog:
         result = json.loads(await tail_build_log(mock_ctx, uuid="in-prog"))
         assert "error" in result
         assert "in progress" in result["error"]
+
+
+class TestCorruptedGzipRetry:
+    """Tests for corrupted gzip retry (stream_log retries with Accept-Encoding: identity)."""
+
+    @respx.mock
+    async def test_tail_retries_on_corrupted_gzip(self, mock_ctx):
+        """tail_build_log should retry with identity encoding on DecodingError."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # First call raises DecodingError, second call succeeds
+        call_count = 0
+
+        def _mock_handler(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.DecodingError("Error -3 while decompressing data")
+            return httpx.Response(200, text="line 1\nline 2\nline 3")
+
+        respx.get(f"{build['log_url']}job-output.txt").mock(side_effect=_mock_handler)
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=10))
+        assert "error" not in result
+        assert result["count"] == 3
+        assert call_count == 2  # first call failed, second succeeded
+
+    @respx.mock
+    async def test_get_build_log_retries_on_corrupted_gzip(self, mock_ctx):
+        """get_build_log should also retry via stream_log."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        call_count = 0
+
+        def _mock_handler(request):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.DecodingError("corrupted")
+            return httpx.Response(200, text="ok\nFAILED! error\nmore")
+
+        respx.get(f"{build['log_url']}job-output.txt").mock(side_effect=_mock_handler)
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert "error" not in result
+        assert result["total_lines"] == 3
+
+    @respx.mock
+    async def test_persistent_corruption_still_returns_error(self, mock_ctx):
+        """If retry also fails, the error should propagate to the user."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            side_effect=httpx.DecodingError("persistent corruption")
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1"))
+        assert "error" in result
+        assert "decompression failed" in result["error"]

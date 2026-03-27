@@ -263,6 +263,9 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
 async def stream_log(a: AppContext, url: str) -> tuple[bytes, bool]:
     """Stream a log file with Kerberos re-auth, size-limited to 10 MB.
 
+    On corrupted gzip (DecodingError), retries with Accept-Encoding: identity
+    so the server sends raw bytes instead of broken Content-Encoding: gzip.
+
     Returns:
         Tuple of (content_bytes, truncated_bool).
 
@@ -270,7 +273,17 @@ async def stream_log(a: AppContext, url: str) -> tuple[bytes, bool]:
         httpx.HTTPStatusError: on non-404 HTTP errors
         FileNotFoundError: when the log file returns 404
     """
-    resp, truncated = await _stream_response(a, url, max_bytes=_MAX_LOG_BYTES)
+    try:
+        resp, truncated = await _stream_response(a, url, max_bytes=_MAX_LOG_BYTES)
+    except httpx.DecodingError:
+        log.info("DecodingError streaming %s, retrying without compression", url)
+        try:
+            resp, truncated = await _stream_response(
+                a, url, max_bytes=_MAX_LOG_BYTES, headers={"Accept-Encoding": "identity"}
+            )
+        except httpx.DecodingError:
+            log.warning("DecodingError persists after identity retry for %s", url)
+            raise
     if resp.status_code == 404:
         raise FileNotFoundError(url)
     if resp.status_code >= 400:
