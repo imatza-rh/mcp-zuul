@@ -53,7 +53,7 @@ resources.py       →  3 @mcp.resource() templates (zuul://{tenant}/build|job|p
 helpers.py         →  AppContext dataclass, api() HTTP wrapper, parse_zuul_url(), utility functions
 config.py          →  Config dataclass loaded from env vars (ZUUL_URL, MCP_TRANSPORT, ZUUL_ENABLED_TOOLS, etc.)
 auth.py            →  Kerberos/SPNEGO authentication (drives OIDC redirect chain)
-parsers.py         →  parse_playbooks(), smart_truncate(), extract_inner_recap(), grep_log_context()
+parsers.py         →  parse_playbooks(), smart_truncate(), extract_inner_recap(), extract_inner_failures(), extract_errors(), grep_log_context()
 formatters.py      →  Token-efficient formatters (fmt_build, fmt_buildset, fmt_project, fmt_job_variants, etc.)
 errors.py          →  @handle_errors decorator wrapping all tools with uniform error→JSON handling
 classifier.py      →  Failure classification (INFRA_FLAKE, REAL_FAILURE, CONFIG_ERROR, UNKNOWN)
