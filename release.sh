@@ -56,9 +56,8 @@ info "Pre-flight checks"
 [[ -z "$(git status --porcelain)" ]] || die "Working tree is dirty"
 
 git fetch origin main --quiet
-LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
-[[ "$LOCAL" == "$REMOTE" ]] || die "Local main is not up to date with origin/main (rebase first)"
+BEHIND=$(git rev-list --count HEAD..origin/main)
+[[ "$BEHIND" -eq 0 ]] || die "Local main is ${BEHIND} commits behind origin/main (rebase first)"
 
 command -v uv  >/dev/null || die "uv not found"
 command -v gh  >/dev/null || die "gh not found"
