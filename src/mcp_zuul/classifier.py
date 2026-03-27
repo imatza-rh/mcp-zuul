@@ -345,10 +345,14 @@ def _collect_error_text(failed_tasks: list[dict[str, Any]]) -> str:
                 return " ".join(parts)
         # Inner failures from nested ansible playbooks
         for inner in t.get("inner_failures") or []:
+            if size >= _MAX_ERROR_TEXT:
+                break
             for field in ("msg", "stderr_excerpt", "cmd", "raw"):
                 _add(inner.get(field), 500)
         # Extracted errors from pre-truncation scan
         for err in t.get("extracted_errors") or []:
+            if size >= _MAX_ERROR_TEXT:
+                break
             _add(err, 500)
     return " ".join(parts)
 

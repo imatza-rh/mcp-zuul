@@ -254,6 +254,29 @@ class TestClassifyFailure:
         assert "UNREACHABLE" in result.reason or "SSH" in result.reason
 
 
+class TestCollectErrorTextSizeCap:
+    """Verify _collect_error_text respects _MAX_ERROR_TEXT limit."""
+
+    def test_inner_failures_respect_size_cap(self):
+        from mcp_zuul.classifier import _MAX_ERROR_TEXT, _collect_error_text
+
+        # Build a task with enough inner_failures to exceed the cap
+        tasks = [
+            {
+                "msg": "x" * 2000,
+                "stderr": "y" * 2000,
+                "stdout": "z" * 2000,
+                "inner_failures": [
+                    {"msg": "a" * 500, "stderr_excerpt": "b" * 500, "cmd": "c" * 500}
+                    for _ in range(200)
+                ],
+                "extracted_errors": ["e" * 500 for _ in range(200)],
+            }
+        ]
+        result = _collect_error_text(tasks)
+        assert len(result) <= _MAX_ERROR_TEXT + 2000  # one chunk overshoot is acceptable
+
+
 class TestDetermineFailurePhase:
     def test_run_phase_failure(self):
         playbooks = [
