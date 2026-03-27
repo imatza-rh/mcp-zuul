@@ -1,4 +1,4 @@
-.PHONY: help install test lint format typecheck check build clean
+.PHONY: help install test lint format typecheck check build clean release
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -27,3 +27,7 @@ build: ## Build Docker image
 clean: ## Remove build artifacts and caches
 	rm -rf dist/ build/ .pytest_cache/ .mypy_cache/ .ruff_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+release: ## Release a version (make release V=0.5.0 or V=patch)
+	@test -n "$(V)" || (echo "Usage: make release V=<version|patch|minor|major>" && exit 1)
+	./release.sh $(V)
