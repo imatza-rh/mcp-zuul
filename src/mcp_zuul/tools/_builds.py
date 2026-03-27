@@ -57,20 +57,32 @@ def _extract_file_paths(failed_tasks: list[dict]) -> list[str] | None:
     a complete inventory.
     """
     paths: set[str] = set()
+
+    def _scan(text: str) -> None:
+        for m in _REPO_FILE_RE.finditer(text):
+            path = m.group(1)
+            start = max(0, m.start() - 20)
+            context = text[start : m.end()]
+            if _FILE_PATH_NOISE.search(context):
+                continue
+            paths.add(path)
+
     for task in failed_tasks:
         for field in ("msg", "stdout", "stderr"):
             text = task.get(field)
-            if not text or not isinstance(text, str):
-                continue
-            for m in _REPO_FILE_RE.finditer(text):
-                path = m.group(1)
-                # Check matched path and ~20 chars before it for noise markers
-                # (enough to catch /home/, /tmp/, :// prefixes in context)
-                start = max(0, m.start() - 20)
-                context = text[start : m.end()]
-                if _FILE_PATH_NOISE.search(context):
-                    continue
-                paths.add(path)
+            if text and isinstance(text, str):
+                _scan(text)
+        # Scan extracted_errors (pre-truncation error snippets from middle section)
+        for err in task.get("extracted_errors") or []:
+            if isinstance(err, str):
+                _scan(err)
+        # Scan inner_failures (nested playbook failure details)
+        for inner in task.get("inner_failures") or []:
+            if isinstance(inner, dict):
+                for field in ("msg", "stderr_excerpt", "cmd", "raw"):
+                    text = inner.get(field)
+                    if text and isinstance(text, str):
+                        _scan(text)
     return sorted(paths) or None
 
 

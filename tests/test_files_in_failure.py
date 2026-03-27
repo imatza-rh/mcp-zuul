@@ -148,6 +148,70 @@ class TestExtractFilePaths:
         tasks = [{"stderr": "Missing .zuul.d/project.yaml"}]
         assert _extract_file_paths(tasks) == [".zuul.d/project.yaml"]
 
+    def test_extracts_from_extracted_errors(self):
+        """File paths in extracted_errors (pre-truncation snippets) should be found."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "extracted_errors": [
+                    "fatal: error in roles/shiftstack/tasks/deploy.yaml line 42",
+                    "Error: ci/playbooks/install.yml not found",
+                ],
+            }
+        ]
+        result = _extract_file_paths(tasks)
+        assert "roles/shiftstack/tasks/deploy.yaml" in result
+        assert "ci/playbooks/install.yml" in result
+
+    def test_extracts_from_inner_failures_msg(self):
+        """File paths in inner_failures msg/stderr_excerpt/cmd should be found."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "inner_failures": [
+                    {
+                        "host": "localhost",
+                        "task": "Run deploy",
+                        "msg": "Failed at roles/adoption/tasks/main.yml",
+                        "stderr_excerpt": "Error in ci/scripts/deploy.sh line 10",
+                    }
+                ],
+            }
+        ]
+        result = _extract_file_paths(tasks)
+        assert "roles/adoption/tasks/main.yml" in result
+        assert "ci/scripts/deploy.sh" in result
+
+    def test_extracts_from_inner_failures_raw(self):
+        """File paths in inner_failures raw field should be found."""
+        tasks = [
+            {
+                "msg": "non-zero return code",
+                "inner_failures": [
+                    {
+                        "host": "localhost",
+                        "task": "Run check",
+                        "raw": '{"msg": "error in zuul.d/project.yaml"}',
+                    }
+                ],
+            }
+        ]
+        result = _extract_file_paths(tasks)
+        assert "zuul.d/project.yaml" in result
+
+    def test_deduplicates_across_all_fields(self):
+        """Same path appearing in stdout and extracted_errors is deduplicated."""
+        tasks = [
+            {
+                "stdout": "Fixing roles/foo/tasks/main.yml",
+                "extracted_errors": [
+                    "fatal: roles/foo/tasks/main.yml failed",
+                ],
+            }
+        ]
+        result = _extract_file_paths(tasks)
+        assert result == ["roles/foo/tasks/main.yml"]
+
     def test_nested_dotfile_directory(self):
         tasks = [{"msg": "config/.hidden/secrets.yml not found"}]
         assert _extract_file_paths(tasks) == ["config/.hidden/secrets.yml"]
