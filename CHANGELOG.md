@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.2] - 2026-03-27
+
+### Added
+- Release automation script (`release.sh`) - single command for the full release pipeline: version bump, validation, commit, tag, PyPI publish, GitHub Release, and MCP Registry
+- `Makefile` target: `make release V=patch|minor|major|X.Y.Z`
+- `extract_errors()` scans full stdout/stderr for error patterns BEFORE `smart_truncate` discards the middle section, preserving root causes in a new `extracted_errors` field on failed tasks
+- `extract_inner_failures()` parses nested Ansible `fatal:` blocks from container_exec output, extracting task name, host, msg, rc, cmd, and stderr_excerpt into a structured `inner_failures` field
+- Classifier now scans `inner_failures` and `extracted_errors` fields for pattern matching, so infra errors hidden inside nested playbook output are correctly classified
+
+### Fixed
+- `stream_log` retries with `Accept-Encoding: identity` on corrupted gzip (`DecodingError`), matching existing `fetch_log_url` behavior
+- UNREACHABLE classifier false positive - pattern matched `unreachable=0` in PLAY RECAP lines; changed to match `UNREACHABLE!` only
+- `extract_errors()` now scans both stdout and stderr (was silently dropping stderr when stdout had matches)
+- `_collect_error_text` size cap now applied to `inner_failures` and `extracted_errors` loops (was unbounded)
+- Corrupted gzip error message now recommends `diagnose_build` instead of `get_build_log` (which hits the same corrupted file)
+
 ## [0.4.1] - 2026-03-26
 
 ### Security
@@ -203,6 +219,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.4.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.2
 [0.4.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.1
 [0.4.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.0
 [0.3.4]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.3.4
