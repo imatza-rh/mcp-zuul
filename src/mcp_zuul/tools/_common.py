@@ -136,15 +136,16 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
                 )
                 continue
             content = resp.content
-            # Manual gzip decompression: some log servers return raw gzip
+            # Decompress file-level gzip (some log servers return raw gzip
             # bytes without Content-Encoding header, so httpx doesn't
-            # auto-decompress.  Detect via gzip magic bytes (0x1f 0x8b).
-            # Use incremental decompression with a size cap to prevent
-            # gzip bombs (small compressed payload → huge decompressed output).
-            if suffix.endswith(".gz") and content[:2] == b"\x1f\x8b":
-                d = zlib.decompressobj(wbits=31)  # 31 = gzip format
-                content = d.decompress(content, _MAX_JSON_LOG_BYTES + 1)
-                if len(content) > _MAX_JSON_LOG_BYTES:
+            # auto-decompress). _decompress_gzip detects via magic bytes
+            # and caps decompressed size. ValueError = corrupt gzip.
+            if suffix.endswith(".gz"):
+                try:
+                    content, gz_truncated = _decompress_gzip(content, _MAX_JSON_LOG_BYTES)
+                except ValueError:
+                    continue
+                if gz_truncated:
                     log.info(
                         "gzip decompressed output exceeds %d bytes, skipping",
                         _MAX_JSON_LOG_BYTES,
