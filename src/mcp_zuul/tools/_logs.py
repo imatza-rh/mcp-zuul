@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlparse
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
-from ..helpers import api, app, error, fetch_log_url, safepath, stream_log, strip_ansi
+from ..helpers import AppContext, api, app, error, fetch_log_url, safepath, stream_log, strip_ansi
 from ..server import mcp
 from ._common import (
     _ERROR_NOISE,
@@ -18,6 +18,7 @@ from ._common import (
     _MAX_LOG_LINES,
     _READ_ONLY,
     _RUN_END_MARKER,
+    _decompress_gzip,
     _no_log_url_error,
     _resolve,
 )
@@ -25,6 +26,27 @@ from ._common import (
 # Detect nested quantifiers that cause catastrophic backtracking (ReDoS).
 # Matches patterns like (x+)+, (x*)+, (x+)*, (x{2,})+ etc.
 _NESTED_QUANTIFIER_RE = re.compile(r"[+*}\?]\)?[+*{]")
+
+
+async def _stream_log_with_fallback(a: AppContext, url: str, log_name: str) -> tuple[bytes, bool]:
+    """Stream a log file with .gz fallback and automatic gzip decompression.
+
+    1. Tries to fetch the exact URL.
+    2. On 404, if log_name doesn't already end in .gz, retries with .gz appended.
+    3. Detects gzip magic bytes and decompresses (handles file-level .gz
+       compression, as opposed to HTTP Content-Encoding handled by httpx).
+
+    Returns (content_bytes, truncated_bool).
+    """
+    try:
+        log_bytes, truncated = await stream_log(a, url)
+    except FileNotFoundError:
+        if not log_name.endswith(".gz"):
+            log_bytes, truncated = await stream_log(a, url + ".gz")
+        else:
+            raise
+    log_bytes, gz_truncated = _decompress_gzip(log_bytes)
+    return log_bytes, truncated or gz_truncated
 
 
 @mcp.tool(title="Read Build Log", annotations=_READ_ONLY)
@@ -72,7 +94,7 @@ async def get_build_log(
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
 
     a = app(ctx)
-    log_bytes, truncated = await stream_log(a, txt_url)
+    log_bytes, truncated = await _stream_log_with_fallback(a, txt_url, log_name)
     raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
@@ -321,9 +343,8 @@ async def tail_build_log(
     if ".." in unquote(log_name).split("/"):
         return error(f"Invalid log_name: {log_name!r}")
 
-    a = app(ctx)
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-    log_bytes, truncated = await stream_log(a, txt_url)
+    log_bytes, truncated = await _stream_log_with_fallback(app(ctx), txt_url, log_name)
     raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)

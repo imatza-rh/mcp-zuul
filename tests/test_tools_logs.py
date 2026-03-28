@@ -1,11 +1,13 @@
 """Integration tests for log tools (get_build_log, browse_build_logs)."""
 
+import gzip
 import json
 
 import httpx
 import respx
 
 from mcp_zuul.tools import browse_build_logs, get_build_log, tail_build_log
+from mcp_zuul.tools._common import _decompress_gzip
 from tests.conftest import make_build
 
 _SAMPLE_LOG = "\n".join([f"line {i}: content for line {i}" for i in range(1, 201)])
@@ -155,6 +157,8 @@ class TestGetBuildLog:
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        # .gz fallback also 404
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
         result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
         assert "error" in result
         assert "not found" in result["error"].lower()
@@ -592,3 +596,208 @@ class TestCorruptedGzipRetry:
         result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1"))
         assert "error" in result
         assert "decompression failed" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# _decompress_gzip unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestDecompressGzip:
+    def test_non_gzip_unchanged(self):
+        data = b"plain text content"
+        result, truncated = _decompress_gzip(data)
+        assert result == data
+        assert truncated is False
+
+    def test_valid_gzip_decompressed(self):
+        original = b"hello world\nline 2\nFAILED! error\n"
+        compressed = gzip.compress(original)
+        result, truncated = _decompress_gzip(compressed)
+        assert result == original
+        assert truncated is False
+
+    def test_large_gzip_truncated(self):
+        original = b"x" * (20 * 1024 * 1024)  # 20 MB
+        compressed = gzip.compress(original)
+        result, truncated = _decompress_gzip(compressed, max_bytes=1024)
+        assert len(result) == 1024
+        assert truncated is True
+
+    def test_corrupted_gzip_raises_value_error(self):
+        import pytest
+
+        # Gzip magic bytes followed by garbage
+        data = b"\x1f\x8b" + b"\x00" * 100
+        with pytest.raises(ValueError, match="Failed to decompress"):
+            _decompress_gzip(data)
+
+    def test_empty_data_unchanged(self):
+        result, truncated = _decompress_gzip(b"")
+        assert result == b""
+        assert truncated is False
+
+    def test_single_byte_unchanged(self):
+        result, truncated = _decompress_gzip(b"\x1f")
+        assert result == b"\x1f"
+        assert truncated is False
+
+
+# ---------------------------------------------------------------------------
+# Gzip log decompression integration tests (F1)
+# ---------------------------------------------------------------------------
+
+
+class TestGzipLogDecompression:
+    """get_build_log and tail_build_log should decompress .gz log files."""
+
+    @respx.mock
+    async def test_get_build_log_reads_gz_file(self, mock_ctx):
+        """get_build_log with log_name=*.gz should decompress and work."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_text = "line 1\nFAILED! some error\nline 3\n"
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", log_name="job-output.txt.gz")
+        )
+        assert "error" not in result
+        assert result["total_lines"] == 3
+        assert any("FAILED!" in e["text"] for e in result["error_lines"])
+
+    @respx.mock
+    async def test_get_build_log_grep_on_gz_file(self, mock_ctx):
+        """grep should work on decompressed .gz content."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_text = "ok line\nERROR timeout reached\nok line\n"
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(
+            await get_build_log(
+                mock_ctx, "build-uuid-1", log_name="job-output.txt.gz", grep="timeout"
+            )
+        )
+        assert result["matched"] == 1
+        assert "timeout" in result["lines"][0]["text"]
+
+    @respx.mock
+    async def test_tail_build_log_reads_gz_file(self, mock_ctx):
+        """tail_build_log with log_name=*.gz should decompress."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        log_text = "\n".join([f"line {i}" for i in range(1, 51)])
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(
+            await tail_build_log(
+                mock_ctx, uuid="build-uuid-1", log_name="job-output.txt.gz", lines=10
+            )
+        )
+        assert result["count"] == 10
+        assert "line 50" in result["lines"][-1]
+
+
+# ---------------------------------------------------------------------------
+# .gz fallback tests (F2)
+# ---------------------------------------------------------------------------
+
+
+class TestGzFallback:
+    """When log_name is not found, auto-retry with .gz appended."""
+
+    @respx.mock
+    async def test_get_build_log_falls_back_to_gz(self, mock_ctx):
+        """get_build_log should try .gz when .txt returns 404."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # .txt returns 404
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        # .txt.gz returns content
+        log_text = "decompressed line 1\nFAILED! error from gz\nline 3\n"
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert "error" not in result
+        assert result["total_lines"] == 3
+        assert any("FAILED!" in e["text"] for e in result["error_lines"])
+
+    @respx.mock
+    async def test_tail_build_log_falls_back_to_gz(self, mock_ctx):
+        """tail_build_log should try .gz when .txt returns 404."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        log_text = "line 1\nline 2\nline 3\n"
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1", lines=10))
+        assert "error" not in result
+        assert result["count"] == 3
+
+    @respx.mock
+    async def test_no_double_gz_fallback(self, mock_ctx):
+        """When log_name already ends in .gz, should NOT try .gz.gz."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", log_name="job-output.txt.gz")
+        )
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    @respx.mock
+    async def test_both_missing_returns_error(self, mock_ctx):
+        """When both .txt and .txt.gz are 404, should return error."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    @respx.mock
+    async def test_custom_log_name_fallback(self, mock_ctx):
+        """Fallback should work for custom log names too."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}logs/custom.log").mock(return_value=httpx.Response(404))
+        log_text = "custom log content\n"
+        gz_content = gzip.compress(log_text.encode())
+        respx.get(f"{build['log_url']}logs/custom.log.gz").mock(
+            return_value=httpx.Response(200, content=gz_content)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", log_name="logs/custom.log")
+        )
+        assert "error" not in result
+        assert result["total_lines"] == 1

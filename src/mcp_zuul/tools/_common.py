@@ -24,6 +24,30 @@ from ..parsers import (  # noqa: F401
 
 log = logging.getLogger("zuul-mcp")
 
+_MAX_DECOMPRESS_BYTES = 10 * 1024 * 1024  # 10 MB cap for decompressed text logs
+
+
+def _decompress_gzip(data: bytes, max_bytes: int = _MAX_DECOMPRESS_BYTES) -> tuple[bytes, bool]:
+    """Decompress gzip data if detected via magic bytes (0x1f 0x8b).
+
+    Returns (data, extra_truncated). Non-gzip data is returned unchanged.
+    Decompression is capped at max_bytes to prevent gzip bombs.
+
+    Raises ValueError on corrupted gzip so callers get a clear error.
+    """
+    if len(data) < 2 or data[:2] != b"\x1f\x8b":
+        return data, False
+    try:
+        d = zlib.decompressobj(wbits=31)
+        decompressed = d.decompress(data, max_bytes + 1)
+        extra_truncated = len(decompressed) > max_bytes
+        if extra_truncated:
+            decompressed = decompressed[:max_bytes]
+        return decompressed, extra_truncated
+    except (zlib.error, EOFError, OSError) as e:
+        raise ValueError(f"Failed to decompress gzipped log: {e}") from e
+
+
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
     destructiveHint=False,
