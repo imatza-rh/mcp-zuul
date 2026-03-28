@@ -256,6 +256,42 @@ class TestGetBuildLog:
         assert len(result["blocks"]) == 2
 
 
+class TestNegativeInputClamping:
+    """Negative integer parameters should be clamped, not silently wrong."""
+
+    @respx.mock
+    async def test_summary_negative_lines_returns_content(self, mock_ctx):
+        """Negative lines in summary mode should be clamped to 1, not empty."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="line 1\nline 2\nline 3")
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", mode="summary", lines=-1000)
+        )
+        assert "error" not in result
+        # Should have at least 1 tail line, not 0
+        assert len(result["tail"]) >= 1
+
+    @respx.mock
+    async def test_full_mode_negative_lines_returns_from_start(self, mock_ctx):
+        """Negative lines in full mode should be clamped to offset 0."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="line 1\nline 2\nline 3")
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", mode="full", lines=-1000))
+        assert "error" not in result
+        assert result["offset"] == 0
+        assert result["count"] == 3
+
+
 class TestBrowseBuildLogs:
     @respx.mock
     async def test_no_log_url_in_progress(self, mock_ctx):

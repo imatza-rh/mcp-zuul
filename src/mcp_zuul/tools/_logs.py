@@ -233,7 +233,7 @@ async def get_build_log(
 
     # Summary mode — single pass for both errors and tail
     if mode == "summary":
-        tail_n = lines or 100
+        tail_n = max(1, lines) if lines else 100
         tail_start = max(0, total - tail_n)
         errors: list[tuple[int, str]] = []
         tail: list[str] = []
@@ -254,7 +254,7 @@ async def get_build_log(
         )
 
     # Full mode (paginated)
-    offset = lines or 0
+    offset = max(0, lines)
     chunk_lines = all_lines[offset : offset + _MAX_LOG_LINES]
     return json.dumps(
         {
