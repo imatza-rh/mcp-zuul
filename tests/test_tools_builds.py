@@ -1232,3 +1232,16 @@ class TestGetBuildset:
         assert result["uuid"] == "buildset-uuid-1"
         assert "builds" in result
         assert "events" in result
+
+    @respx.mock
+    async def test_builds_include_full_details(self, mock_ctx):
+        """Non-brief buildset should include per-build details (log_url, start_time, etc.)."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid").mock(
+            return_value=httpx.Response(200, json=make_buildset())
+        )
+        result = json.loads(await get_buildset(mock_ctx, "bs-uuid"))
+        build = result["builds"][0]
+        # These fields are only present in non-brief fmt_build output
+        assert "log_url" in build, f"Missing log_url in buildset build: {build}"
+        assert "start_time" in build, f"Missing start_time in buildset build: {build}"
+        assert "end_time" in build, f"Missing end_time in buildset build: {build}"

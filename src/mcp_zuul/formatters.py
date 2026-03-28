@@ -81,7 +81,7 @@ def fmt_buildset(bs: dict, brief: bool = True) -> dict:
         if ref_dict:
             out["ref_url"] = ref_dict.get("ref_url")
         if "builds" in bs:
-            out["builds"] = [fmt_build(b) for b in bs["builds"]]
+            out["builds"] = [fmt_build(b, brief=brief) for b in bs["builds"]]
         if "events" in bs:
             out["events"] = bs["events"]
     return clean(out)
