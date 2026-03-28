@@ -366,6 +366,69 @@ class TestBrowseBuildLogs:
         )
         assert "logs/" in result["entries"]
 
+    @respx.mock
+    async def test_max_lines_limits_output(self, mock_ctx):
+        """max_lines should return only the first N lines with total_lines count."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        content = "\n".join(f"line {i}" for i in range(100))
+        respx.get(f"{build['log_url']}zuul-info/inventory.yaml").mock(
+            return_value=httpx.Response(200, text=content, headers={"content-type": "text/plain"})
+        )
+        result = json.loads(
+            await browse_build_logs(
+                mock_ctx, "build-uuid-1", path="zuul-info/inventory.yaml", max_lines=10
+            )
+        )
+        assert result["total_lines"] == 100
+        assert result["lines_returned"] == 10
+        assert result["has_more"] is True
+        lines = result["content"].splitlines()
+        assert len(lines) == 10
+        assert lines[0] == "line 0"
+        assert lines[9] == "line 9"
+
+    @respx.mock
+    async def test_max_lines_zero_returns_full(self, mock_ctx):
+        """max_lines=0 (default) should return full content like before."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        content = "\n".join(f"line {i}" for i in range(20))
+        respx.get(f"{build['log_url']}zuul-info/inventory.yaml").mock(
+            return_value=httpx.Response(200, text=content, headers={"content-type": "text/plain"})
+        )
+        result = json.loads(
+            await browse_build_logs(mock_ctx, "build-uuid-1", path="zuul-info/inventory.yaml")
+        )
+        # No max_lines → full content, no total_lines/has_more
+        assert "line 19" in result["content"]
+        assert "has_more" not in result
+
+    @respx.mock
+    async def test_max_lines_exceeds_total(self, mock_ctx):
+        """max_lines > total lines should return all lines without has_more."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        content = "line 0\nline 1\nline 2"
+        respx.get(f"{build['log_url']}zuul-info/inventory.yaml").mock(
+            return_value=httpx.Response(200, text=content, headers={"content-type": "text/plain"})
+        )
+        result = json.loads(
+            await browse_build_logs(
+                mock_ctx, "build-uuid-1", path="zuul-info/inventory.yaml", max_lines=100
+            )
+        )
+        assert result["total_lines"] == 3
+        assert result["lines_returned"] == 3
+        assert result["has_more"] is False
+        assert "line 2" in result["content"]
+
 
 class TestGetBuildLogUrl:
     @respx.mock

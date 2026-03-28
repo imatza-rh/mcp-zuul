@@ -269,6 +269,7 @@ async def browse_build_logs(
     tenant: str = "",
     path: str = "",
     url: str = "",
+    max_lines: int = 0,
 ) -> str:
     """Browse or fetch files from a build's log directory.
 
@@ -276,12 +277,17 @@ async def browse_build_logs(
     With path ending in '/': lists that subdirectory.
     With path to a file: fetches and returns the file content (max 512KB).
 
+    For filtered reads of large files, use get_build_log with log_name
+    and grep instead — it supports regex search and line ranges.
+
     Args:
         uuid: Build UUID
         tenant: Tenant name (uses default if empty)
         path: Relative path within the log dir (e.g. "logs/controller/",
               "zuul-info/inventory.yaml", "logs/hypervisor/ci-framework-data/artifacts/")
         url: Zuul build URL (alternative to uuid + tenant)
+        max_lines: Limit file content to first N lines (0 = no limit).
+                   Response includes total_lines count for pagination.
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
@@ -330,15 +336,26 @@ async def browse_build_logs(
     except Exception:
         return error(f"Cannot decode file at {path}")
     truncated = len(content) > _MAX_FILE_BYTES or gz_truncated
-    return json.dumps(
-        {
-            "log_url": target_url,
-            "path": path,
-            "size": len(content),
-            "truncated": truncated,
-            "content": text,
-        }
-    )
+
+    result_dict: dict[str, Any] = {
+        "log_url": target_url,
+        "path": path,
+        "size": len(content),
+        "truncated": truncated,
+    }
+
+    if max_lines > 0:
+        all_lines = text.splitlines()
+        total = len(all_lines)
+        limited = all_lines[:max_lines]
+        result_dict["content"] = "\n".join(limited)
+        result_dict["total_lines"] = total
+        result_dict["lines_returned"] = len(limited)
+        result_dict["has_more"] = len(limited) < total
+    else:
+        result_dict["content"] = text
+
+    return json.dumps(result_dict)
 
 
 @mcp.tool(title="Log Tail", annotations=_READ_ONLY)
