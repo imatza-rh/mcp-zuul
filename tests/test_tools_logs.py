@@ -914,3 +914,64 @@ class TestGzFallback:
         )
         assert "error" not in result
         assert result["total_lines"] == 1
+
+
+# ---------------------------------------------------------------------------
+# File-level corrupted gzip (ValueError from _decompress_gzip)
+# ---------------------------------------------------------------------------
+
+
+class TestFileLevelCorruptedGzip:
+    """When a .gz file has gzip magic bytes but is corrupted, the error
+    message should point users to diagnose_build (same as HTTP-level
+    DecodingError), not show a raw ValueError."""
+
+    @respx.mock
+    async def test_corrupted_gz_file_suggests_diagnose_build(self, mock_ctx):
+        """File-level corrupted gzip should produce the same helpful error
+        as HTTP-level DecodingError."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # Gzip magic bytes + garbage = file-level corruption
+        corrupted = b"\x1f\x8b" + b"\x00" * 100
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=corrupted)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert "error" in result
+        assert "diagnose_build" in result["error"]
+
+    @respx.mock
+    async def test_tail_corrupted_gz_suggests_diagnose_build(self, mock_ctx):
+        """tail_build_log with file-level corrupted gzip should also suggest diagnose_build."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        corrupted = b"\x1f\x8b" + b"\x00" * 100
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=corrupted)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, uuid="build-uuid-1"))
+        assert "error" in result
+        assert "diagnose_build" in result["error"]
+
+    @respx.mock
+    async def test_browse_corrupted_gz_does_not_suggest_diagnose(self, mock_ctx):
+        """browse_build_logs with corrupted gzip should NOT suggest diagnose_build -
+        it's for arbitrary files where that suggestion doesn't apply."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        corrupted = b"\x1f\x8b" + b"\x00" * 100
+        respx.get(f"{build['log_url']}some-file.gz").mock(
+            return_value=httpx.Response(200, content=corrupted)
+        )
+        result = json.loads(
+            await browse_build_logs(mock_ctx, uuid="build-uuid-1", path="some-file.gz")
+        )
+        assert "error" in result
+        assert "diagnose_build" not in result["error"]

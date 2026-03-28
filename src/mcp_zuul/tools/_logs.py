@@ -6,6 +6,7 @@ import re
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+import httpx
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
@@ -76,7 +77,13 @@ async def _stream_log_with_fallback(
         if available:
             msg += f". Available: {', '.join(available[:10])}"
         raise FileNotFoundError(msg)
-    log_bytes, gz_truncated = _decompress_gzip(log_bytes)
+    try:
+        log_bytes, gz_truncated = _decompress_gzip(log_bytes)
+    except ValueError:
+        # File-level corrupted gzip (magic bytes present but data invalid).
+        # Re-raise as DecodingError so @handle_errors produces the helpful
+        # message pointing users to diagnose_build.
+        raise httpx.DecodingError("File-level gzip decompression failed") from None
     return log_bytes, truncated or gz_truncated
 
 
