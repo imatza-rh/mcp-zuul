@@ -1,6 +1,5 @@
 """Shared constants, annotations, and helpers used across tool sub-modules."""
 
-import gzip
 import json
 import logging
 import re
@@ -159,10 +158,6 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
             httpx.DecodingError,
             json.JSONDecodeError,
             UnicodeDecodeError,
-            gzip.BadGzipFile,
-            zlib.error,
-            EOFError,
-            OSError,
         ):
             continue
     return playbooks, failed_tasks, False
