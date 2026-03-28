@@ -322,18 +322,19 @@ async def browse_build_logs(
             }
         )
 
-    # File content
-    raw = resp.content[:_MAX_FILE_BYTES]
+    # File content — decompress gzip if detected (same pattern as log tools)
+    content, gz_truncated = _decompress_gzip(resp.content, _MAX_FILE_BYTES)
+    raw = content[:_MAX_FILE_BYTES]
     try:
         text = raw.decode("utf-8", errors="replace")
     except Exception:
         return error(f"Cannot decode file at {path}")
-    truncated = len(resp.content) > _MAX_FILE_BYTES
+    truncated = len(content) > _MAX_FILE_BYTES or gz_truncated
     return json.dumps(
         {
             "log_url": target_url,
             "path": path,
-            "size": len(resp.content),
+            "size": len(content),
             "truncated": truncated,
             "content": text,
         }

@@ -306,6 +306,28 @@ class TestBrowseBuildLogs:
         assert result["truncated"] is False
 
     @respx.mock
+    async def test_gz_file_decompressed(self, mock_ctx):
+        """Fetching a .gz file should decompress and return text content."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        original = "hosts:\n  controller:\n    ip: 10.0.0.1\n"
+        gz_content = gzip.compress(original.encode())
+        respx.get(f"{build['log_url']}zuul-info/inventory.yaml.gz").mock(
+            return_value=httpx.Response(
+                200,
+                content=gz_content,
+                headers={"content-type": "application/gzip"},
+            )
+        )
+        result = json.loads(
+            await browse_build_logs(mock_ctx, "build-uuid-1", path="zuul-info/inventory.yaml.gz")
+        )
+        assert "hosts:" in result["content"]
+        assert result["truncated"] is False
+
+    @respx.mock
     async def test_path_traversal_rejected(self, mock_ctx):
         build = make_build()
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
