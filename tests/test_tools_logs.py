@@ -159,6 +159,8 @@ class TestGetBuildLog:
         respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
         # .gz fallback also 404
         respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
+        # Directory listing for available files hint
+        respx.get(build["log_url"]).mock(return_value=httpx.Response(404))
         result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
         assert "error" in result
         assert "not found" in result["error"].lower()
@@ -771,14 +773,40 @@ class TestGzFallback:
         assert "not found" in result["error"].lower()
 
     @respx.mock
-    async def test_both_missing_returns_error(self, mock_ctx):
-        """When both .txt and .txt.gz are 404, should return error."""
+    async def test_both_missing_includes_available_files(self, mock_ctx):
+        """When both .txt and .txt.gz are 404, error should list available files."""
         build = make_build()
         respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
         respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
+        html = (
+            "<html><body>"
+            '<a href="job-output.txt.gz">job-output.txt.gz</a>'
+            '<a href="logs/">logs/</a>'
+            '<a href="zuul-info/">zuul-info/</a>'
+            "</body></html>"
+        )
+        respx.get(build["log_url"]).mock(
+            return_value=httpx.Response(200, text=html, headers={"content-type": "text/html"})
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+        assert "job-output.txt.gz" in result["error"]
+        assert "logs/" in result["error"]
+
+    @respx.mock
+    async def test_both_missing_no_listing_still_works(self, mock_ctx):
+        """When dir listing also fails, error should still be clear."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt.gz").mock(return_value=httpx.Response(404))
+        respx.get(build["log_url"]).mock(return_value=httpx.Response(404))
         result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
         assert "error" in result
         assert "not found" in result["error"].lower()

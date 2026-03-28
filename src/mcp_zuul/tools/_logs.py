@@ -28,23 +28,54 @@ from ._common import (
 _NESTED_QUANTIFIER_RE = re.compile(r"[+*}\?]\)?[+*{]")
 
 
-async def _stream_log_with_fallback(a: AppContext, url: str, log_name: str) -> tuple[bytes, bool]:
+async def _list_log_entries(a: AppContext, log_url: str) -> list[str]:
+    """Best-effort directory listing for error messages."""
+    try:
+        resp = await fetch_log_url(a, log_url)
+        if resp.status_code == 200 and "text/html" in resp.headers.get("content-type", ""):
+            entries = re.findall(r'href="([^"?][^"]*)"', resp.text)
+            return [
+                e
+                for e in entries
+                if not e.startswith("/") and not e.startswith("http") and e != "../"
+            ]
+    except Exception:
+        pass
+    return []
+
+
+async def _stream_log_with_fallback(
+    a: AppContext, url: str, log_name: str, log_url: str = ""
+) -> tuple[bytes, bool]:
     """Stream a log file with .gz fallback and automatic gzip decompression.
 
     1. Tries to fetch the exact URL.
     2. On 404, if log_name doesn't already end in .gz, retries with .gz appended.
     3. Detects gzip magic bytes and decompresses (handles file-level .gz
        compression, as opposed to HTTP Content-Encoding handled by httpx).
+    4. On final 404, includes available files from the log directory in the error.
 
     Returns (content_bytes, truncated_bool).
     """
+    found = False
     try:
         log_bytes, truncated = await stream_log(a, url)
+        found = True
     except FileNotFoundError:
         if not log_name.endswith(".gz"):
-            log_bytes, truncated = await stream_log(a, url + ".gz")
-        else:
-            raise
+            try:
+                log_bytes, truncated = await stream_log(a, url + ".gz")
+                found = True
+            except FileNotFoundError:
+                pass
+    if not found:
+        available = await _list_log_entries(a, log_url) if log_url else []
+        # @handle_errors wraps FileNotFoundError as "Log file not found at {e}",
+        # so pass just the name + hint, not a full sentence.
+        msg = log_name
+        if available:
+            msg += f". Available: {', '.join(available[:10])}"
+        raise FileNotFoundError(msg)
     log_bytes, gz_truncated = _decompress_gzip(log_bytes)
     return log_bytes, truncated or gz_truncated
 
@@ -94,7 +125,7 @@ async def get_build_log(
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
 
     a = app(ctx)
-    log_bytes, truncated = await _stream_log_with_fallback(a, txt_url, log_name)
+    log_bytes, truncated = await _stream_log_with_fallback(a, txt_url, log_name, log_url)
     raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
@@ -344,7 +375,7 @@ async def tail_build_log(
         return error(f"Invalid log_name: {log_name!r}")
 
     txt_url = log_url.rstrip("/") + "/" + log_name.lstrip("/")
-    log_bytes, truncated = await _stream_log_with_fallback(app(ctx), txt_url, log_name)
+    log_bytes, truncated = await _stream_log_with_fallback(app(ctx), txt_url, log_name, log_url)
     raw = strip_ansi(log_bytes.decode("utf-8", errors="replace"))
     all_lines = raw.splitlines()
     total = len(all_lines)
