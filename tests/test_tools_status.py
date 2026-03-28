@@ -183,6 +183,70 @@ class TestGetChangeStatus:
         assert "latest_buildset" not in result
 
     @respx.mock
+    async def test_not_in_pipeline_builds_have_report_url(self, mock_ctx):
+        """not_in_pipeline builds should include report_url (Zuul web UI link)."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/44444").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F44444%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-url-test"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-url-test").mock(
+            return_value=httpx.Response(200, json=make_buildset(uuid="bs-url-test"))
+        )
+        result = json.loads(await get_change_status(mock_ctx, "44444"))
+        build = result["latest_buildset"]["builds"][0]
+        assert "report_url" in build, f"Missing report_url in not_in_pipeline build: {build}"
+        assert build["report_url"] == ("https://zuul.example.com/t/test-tenant/build/build-uuid-1")
+
+    @respx.mock
+    async def test_not_in_pipeline_in_progress_has_status_hint(self, mock_ctx):
+        """not_in_pipeline + IN_PROGRESS buildset should include a status_hint."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55555").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F55555%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        bs = make_buildset(uuid="bs-running", result="IN_PROGRESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-running"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-running").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "55555"))
+        assert result["status"] == "not_in_pipeline"
+        assert result["latest_buildset"]["result"] == "IN_PROGRESS"
+        assert "status_hint" in result, "Expected status_hint for not_in_pipeline + IN_PROGRESS"
+        assert "executing" in result["status_hint"].lower()
+
+    @respx.mock
+    async def test_not_in_pipeline_completed_no_status_hint(self, mock_ctx):
+        """not_in_pipeline with a completed buildset should NOT include status_hint."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/66666").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F66666%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-done"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-done").mock(
+            return_value=httpx.Response(200, json=make_buildset(uuid="bs-done", result="SUCCESS"))
+        )
+        result = json.loads(await get_change_status(mock_ctx, "66666"))
+        assert result["status"] == "not_in_pipeline"
+        assert "status_hint" not in result
+
+    @respx.mock
     async def test_gitlab_mr_ref_fallback(self, mock_ctx):
         """Digit-only change retries with refs/merge-requests/N/head for GitLab MRs."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(

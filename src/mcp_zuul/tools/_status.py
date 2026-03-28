@@ -171,7 +171,23 @@ async def get_change_status(
                     bs_detail = await api(
                         ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}"
                     )
-                    result["latest_buildset"] = fmt_buildset(bs_detail, brief=False)
+                    formatted_bs = fmt_buildset(bs_detail, brief=False)
+                    # Enrich builds with report_url (Zuul web UI link).
+                    # The SQL builds API doesn't include report_url — it's
+                    # a pipeline-only field.  Construct it so not_in_pipeline
+                    # responses match the in-pipeline experience.
+                    base = app(ctx).config.base_url
+                    for build in formatted_bs.get("builds", []):
+                        build_uuid = build.get("uuid")
+                        if build_uuid:
+                            build["report_url"] = f"{base}/t/{safepath(t)}/build/{build_uuid}"
+                    result["latest_buildset"] = formatted_bs
+                    if formatted_bs.get("result") == "IN_PROGRESS":
+                        result["status_hint"] = (
+                            "Build is executing but change is no longer queued "
+                            "in pipeline (normal for dispatched builds). "
+                            "Check build log or bot notes for completion."
+                        )
         except (
             httpx.HTTPStatusError,
             httpx.ConnectError,
