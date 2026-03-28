@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-03-28
+
+### Added
+- `browse_build_logs` accepts optional `max_lines` parameter to limit file output with pagination (`total_lines`, `has_more`)
+- `get_build_log` and `tail_build_log` automatically detect gzip content and retry with `.gz` suffix on 404
+- Log-not-found errors now include a directory listing of available files, saving round-trips to `browse_build_logs`
+- `get_change_status` enriches not-in-pipeline builds with `report_url` and `status_hint` when the buildset is still in progress
+- Release pre-flight checks now require a CHANGELOG.md entry for the target version
+
+### Fixed
+- `browse_build_logs` returned binary garbage on `.gz` files instead of decompressed text
+- `fmt_buildset(brief=False)` always called `fmt_build(brief=True)`, stripping `log_url`, `start_time`, `end_time`, `ref_url`, and `nodeset` from builds
+- `list_buildsets(include_builds=True)` internal cap of 10 results set `has_more=False` even when more data existed
+- `_extract_file_paths` now scans `extracted_errors` and `inner_failures` fields, catching file paths hidden in truncated output
+
+### Changed
+- Unified gzip decompression in `_fetch_job_output` to use shared `_decompress_gzip()` helper
+
+### Security
+- Release script hides PyPI token from bash trace output
+
 ## [0.4.2] - 2026-03-27
 
 ### Added
