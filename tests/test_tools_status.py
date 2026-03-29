@@ -227,6 +227,44 @@ class TestGetChangeStatus:
         assert "executing" in result["status_hint"].lower()
 
     @respx.mock
+    async def test_not_in_pipeline_in_progress_builds_have_elapsed(self, mock_ctx):
+        """IN_PROGRESS builds in not_in_pipeline path should include elapsed field."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/77777").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F77777%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        running_build = make_build(
+            uuid="b-running",
+            result=None,
+            duration=None,
+        )
+        running_build["start_time"] = "2020-01-01T00:00:00"
+        running_build["end_time"] = None
+        bs = make_buildset(
+            uuid="bs-running2",
+            result="IN_PROGRESS",
+            builds=[running_build],
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-running2"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-running2").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "77777"))
+        assert result["status"] == "not_in_pipeline"
+        builds = result["latest_buildset"]["builds"]
+        assert len(builds) == 1
+        assert builds[0]["result"] == "IN_PROGRESS"
+        assert "elapsed" in builds[0], "IN_PROGRESS build should include elapsed"
+        assert isinstance(builds[0]["elapsed"], str)
+
+    @respx.mock
     async def test_not_in_pipeline_completed_no_status_hint(self, mock_ctx):
         """not_in_pipeline with a completed buildset should NOT include status_hint."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/66666").mock(
