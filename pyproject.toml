@@ -1,6 +1,6 @@
 [project]
 name = "mcp-zuul"
-version = "0.5.0"
+version = "0.5.1"
 description = "MCP server for Zuul CI — read-only access to builds, logs, status, and jobs"
 readme = "README.md"
 license = "Apache-2.0"
