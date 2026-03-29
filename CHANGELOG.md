@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-03-29
+
+### Added
+- `fmt_build` computes human-readable `elapsed` field for IN_PROGRESS builds in non-brief mode, eliminating manual UTC arithmetic when monitoring running builds via `get_change_status`
+- Connection error messages now classify the underlying cause (DNS resolution failed, connection refused, network unreachable) instead of generic "Cannot connect to Zuul API"
+
+### Fixed
+- `get_build_log` with negative `lines` parameter no longer produces empty/wrong output - values are clamped to valid range
+- File-level corrupted gzip in log tools now shows the same helpful "use diagnose_build" message as HTTP-level gzip errors
+- Removed dead exception types (`gzip.BadGzipFile`, `zlib.error`, `EOFError`, `OSError`) from `_fetch_job_output` catch block - these are now handled inside `_decompress_gzip`
+
 ## [0.5.0] - 2026-03-28
 
 ### Added
