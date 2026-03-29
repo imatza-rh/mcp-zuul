@@ -267,13 +267,50 @@ class TestHandleErrors:
         assert "Internal Server Error" in result["error"]
         assert "<" not in result["error"]  # no HTML tags
 
-    async def test_wraps_connect_error(self):
+    async def test_wraps_connect_error_connection_refused(self):
         @handle_errors
         async def failing():
             raise make_connect_error("Connection refused")
 
         result = json.loads(await failing())
         assert "Cannot connect" in result["error"]
+        assert "connection refused" in result["error"]
+
+    async def test_wraps_connect_error_dns_failure(self):
+        @handle_errors
+        async def failing():
+            raise make_connect_error("[Errno 8] nodename nor servname provided, or not known")
+
+        result = json.loads(await failing())
+        assert "Cannot connect" in result["error"]
+        assert "DNS resolution failed" in result["error"]
+
+    async def test_wraps_connect_error_dns_linux(self):
+        @handle_errors
+        async def failing():
+            raise make_connect_error("[Errno -2] Name or service not known")
+
+        result = json.loads(await failing())
+        assert "DNS resolution failed" in result["error"]
+
+    async def test_wraps_connect_error_network_unreachable(self):
+        @handle_errors
+        async def failing():
+            raise make_connect_error("Network is unreachable")
+
+        result = json.loads(await failing())
+        assert "network unreachable" in result["error"]
+
+    async def test_wraps_connect_error_unknown(self):
+        """Unknown ConnectError includes raw message for diagnosis."""
+
+        @handle_errors
+        async def failing():
+            raise httpx.ConnectError("Something unexpected happened")
+
+        result = json.loads(await failing())
+        assert "Cannot connect" in result["error"]
+        assert "Something unexpected happened" in result["error"]
 
     async def test_wraps_ssl_connect_error(self):
         @handle_errors

@@ -28,6 +28,25 @@ def _clean_body(text: str, limit: int = 200) -> str:
     return cleaned[:limit].strip()
 
 
+_DNS_HINTS = ("getaddrinfo failed", "name or service not known", "nodename nor servname")
+_REFUSED_HINTS = ("connection refused",)
+_UNREACHABLE_HINTS = ("network is unreachable", "no route to host")
+
+
+def _connect_detail(e: httpx.ConnectError) -> str:
+    """Extract a diagnostic detail from a ConnectError for error messages."""
+    msg = str(e)
+    lower = msg.lower()
+    if any(h in lower for h in _DNS_HINTS):
+        return "DNS resolution failed"
+    if any(h in lower for h in _REFUSED_HINTS):
+        return "connection refused (service may be down)"
+    if any(h in lower for h in _UNREACHABLE_HINTS):
+        return "network unreachable"
+    # Fallback: include raw message (capped)
+    return msg[:200] if msg else "unknown connection error"
+
+
 def handle_errors(
     func: Callable[..., Coroutine[Any, Any, str]],
 ) -> Callable[..., Coroutine[Any, Any, str]]:
@@ -52,7 +71,7 @@ def handle_errors(
                     "SSL certificate verification failed. "
                     "If using self-signed certificates, set ZUUL_VERIFY_SSL=false"
                 )
-            return error("Cannot connect to Zuul API")
+            return error(f"Cannot connect to Zuul API: {_connect_detail(e)}")
         except httpx.TimeoutException:
             return error("Request timed out")
         except FileNotFoundError as e:
