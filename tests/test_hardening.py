@@ -684,6 +684,101 @@ class TestRefsTypeGuard:
         assert "project" not in result
 
 
+# -- fmt_build elapsed for IN_PROGRESS builds --
+
+
+class TestFmtBuildElapsed:
+    def test_in_progress_build_has_elapsed(self):
+        """IN_PROGRESS builds with start_time should include elapsed in non-brief mode."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": None,
+            "start_time": "2020-01-01T00:00:00",
+        }
+        result = fmt_build(build, brief=False)
+        assert result["result"] == "IN_PROGRESS"
+        assert "elapsed" in result
+        # Should be a human-readable string like "Xh Ym" or "Xm Ys"
+        assert isinstance(result["elapsed"], str)
+
+    def test_completed_build_no_elapsed(self):
+        """Completed builds should NOT include computed elapsed."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": "SUCCESS",
+            "start_time": "2020-01-01T00:00:00",
+            "duration": 120,
+        }
+        result = fmt_build(build, brief=False)
+        assert "elapsed" not in result
+
+    def test_in_progress_brief_no_elapsed(self):
+        """Brief mode should not include elapsed (too expensive for list views)."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": None,
+            "start_time": "2020-01-01T00:00:00",
+        }
+        result = fmt_build(build, brief=True)
+        assert "elapsed" not in result
+
+    def test_in_progress_no_start_time_no_elapsed(self):
+        """IN_PROGRESS without start_time should not include elapsed."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {"uuid": "b1", "job_name": "test-job", "result": None}
+        result = fmt_build(build, brief=False)
+        assert "elapsed" not in result
+
+    def test_elapsed_with_timezone_aware_timestamp(self):
+        """Timezone-aware ISO timestamp should work."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": None,
+            "start_time": "2020-01-01T00:00:00+00:00",
+        }
+        result = fmt_build(build, brief=False)
+        assert "elapsed" in result
+
+    def test_elapsed_with_z_suffix(self):
+        """UTC 'Z' suffix should be handled."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": None,
+            "start_time": "2020-01-01T00:00:00Z",
+        }
+        result = fmt_build(build, brief=False)
+        assert "elapsed" in result
+
+    def test_elapsed_invalid_timestamp_no_crash(self):
+        """Invalid start_time should not crash, just omit elapsed."""
+        from mcp_zuul.formatters import fmt_build
+
+        build = {
+            "uuid": "b1",
+            "job_name": "test-job",
+            "result": None,
+            "start_time": "not-a-timestamp",
+        }
+        result = fmt_build(build, brief=False)
+        assert "elapsed" not in result
+
+
 # -- URL-encoded path traversal --
 
 

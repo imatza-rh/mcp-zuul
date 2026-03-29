@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time as _time
+from datetime import UTC, datetime
 
 from .helpers import clean
 
@@ -26,6 +27,24 @@ def _format_duration(seconds: int | float | None) -> str | None:
     return f"{seconds}s"
 
 
+def _elapsed_from_start(start_time: str) -> int | None:
+    """Compute elapsed seconds from an ISO 8601 start_time string.
+
+    Returns None if the timestamp can't be parsed. Zuul SQL API returns
+    UTC timestamps like "2026-03-28T20:19:20".
+    """
+    try:
+        # Zuul timestamps are UTC, may or may not include timezone info
+        if start_time.endswith("Z"):
+            start_time = start_time[:-1] + "+00:00"
+        dt = datetime.fromisoformat(start_time)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0, int(_time.time() - dt.timestamp()))
+    except (ValueError, OverflowError):
+        return None
+
+
 def fmt_build(b: dict, brief: bool = True) -> dict:
     """Format a build response into a compact representation."""
     out: dict = {
@@ -47,6 +66,12 @@ def fmt_build(b: dict, brief: bool = True) -> dict:
         out["start_time"] = b.get("start_time")
         out["end_time"] = b.get("end_time")
         out["event_timestamp"] = b.get("event_timestamp")
+        # Compute elapsed for IN_PROGRESS builds so callers don't need
+        # manual UTC arithmetic on every status check.
+        if not b.get("result") and b.get("start_time"):
+            elapsed = _elapsed_from_start(b["start_time"])
+            if elapsed is not None:
+                out["elapsed"] = _format_duration(elapsed)
         out["nodeset"] = b.get("nodeset")
         out["error_detail"] = b.get("error_detail")
         out["artifacts"] = [
