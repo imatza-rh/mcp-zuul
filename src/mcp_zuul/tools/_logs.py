@@ -325,8 +325,12 @@ async def browse_build_logs(
 
     content_type = resp.headers.get("content-type", "")
 
-    # Directory listing (Apache/nginx index page)
-    if "text/html" in content_type and (not path or path.endswith("/")):
+    # Directory listing (Apache/nginx index page).
+    # Detect directories by: empty path, trailing slash, OR path without a file
+    # extension (log servers redirect "logs" -> "logs/" but our path variable
+    # still holds the user's original input without trailing slash).
+    has_ext = bool(re.search(r"\.\w{1,10}$", path))
+    if "text/html" in content_type and (not path or path.endswith("/") or not has_ext):
         entries = re.findall(r'href="([^"?][^"]*)"', resp.text)
         # Filter out parent directory, absolute links, and traversal entries
         entries = [

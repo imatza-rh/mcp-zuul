@@ -30,6 +30,24 @@ _FILE_PATH_NOISE = re.compile(
 )
 
 
+def _fallback_message(result: str, has_log_context: bool) -> str:
+    """Build a context-aware fallback message when job-output.json is unavailable."""
+    if has_log_context:
+        return (
+            "Structured job-output.json unavailable (corrupted gzip or parse error). "
+            "Showing text log grep for fatal/FAILED lines."
+        )
+    base = "Both job-output.json and job-output.txt unavailable."
+    if result == "POST_FAILURE":
+        base += (
+            " POST_FAILURE means the post-run playbook that uploads logs itself failed,"
+            " so structured logs were never collected."
+            " Try get_build_log with a different log file,"
+            " or check an earlier build of the same job."
+        )
+    return base
+
+
 def _ref_meta(build: dict) -> dict:
     """Extract ref metadata (ref_url, project, change) from a Zuul build object."""
     ref = build.get("ref")
@@ -247,10 +265,7 @@ async def get_build_failures(
                 "json_fallback": True,
                 "failed_tasks": failed_tasks,
                 "log_context": log_context or None,
-                "message": "Structured job-output.json unavailable (corrupted gzip or parse error). "
-                "Showing text log grep for fatal/FAILED lines."
-                if log_context
-                else "Both job-output.json and job-output.txt unavailable.",
+                "message": _fallback_message(result, bool(log_context)),
             }
         )
     )

@@ -530,6 +530,46 @@ class TestBrowseBuildLogs:
         assert result["has_more"] is False
         assert "line 2" in result["content"]
 
+    @respx.mock
+    async def test_directory_listing_path_without_trailing_slash(self, mock_ctx):
+        """Path without trailing / that returns HTML should be detected as directory listing.
+
+        Log servers redirect 'logs' -> 'logs/', httpx follows the redirect,
+        but the path variable still holds the user's original input. The tool
+        should detect the HTML directory listing regardless of trailing slash.
+        """
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        html = '<html><body><a href="controller/">controller/</a><a href="zuul-info/">zuul-info/</a></body></html>'
+        respx.get(f"{build['log_url']}logs").mock(
+            return_value=httpx.Response(200, text=html, headers={"content-type": "text/html"})
+        )
+        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="logs"))
+        assert "entries" in result, f"Expected directory listing, got: {result}"
+        assert "controller/" in result["entries"]
+        assert "zuul-info/" in result["entries"]
+
+    @respx.mock
+    async def test_html_file_with_extension_treated_as_file(self, mock_ctx):
+        """An actual HTML file (with .html extension) should be returned as file content."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        html_content = "<html><body><h1>Coverage Report</h1></body></html>"
+        respx.get(f"{build['log_url']}htmlcov/index.html").mock(
+            return_value=httpx.Response(
+                200, text=html_content, headers={"content-type": "text/html"}
+            )
+        )
+        result = json.loads(
+            await browse_build_logs(mock_ctx, "build-uuid-1", path="htmlcov/index.html")
+        )
+        assert "content" in result, f"Expected file content, got: {result}"
+        assert "Coverage Report" in result["content"]
+
 
 class TestGetBuildLogUrl:
     @respx.mock

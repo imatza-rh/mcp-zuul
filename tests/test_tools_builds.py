@@ -897,6 +897,22 @@ class TestGetBuildFailuresDecodingError:
         assert "unavailable" in result["message"]
 
     @respx.mock
+    async def test_post_failure_all_logs_unavailable_has_context(self, mock_ctx):
+        """POST_FAILURE builds with no logs should explain WHY logs are missing."""
+        build = make_build(result="POST_FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/pf-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.json").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}job-output.txt").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_build_failures(mock_ctx, "pf-uuid"))
+        assert result["json_fallback"] is True
+        # Should explain that POST_FAILURE means the log upload itself failed
+        assert "POST_FAILURE" in result["message"]
+        assert "log upload" in result["message"].lower() or "post-run" in result["message"].lower()
+
+    @respx.mock
     async def test_in_progress_build_returns_helpful_error(self, mock_ctx):
         """In-progress build should return status-aware error, not generic."""
         build = make_build(result="FAILURE", log_url=None)
