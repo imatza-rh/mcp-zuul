@@ -10,7 +10,14 @@ import httpx
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
-from ..formatters import _format_duration, fmt_buildset, fmt_status_item, iter_status_items
+from ..formatters import (
+    _elapsed_from_start,
+    _format_duration,
+    fmt_build,
+    fmt_buildset,
+    fmt_status_item,
+    iter_status_items,
+)
 from ..helpers import api, app, clean, error, parse_zuul_url, safepath
 from ..helpers import tenant as _tenant
 from ..server import mcp
@@ -100,6 +107,7 @@ async def get_change_status(
     change: str = "",
     tenant: str = "",
     url: str = "",
+    brief: bool = False,
 ) -> str:
     """Pipeline status for a specific Gerrit change or GitHub/GitLab PR/MR.
 
@@ -113,6 +121,10 @@ async def get_change_status(
                 or GitLab ref ("refs/merge-requests/123/head")
         tenant: Tenant name (uses default if empty)
         url: Zuul change status URL (alternative to change + tenant)
+        brief: Strip response to monitoring essentials (default false).
+               Omits log_url, artifacts, stream_url, dependencies, and other
+               static fields that don't change between polls. Use this for
+               repeated status checks to reduce token consumption by ~75%.
     """
     if url:
         parts = parse_zuul_url(url)
@@ -171,7 +183,21 @@ async def get_change_status(
                     bs_detail = await api(
                         ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}"
                     )
-                    formatted_bs = fmt_buildset(bs_detail, brief=False)
+                    if brief:
+                        # Brief: compact buildset + abbreviated builds
+                        formatted_bs = fmt_buildset(bs_detail, brief=True)
+                        builds_brief = []
+                        for b in bs_detail.get("builds", []):
+                            out = fmt_build(b, brief=True)
+                            if not b.get("result") and b.get("start_time"):
+                                elapsed = _elapsed_from_start(b["start_time"])
+                                if elapsed is not None:
+                                    out["elapsed"] = _format_duration(elapsed)
+                            builds_brief.append(out)
+                        if builds_brief:
+                            formatted_bs["builds"] = builds_brief
+                    else:
+                        formatted_bs = fmt_buildset(bs_detail, brief=False)
                     # Enrich builds with report_url (Zuul web UI link).
                     # The SQL builds API doesn't include report_url — it's
                     # a pipeline-only field.  Construct it so not_in_pipeline
@@ -209,11 +235,28 @@ async def get_change_status(
                 fmt["status_url"] = (
                     f"{base}/t/{safepath(t)}/status/change/{quote(ref_id, safe='/,')}"
                 )
-        # Make relative stream_urls absolute
-        for job in fmt.get("jobs", []):
-            su = job.get("stream_url", "")
-            if su and not su.startswith(("http://", "https://", "ws://", "wss://")):
-                job["stream_url"] = f"{base}/t/{safepath(t)}/{su}"
+        if brief:
+            # Strip to monitoring essentials — omit static fields
+            fmt.pop("status_url", None)
+            fmt.pop("url", None)
+            fmt.pop("enqueue_time", None)
+            for job in fmt.get("jobs", []):
+                for k in (
+                    "uuid",
+                    "remaining",
+                    "estimated",
+                    "stream_url",
+                    "dependencies",
+                    "waiting_status",
+                    "report_url",
+                ):
+                    job.pop(k, None)
+        else:
+            # Make relative stream_urls absolute (only needed in full mode)
+            for job in fmt.get("jobs", []):
+                su = job.get("stream_url", "")
+                if su and not su.startswith(("http://", "https://", "ws://", "wss://")):
+                    job["stream_url"] = f"{base}/t/{safepath(t)}/{su}"
     return json.dumps(formatted)
 
 

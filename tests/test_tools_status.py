@@ -571,6 +571,172 @@ class TestGetChangeStatus:
         result = json.loads(await get_change_status(mock_ctx, "80002"))
         assert result[0]["enqueue_time"] == 1704067200.0  # seconds
 
+    # ---- brief mode tests ----
+
+    @respx.mock
+    async def test_brief_in_pipeline_strips_job_fields(self, mock_ctx):
+        """brief=True should strip static fields from in-pipeline jobs."""
+        item = make_status_item(change=90001)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90001").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "90001", brief=True))
+        assert isinstance(result, list)
+        job = result[0]["jobs"][0]
+        # Essential fields preserved
+        assert "name" in job
+        assert "status" in job
+        assert "elapsed" in job
+        # Static fields stripped
+        assert "uuid" not in job
+        assert "stream_url" not in job
+        assert "dependencies" not in job
+        assert "waiting_status" not in job
+        assert "remaining" not in job
+        assert "estimated" not in job
+        assert "report_url" not in job
+        # Item-level static fields stripped
+        assert "status_url" not in result[0]
+        assert "enqueue_time" not in result[0]
+        # chain_summary preserved (compact, useful for monitoring)
+        assert "chain_summary" in result[0]
+
+    @respx.mock
+    async def test_brief_in_pipeline_smaller_than_full(self, mock_ctx):
+        """brief=True response should be substantially smaller than brief=False."""
+        item = make_chained_status_item(change=90002)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90002").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        full = await get_change_status(mock_ctx, "90002", brief=False)
+        brief = await get_change_status(mock_ctx, "90002", brief=True)
+        full_size = len(full.encode())
+        brief_size = len(brief.encode())
+        savings_pct = (1 - brief_size / full_size) * 100
+        assert savings_pct > 20, f"Brief saves only {savings_pct:.0f}% — expected >20%"
+
+    @respx.mock
+    async def test_brief_not_in_pipeline_strips_build_fields(self, mock_ctx):
+        """brief=True should use abbreviated builds for not_in_pipeline path."""
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90003").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F90003%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-brief"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-brief").mock(
+            return_value=httpx.Response(200, json=make_buildset(uuid="bs-brief"))
+        )
+        result = json.loads(await get_change_status(mock_ctx, "90003", brief=True))
+        assert result["status"] == "not_in_pipeline"
+        bs = result["latest_buildset"]
+        # Buildset should have builds
+        assert "builds" in bs
+        build = bs["builds"][0]
+        # Brief build fields present
+        assert "job" in build
+        assert "result" in build
+        assert "uuid" in build
+        # Full-detail fields stripped (brief=True on fmt_build)
+        assert "log_url" not in build
+        assert "nodeset" not in build
+        assert "artifacts" not in build
+        assert "patchset" not in build
+        assert "branch" not in build
+        # Buildset-level detail stripped
+        assert "message" not in bs
+        assert "events" not in bs
+
+    @respx.mock
+    async def test_brief_not_in_pipeline_smaller_than_full(self, mock_ctx):
+        """brief=True not_in_pipeline response should be smaller than full."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90004").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F90004%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        bs = make_buildset(
+            uuid="bs-size",
+            builds=[make_build(uuid=f"b-{i}", job_name=f"job-{i}") for i in range(5)],
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-size"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-size").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        full = await get_change_status(mock_ctx, "90004", brief=False)
+        brief = await get_change_status(mock_ctx, "90004", brief=True)
+        full_size = len(full.encode())
+        brief_size = len(brief.encode())
+        savings_pct = (1 - brief_size / full_size) * 100
+        assert savings_pct > 30, f"Brief saves only {savings_pct:.0f}% — expected >30%"
+
+    @respx.mock
+    async def test_brief_not_in_pipeline_still_has_report_url(self, mock_ctx):
+        """brief=True should still enrich builds with report_url."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90005").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F90005%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-rurl"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-rurl").mock(
+            return_value=httpx.Response(200, json=make_buildset(uuid="bs-rurl"))
+        )
+        result = json.loads(await get_change_status(mock_ctx, "90005", brief=True))
+        build = result["latest_buildset"]["builds"][0]
+        assert "report_url" in build
+
+    @respx.mock
+    async def test_brief_not_in_pipeline_in_progress_has_elapsed(self, mock_ctx):
+        """brief=True should compute elapsed for IN_PROGRESS builds."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90006").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F90006%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        running_build = make_build(uuid="b-run", result=None, duration=None)
+        running_build["start_time"] = "2020-01-01T00:00:00"
+        running_build["end_time"] = None
+        bs = make_buildset(uuid="bs-brief-run", result="IN_PROGRESS", builds=[running_build])
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-brief-run"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-brief-run").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "90006", brief=True))
+        assert result["status"] == "not_in_pipeline"
+        builds = result["latest_buildset"]["builds"]
+        assert len(builds) == 1
+        assert builds[0]["result"] == "IN_PROGRESS"
+        assert "elapsed" in builds[0], "brief IN_PROGRESS build should include elapsed"
+        assert isinstance(builds[0]["elapsed"], str)
+        # Should also have report_url
+        assert "report_url" in builds[0]
+        # Should NOT have full-detail fields
+        assert "log_url" not in builds[0]
+        assert "nodeset" not in builds[0]
+        assert "artifacts" not in builds[0]
+
 
 class TestFormatDuration:
     def test_seconds_only(self):
