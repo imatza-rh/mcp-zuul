@@ -737,6 +737,210 @@ class TestGetChangeStatus:
         assert "nodeset" not in builds[0]
         assert "artifacts" not in builds[0]
 
+    # ---- chain_summary in not_in_pipeline tests ----
+
+    @respx.mock
+    async def test_not_in_pipeline_all_completed_has_chain_summary(self, mock_ctx):
+        """Completed buildset in not_in_pipeline should include chain_summary."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F91001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid=f"b-{i}", job_name=f"job-{i}", result="SUCCESS") for i in range(3)
+        ]
+        bs = make_buildset(uuid="bs-chain-done", result="SUCCESS", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-chain-done"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-chain-done").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "91001"))
+        assert result["status"] == "not_in_pipeline"
+        summary = result["chain_summary"]
+        assert summary["completed"] == 3
+        assert summary["total"] == 3
+        assert summary["running"] == 0
+        assert summary["waiting"] == 0
+        assert summary["progress_pct"] == 100
+        assert summary["all_decided"] is True
+
+    @respx.mock
+    async def test_not_in_pipeline_mixed_has_chain_summary(self, mock_ctx):
+        """Mixed results (some done, some running) should show partial progress."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91002").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F91002%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        done = make_build(uuid="b-done", job_name="deploy-infra", result="SUCCESS")
+        running1 = make_build(uuid="b-run1", job_name="deploy-ocp", result=None, duration=None)
+        running1["start_time"] = "2020-01-01T00:00:00"
+        running1["end_time"] = None
+        running2 = make_build(uuid="b-run2", job_name="deploy-osp", result=None, duration=None)
+        running2["start_time"] = "2020-01-01T00:00:00"
+        running2["end_time"] = None
+        bs = make_buildset(
+            uuid="bs-chain-mixed",
+            result="IN_PROGRESS",
+            builds=[done, running1, running2],
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-chain-mixed"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-chain-mixed").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "91002"))
+        summary = result["chain_summary"]
+        assert summary["completed"] == 1
+        assert summary["total"] == 3
+        assert summary["running"] == 2
+        assert summary["progress_pct"] == 33
+        assert summary["all_decided"] is False
+
+    @respx.mock
+    async def test_not_in_pipeline_brief_has_chain_summary(self, mock_ctx):
+        """brief=True not_in_pipeline should also include chain_summary."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91003").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F91003%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid="b-0", job_name="job-0", result="SUCCESS"),
+            make_build(uuid="b-1", job_name="job-1", result="FAILURE"),
+            make_build(uuid="b-2", job_name="job-2", result=None, duration=None),
+        ]
+        builds[2]["start_time"] = "2020-01-01T00:00:00"
+        builds[2]["end_time"] = None
+        bs = make_buildset(uuid="bs-brief-chain", result="IN_PROGRESS", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-brief-chain"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-brief-chain").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "91003", brief=True))
+        assert result["status"] == "not_in_pipeline"
+        summary = result["chain_summary"]
+        assert summary["completed"] == 2  # SUCCESS + FAILURE
+        assert summary["total"] == 3
+        assert summary["running"] == 1
+        assert summary["progress_pct"] == 67
+        assert summary["all_decided"] is False
+
+    @respx.mock
+    async def test_not_in_pipeline_no_builds_chain_summary(self, mock_ctx):
+        """Buildset with empty builds should have chain_summary with total=0."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91004").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F91004%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        # Build the response directly — make_buildset(builds=[]) falls through
+        # to default because [] is falsy in Python.
+        bs = {
+            "uuid": "bs-empty-builds",
+            "result": "SUCCESS",
+            "pipeline": "check",
+            "refs": [{"project": "org/repo", "change": 91004}],
+            "builds": [],
+        }
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-empty-builds"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-empty-builds").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "91004"))
+        summary = result["chain_summary"]
+        assert summary["total"] == 0
+        assert summary["progress_pct"] == 0
+        assert summary["all_decided"] is False
+
+    @respx.mock
+    async def test_not_in_pipeline_all_failed_chain_summary(self, mock_ctx):
+        """All-failed buildset: all_decided=True, progress_pct=100."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91005").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F91005%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid="b-f0", job_name="job-0", result="FAILURE"),
+            make_build(uuid="b-f1", job_name="job-1", result="NODE_FAILURE"),
+            make_build(uuid="b-f2", job_name="job-2", result="TIMED_OUT"),
+        ]
+        bs = make_buildset(uuid="bs-all-fail", result="FAILURE", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-all-fail"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-all-fail").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "91005"))
+        summary = result["chain_summary"]
+        assert summary["completed"] == 3
+        assert summary["total"] == 3
+        assert summary["all_decided"] is True
+        assert summary["progress_pct"] == 100
+
+    # ---- exception logging in not_in_pipeline fallback ----
+
+    @respx.mock
+    async def test_not_in_pipeline_value_error_logged_not_raised(self, mock_ctx, caplog):
+        """ValueError in fallback path should be logged but not raise."""
+        import logging
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/92001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F92001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-err"}])
+        )
+        # Return data that triggers ValueError in fmt_buildset (non-JSON response mock)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-err").mock(
+            return_value=httpx.Response(
+                200, content=b"not json", headers={"content-type": "text/html"}
+            )
+        )
+        with caplog.at_level(logging.WARNING, logger="zuul-mcp"):
+            result = json.loads(await get_change_status(mock_ctx, "92001"))
+        # Should degrade gracefully
+        assert result["status"] == "not_in_pipeline"
+        assert "latest_buildset" not in result
+        # ValueError should be logged
+        assert any(
+            "not_in_pipeline" in r.message.lower() or "ValueError" in r.message
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
 
 class TestFormatDuration:
     def test_seconds_only(self):
@@ -775,6 +979,123 @@ class TestFormatDuration:
 
     def test_nan_returns_none(self):
         assert _format_duration(float("nan")) is None
+
+
+class TestBuildsetChainSummary:
+    """Unit tests for _buildset_chain_summary (not_in_pipeline chain tracking)."""
+
+    def test_all_success(self):
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [
+            {"result": "SUCCESS"},
+            {"result": "SUCCESS"},
+            {"result": "SUCCESS"},
+        ]
+        s = _buildset_chain_summary(builds)
+        assert s == {
+            "completed": 3,
+            "total": 3,
+            "running": 0,
+            "waiting": 0,
+            "progress_pct": 100,
+            "all_decided": True,
+        }
+
+    def test_mixed_terminal_and_running(self):
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [
+            {"result": "SUCCESS"},
+            {"result": "IN_PROGRESS"},
+            {"result": "FAILURE"},
+        ]
+        s = _buildset_chain_summary(builds)
+        assert s["completed"] == 2
+        assert s["running"] == 1
+        assert s["progress_pct"] == 67
+        assert s["all_decided"] is False
+
+    def test_all_running(self):
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [{"result": "IN_PROGRESS"}, {"result": "IN_PROGRESS"}]
+        s = _buildset_chain_summary(builds)
+        assert s["completed"] == 0
+        assert s["running"] == 2
+        assert s["progress_pct"] == 0
+        assert s["all_decided"] is False
+
+    def test_empty_list(self):
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        s = _buildset_chain_summary([])
+        assert s["total"] == 0
+        assert s["all_decided"] is False
+
+    def test_all_terminal_results_recognized(self):
+        """Every result in _TERMINAL_RESULTS should count as completed."""
+        from mcp_zuul.formatters import _TERMINAL_RESULTS
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [{"result": r} for r in _TERMINAL_RESULTS]
+        s = _buildset_chain_summary(builds)
+        assert s["completed"] == len(_TERMINAL_RESULTS)
+        assert s["running"] == 0
+        assert s["all_decided"] is True
+
+    def test_unknown_result_treated_as_running(self):
+        """A result not in _TERMINAL_RESULTS should count as running."""
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [{"result": "UNKNOWN_FUTURE_RESULT"}, {"result": "SUCCESS"}]
+        s = _buildset_chain_summary(builds)
+        assert s["completed"] == 1
+        assert s["running"] == 1
+
+    def test_single_build(self):
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        s = _buildset_chain_summary([{"result": "FAILURE"}])
+        assert s == {
+            "completed": 1,
+            "total": 1,
+            "running": 0,
+            "waiting": 0,
+            "progress_pct": 100,
+            "all_decided": True,
+        }
+
+    def test_build_missing_result_key(self):
+        """Build dict without 'result' key should count as running."""
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [{"job": "deploy-infra"}, {"result": "SUCCESS"}]
+        s = _buildset_chain_summary(builds)
+        assert s["completed"] == 1
+        assert s["running"] == 1
+
+    def test_progress_rounding(self):
+        """1/3 = 33.33...% should round to 33."""
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [
+            {"result": "SUCCESS"},
+            {"result": "IN_PROGRESS"},
+            {"result": "IN_PROGRESS"},
+        ]
+        assert _buildset_chain_summary(builds)["progress_pct"] == 33
+
+    def test_progress_rounding_two_thirds(self):
+        """2/3 = 66.66...% should round to 67."""
+        from mcp_zuul.tools._status import _buildset_chain_summary
+
+        builds = [
+            {"result": "SUCCESS"},
+            {"result": "FAILURE"},
+            {"result": "IN_PROGRESS"},
+        ]
+        assert _buildset_chain_summary(builds)["progress_pct"] == 67
 
 
 class TestChainSummary:

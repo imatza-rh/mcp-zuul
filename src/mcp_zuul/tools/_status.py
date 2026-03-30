@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import quote
@@ -11,6 +12,7 @@ from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
 from ..formatters import (
+    _TERMINAL_RESULTS,
     _elapsed_from_start,
     _format_duration,
     fmt_build,
@@ -22,6 +24,37 @@ from ..helpers import api, app, clean, error, parse_zuul_url, safepath
 from ..helpers import tenant as _tenant
 from ..server import mcp
 from ._common import _READ_ONLY
+
+log = logging.getLogger("zuul-mcp")
+
+
+def _buildset_chain_summary(builds: list[dict]) -> dict:
+    """Compute chain_summary from formatted SQL API builds.
+
+    Simpler than the pipeline version (_compute_chain_summary) because
+    SQL API builds have no dependency graph, estimated times, or waiting
+    state — they're either completed (terminal result) or running.
+    """
+    total = len(builds)
+    if total == 0:
+        return {
+            "completed": 0,
+            "total": 0,
+            "running": 0,
+            "waiting": 0,
+            "progress_pct": 0,
+            "all_decided": False,
+        }
+    completed = sum(1 for b in builds if b.get("result") in _TERMINAL_RESULTS)
+    running = total - completed
+    return {
+        "completed": completed,
+        "total": total,
+        "running": running,
+        "waiting": 0,
+        "progress_pct": round((completed / total) * 100),
+        "all_decided": completed == total,
+    }
 
 
 @mcp.tool(title="List Tenants", annotations=_READ_ONLY)
@@ -208,20 +241,19 @@ async def get_change_status(
                         if build_uuid:
                             build["report_url"] = f"{base}/t/{safepath(t)}/build/{build_uuid}"
                     result["latest_buildset"] = formatted_bs
+                    result["chain_summary"] = _buildset_chain_summary(
+                        formatted_bs.get("builds", [])
+                    )
                     if formatted_bs.get("result") == "IN_PROGRESS":
                         result["status_hint"] = (
                             "Build is executing but change is no longer queued "
                             "in pipeline (normal for dispatched builds). "
                             "Check build log or bot notes for completion."
                         )
-        except (
-            httpx.HTTPStatusError,
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            KeyError,
-            ValueError,
-        ):
-            pass  # Best-effort — don't fail the whole call
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException):
+            pass  # Best-effort — network errors don't fail the whole call
+        except (KeyError, ValueError) as exc:
+            log.warning("not_in_pipeline buildset fetch failed: %s: %s", type(exc).__name__, exc)
         return json.dumps(result)
     base = app(ctx).config.base_url
     formatted = [fmt_status_item(item) for item in data]
