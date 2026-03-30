@@ -256,6 +256,71 @@ class TestGetBuildLog:
         assert len(result["blocks"]) == 2
 
 
+class TestGrepAutoFix:
+    """Auto-correction of shell grep syntax (\\| -> |) should be visible."""
+
+    @respx.mock
+    async def test_shell_pipe_auto_corrected_with_note(self, mock_ctx):
+        r"""grep='error\|fatal' should be auto-corrected to 'error|fatal' with a note."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="error happened\nfatal crash\nok line")
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep=r"error\|fatal"))
+        # Pattern should be corrected to alternation
+        assert result["grep"] == "error|fatal"
+        assert result["matched"] == 2
+        # Note should explain the auto-correction
+        assert "grep_note" in result
+        assert "auto-corrected" in result["grep_note"]
+
+    @respx.mock
+    async def test_mixed_pipes_not_corrected(self, mock_ctx):
+        r"""grep='a|b\|c' (mix of escaped and unescaped) should NOT be corrected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="some log content")
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep=r"a|b\|c"))
+        # Should NOT have a grep_note — no correction applied
+        assert "grep_note" not in result
+
+    @respx.mock
+    async def test_plain_pipe_no_correction(self, mock_ctx):
+        """grep='error|fatal' (already correct) should NOT be corrected."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="error happened\nok")
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="error|fatal"))
+        assert "grep_note" not in result
+
+    @respx.mock
+    async def test_auto_corrected_with_context_blocks(self, mock_ctx):
+        r"""Auto-correction note should appear in context-block responses too."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="before\nerror here\nafter")
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", grep=r"error\|fatal", context=1)
+        )
+        assert "grep_note" in result
+        assert "blocks" in result
+
+
 class TestNegativeInputClamping:
     """Negative integer parameters should be clamped, not silently wrong."""
 

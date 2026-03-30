@@ -50,7 +50,7 @@ def _remove_tool(server: FastMCP, name: str) -> bool:
 def _list_tool_names(server: FastMCP) -> list[str]:
     """List registered tool names, tolerating FastMCP internal API changes."""
     try:
-        return list(server._tool_manager._tools.keys())
+        return [t.name for t in server._tool_manager.list_tools()]
     except AttributeError:
         log.warning("Cannot list tools - FastMCP internal API may have changed")
         return []

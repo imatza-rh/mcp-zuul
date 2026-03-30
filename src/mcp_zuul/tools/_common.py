@@ -143,6 +143,7 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
                 try:
                     content, gz_truncated = _decompress_gzip(content, _MAX_JSON_LOG_BYTES)
                 except ValueError:
+                    log.info("Corrupted file-level gzip, trying next suffix")
                     continue
                 if gz_truncated:
                     log.info(

@@ -160,10 +160,13 @@ async def get_build_log(
         return json.dumps(result_dict)
 
     # Grep mode
+    grep_note = ""
     if grep:
         # Auto-fix common shell-grep-to-python-regex mistake: \| -> |
         if r"\|" in grep and "|" not in grep.replace(r"\|", ""):
+            original = grep
             grep = grep.replace(r"\|", "|")
+            grep_note = f"Pattern auto-corrected from shell grep syntax: {original!r} -> {grep!r}"
         if _NESTED_QUANTIFIER_RE.search(grep):
             return error("Regex rejected: nested quantifiers can cause catastrophic backtracking")
         try:
@@ -212,24 +215,26 @@ async def get_build_log(
                     for i in range(start, end)
                 ]
                 blocks.append(block)
-            return json.dumps(
-                {
-                    "total_lines": total,
-                    "log_url": txt_url,
-                    "grep": grep,
-                    "matched": len(matched),
-                    "blocks": blocks,
-                }
-            )
-        return json.dumps(
-            {
+            result_dict = {
                 "total_lines": total,
                 "log_url": txt_url,
                 "grep": grep,
                 "matched": len(matched),
-                "lines": [{"n": n, "text": text[:500]} for n, text in matched[:100]],
+                "blocks": blocks,
             }
-        )
+            if grep_note:
+                result_dict["grep_note"] = grep_note
+            return json.dumps(result_dict)
+        result_dict = {
+            "total_lines": total,
+            "log_url": txt_url,
+            "grep": grep,
+            "matched": len(matched),
+            "lines": [{"n": n, "text": text[:500]} for n, text in matched[:100]],
+        }
+        if grep_note:
+            result_dict["grep_note"] = grep_note
+        return json.dumps(result_dict)
 
     # Summary mode — single pass for both errors and tail
     if mode == "summary":

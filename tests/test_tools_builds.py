@@ -998,6 +998,32 @@ class TestGzipDecompression:
         # Should not crash — either parses successfully or falls through gracefully
         assert "error" not in result or result.get("json_fallback") is True
 
+    @respx.mock
+    async def test_corrupted_gzip_falls_through_with_logging(self, mock_ctx, caplog):
+        """Corrupted .gz with gzip magic bytes should log and fall through to .json."""
+        build = make_build(result="FAILURE")
+        # Corrupt gzip: has magic bytes (0x1f 0x8b) but truncated/invalid body
+        corrupt_gz = b"\x1f\x8b\x08\x00" + b"\xff" * 20
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/corrupt-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, content=corrupt_gz)
+        )
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="zuul-mcp"):
+            result = json.loads(await get_build_failures(mock_ctx, "corrupt-uuid"))
+
+        # Should fall through to .json successfully
+        assert "error" not in result
+        assert len(result["failed_tasks"]) == 1
+        # Should have logged the gzip failure
+        assert any("Corrupted file-level gzip" in msg for msg in caplog.messages)
+
 
 class TestDiagnoseBuild:
     @respx.mock
