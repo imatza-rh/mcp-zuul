@@ -318,7 +318,10 @@ async def browse_build_logs(
     a = app(ctx)
     target_url = log_url.rstrip("/") + "/" + path.lstrip("/")
 
-    resp = await fetch_log_url(a, target_url)
+    # Cap download at 4x the file display limit — enough headroom for
+    # gzip compression ratios while avoiding the 20 MB default that
+    # wastes bandwidth when the output is capped at _MAX_FILE_BYTES.
+    resp = await fetch_log_url(a, target_url, max_bytes=_MAX_FILE_BYTES * 4)
     if resp.status_code == 404:
         return error(f"Not found: {path or '/'}")
     resp.raise_for_status()

@@ -234,14 +234,16 @@ async def _stream_response(
     return resp, truncated
 
 
-async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
+async def fetch_log_url(
+    a: AppContext, url: str, *, max_bytes: int = _MAX_FETCH_BYTES
+) -> httpx.Response:
     """Fetch a log URL with streaming size limit and Kerberos re-auth.
 
-    Downloads up to _MAX_FETCH_BYTES (20 MB) via streaming to prevent
+    Downloads up to max_bytes (default 20 MB) via streaming to prevent
     unbounded memory consumption from large log files.
     """
     try:
-        resp, _ = await _stream_response(a, url, max_bytes=_MAX_FETCH_BYTES)
+        resp, _ = await _stream_response(a, url, max_bytes=max_bytes)
         return resp
     except httpx.DecodingError:
         # Corrupted gzip — retry without compression so the server
@@ -249,7 +251,7 @@ async def fetch_log_url(a: AppContext, url: str) -> httpx.Response:
         log.info("DecodingError fetching %s, retrying without compression", url)
         try:
             resp, _ = await _stream_response(
-                a, url, max_bytes=_MAX_FETCH_BYTES, headers={"Accept-Encoding": "identity"}
+                a, url, max_bytes=max_bytes, headers={"Accept-Encoding": "identity"}
             )
             return resp
         except httpx.DecodingError:

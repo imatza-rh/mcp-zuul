@@ -247,6 +247,33 @@ class TestFetchLogUrlStreaming:
         assert resp.status_code == 404
         assert resp.content == b""
 
+    @respx.mock
+    async def test_custom_max_bytes_caps_download(self, mock_ctx):
+        """fetch_log_url with custom max_bytes should cap at that size."""
+        a = mock_ctx.request_context.lifespan_context
+        content = b"x" * (2 * 1024 * 1024)  # 2 MB
+        respx.get("https://logs.example.com/build/medium.log").mock(
+            return_value=httpx.Response(200, content=content)
+        )
+        custom_cap = 512 * 1024  # 512 KB
+        resp = await fetch_log_url(
+            a, "https://logs.example.com/build/medium.log", max_bytes=custom_cap
+        )
+        assert resp.status_code == 200
+        assert len(resp.content) == custom_cap
+
+    @respx.mock
+    async def test_default_max_bytes_unchanged(self, mock_ctx):
+        """fetch_log_url without max_bytes should still use the 20 MB default."""
+        a = mock_ctx.request_context.lifespan_context
+        content = b"x" * (2 * 1024 * 1024)  # 2 MB (well under 20 MB default)
+        respx.get("https://logs.example.com/build/normal.log").mock(
+            return_value=httpx.Response(200, content=content)
+        )
+        resp = await fetch_log_url(a, "https://logs.example.com/build/normal.log")
+        assert resp.status_code == 200
+        assert len(resp.content) == 2 * 1024 * 1024  # full content, not truncated
+
 
 # -- list_jobs / list_projects limit --
 
