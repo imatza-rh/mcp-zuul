@@ -56,6 +56,11 @@ _INFRA_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"foreman.*error", re.IGNORECASE), "Foreman provisioning error"),
     (re.compile(r"Power action failed", re.IGNORECASE), "IPMI power action failed"),
     (re.compile(r"Unable to reserve host", re.IGNORECASE), "No available hosts in pool"),
+    # Package manager (transient after provisioning — stale metadata, locked DB)
+    (
+        re.compile(r"An rpm exception occurred", re.IGNORECASE),
+        "RPM database error (transient package state)",
+    ),
     # OOM / resource exhaustion
     (re.compile(r"OOMKilled", re.IGNORECASE), "Container OOMKilled (resource limits)"),
     (re.compile(r"Cannot allocate memory", re.IGNORECASE), "Memory allocation failed (OOM)"),

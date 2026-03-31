@@ -125,6 +125,19 @@ class TestClassifyFailure:
         result = classify_failure("POST_FAILURE", tasks, playbooks)
         assert result.category == "REAL_FAILURE"
 
+    def test_rpm_exception_is_infra_flake(self):
+        """RPM database errors are transient infra issues (e.g. stale package state after Beaker)."""
+        tasks = [
+            {
+                "msg": "Unknown Error occurred: An rpm exception occurred: package not installed",
+                "task": "dnf update all packages",
+            }
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+        assert result.retryable is True
+        assert "RPM" in result.reason or "rpm" in result.reason
+
     def test_unknown_failure(self):
         """No tasks, no patterns = UNKNOWN."""
         result = classify_failure("FAILURE", [], [])
