@@ -265,10 +265,16 @@ async def get_change_status(
                         except Exception:
                             pass  # Best-effort — freeze-jobs can fail on stale pipelines
                     if formatted_bs.get("result") == "IN_PROGRESS":
+                        # SQL API updates only after post-run completes.
+                        # IN_PROGRESS builds may have already failed (run
+                        # phase done, post-run collecting logs).  Signal
+                        # this so consumers don't blindly trust the result.
+                        result["chain_summary"]["sql_lag"] = True
                         result["status_hint"] = (
-                            "Build is executing but change is no longer queued "
-                            "in pipeline (normal for dispatched builds). "
-                            "Check build log or bot notes for completion."
+                            "IN_PROGRESS may be stale - the SQL API updates "
+                            "only after post-run completes. Builds showing "
+                            "IN_PROGRESS may have already failed. "
+                            "Check report_url for authoritative status."
                         )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code < 500:

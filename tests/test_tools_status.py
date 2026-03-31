@@ -224,7 +224,38 @@ class TestGetChangeStatus:
         assert result["status"] == "not_in_pipeline"
         assert result["latest_buildset"]["result"] == "IN_PROGRESS"
         assert "status_hint" in result, "Expected status_hint for not_in_pipeline + IN_PROGRESS"
-        assert "executing" in result["status_hint"].lower()
+        # Must warn about SQL staleness explicitly
+        assert "sql" in result["status_hint"].lower() or "stale" in result["status_hint"].lower()
+
+    @respx.mock
+    async def test_not_in_pipeline_in_progress_chain_summary_has_sql_lag(self, mock_ctx):
+        """chain_summary should have sql_lag=True when IN_PROGRESS builds exist."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55556").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F55556%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid="b-done", job_name="job-a", result="SUCCESS"),
+            make_build(uuid="b-run", job_name="job-b", result=None, duration=None),
+        ]
+        builds[1]["start_time"] = "2020-01-01T00:00:00"
+        builds[1]["end_time"] = None
+        bs = make_buildset(uuid="bs-lag", result="IN_PROGRESS", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-lag"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-lag").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "55556"))
+        summary = result["chain_summary"]
+        assert summary["sql_lag"] is True
+        assert summary["running"] == 1
 
     @respx.mock
     async def test_not_in_pipeline_in_progress_builds_have_elapsed(self, mock_ctx):
@@ -263,6 +294,34 @@ class TestGetChangeStatus:
         assert builds[0]["result"] == "IN_PROGRESS"
         assert "elapsed" in builds[0], "IN_PROGRESS build should include elapsed"
         assert isinstance(builds[0]["elapsed"], str)
+
+    @respx.mock
+    async def test_not_in_pipeline_completed_no_sql_lag(self, mock_ctx):
+        """Completed buildset should NOT have sql_lag in chain_summary."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55557").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F55557%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid="b-1", job_name="job-a", result="SUCCESS"),
+            make_build(uuid="b-2", job_name="job-b", result="FAILURE"),
+        ]
+        bs = make_buildset(uuid="bs-done-lag", result="FAILURE", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-done-lag"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-done-lag").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "55557"))
+        summary = result["chain_summary"]
+        assert "sql_lag" not in summary
+        assert "status_hint" not in result
 
     @respx.mock
     async def test_not_in_pipeline_completed_no_status_hint(self, mock_ctx):

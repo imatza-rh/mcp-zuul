@@ -101,11 +101,15 @@ def _no_log_url_error(build: dict, uuid: str) -> str:
     """Return a helpful error when a build has no log_url yet."""
     result = build.get("result")
     if not result or result == "IN_PROGRESS":
-        return error(
-            f"Build {uuid} is still in progress (post-run phase) — "
-            "logs not yet available. Use get_change_status for live progress "
-            "or wait for the build to complete."
+        detail = build.get("error_detail")
+        msg = (
+            f"Build {uuid} is still in progress — "
+            "logs not yet available (uploaded after post-run completes)."
         )
+        if detail:
+            msg += f" Error detail: {detail}"
+        msg += " Use get_change_status for live progress or wait for the build to complete."
+        return error(msg)
     return error(
         f"No log_url for build {uuid} (result: {result}). "
         "Logs may have been lost or the build was aborted before log upload."

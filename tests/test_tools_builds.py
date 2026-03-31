@@ -26,12 +26,21 @@ class TestNoLogUrlError:
         result = json.loads(_no_log_url_error(build, "uuid-123"))
         assert "still in progress" in result["error"]
         assert "get_change_status" in result["error"]
+        # Should NOT claim to know the specific phase
+        assert "post-run phase" not in result["error"]
 
     def test_in_progress_explicit_result(self):
         """Build with explicit IN_PROGRESS result."""
         build = {"result": "IN_PROGRESS"}
         result = json.loads(_no_log_url_error(build, "uuid-123"))
         assert "still in progress" in result["error"]
+
+    def test_in_progress_with_error_detail(self):
+        """In-progress build with error_detail should include it."""
+        build = {"result": None, "error_detail": "Run phase failed: deploy error"}
+        result = json.loads(_no_log_url_error(build, "uuid-detail"))
+        assert "still in progress" in result["error"]
+        assert "deploy error" in result["error"]
 
     def test_completed_build_no_logs(self):
         """Completed build with no log_url should mention lost logs."""
