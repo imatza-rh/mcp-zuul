@@ -244,13 +244,41 @@ async def get_change_status(
                     result["chain_summary"] = _buildset_chain_summary(
                         formatted_bs.get("builds", [])
                     )
+                    # Best-effort: enrich chain_summary with expected_total
+                    # from the frozen job graph so consumers know the full
+                    # pipeline size (SQL API only has dispatched builds).
+                    bs_pipeline = bs_detail.get("pipeline", "")
+                    bs_refs = bs_detail.get("refs") or []
+                    bs_ref0 = bs_refs[0] if bs_refs and isinstance(bs_refs[0], dict) else {}
+                    bs_project = bs_ref0.get("project", "")
+                    bs_branch = bs_ref0.get("branch") or "main"
+                    if bs_pipeline and bs_project:
+                        try:
+                            freeze = await api(
+                                ctx,
+                                f"/tenant/{safepath(t)}/pipeline/{safepath(bs_pipeline)}"
+                                f"/project/{safepath(bs_project)}"
+                                f"/branch/{safepath(bs_branch)}/freeze-jobs",
+                            )
+                            if isinstance(freeze, list) and freeze:
+                                result["chain_summary"]["expected_total"] = len(freeze)
+                        except Exception:
+                            pass  # Best-effort — freeze-jobs can fail on stale pipelines
                     if formatted_bs.get("result") == "IN_PROGRESS":
                         result["status_hint"] = (
                             "Build is executing but change is no longer queued "
                             "in pipeline (normal for dispatched builds). "
                             "Check build log or bot notes for completion."
                         )
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException):
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code < 500:
+                log.warning(
+                    "not_in_pipeline buildset enrichment: HTTP %d for change %s",
+                    exc.response.status_code,
+                    change,
+                )
+            # 5xx silently ignored (transient server errors)
+        except (httpx.ConnectError, httpx.TimeoutException):
             pass  # Best-effort — network errors don't fail the whole call
         except (KeyError, ValueError) as exc:
             log.warning("not_in_pipeline buildset fetch failed: %s: %s", type(exc).__name__, exc)

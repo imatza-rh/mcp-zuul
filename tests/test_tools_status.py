@@ -906,6 +906,82 @@ class TestGetChangeStatus:
         assert summary["all_decided"] is True
         assert summary["progress_pct"] == 100
 
+    # ---- expected_total from freeze-jobs ----
+
+    @respx.mock
+    async def test_not_in_pipeline_chain_summary_has_expected_total(self, mock_ctx):
+        """chain_summary should include expected_total from freeze-jobs when available."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/95001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F95001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        # Buildset has 2 dispatched builds, but pipeline has 5 jobs
+        builds = [
+            make_build(uuid="b-0", job_name="deploy-infra", result="SUCCESS"),
+            make_build(uuid="b-1", job_name="deploy-ocp", result=None, duration=None),
+        ]
+        builds[1]["start_time"] = "2020-01-01T00:00:00"
+        builds[1]["end_time"] = None
+        bs = make_buildset(uuid="bs-partial", result="IN_PROGRESS", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-partial"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-partial").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        # freeze-jobs returns 5 jobs for this pipeline/project/branch
+        freeze_jobs = [
+            {"name": "deploy-infra", "dependencies": []},
+            {"name": "deploy-ocp", "dependencies": ["deploy-infra"]},
+            {"name": "deploy-osp", "dependencies": ["deploy-infra"]},
+            {"name": "install-operators", "dependencies": ["deploy-ocp"]},
+            {"name": "run-adoption", "dependencies": ["install-operators"]},
+        ]
+        respx.get(url__regex=r".*/freeze-jobs$").mock(
+            return_value=httpx.Response(200, json=freeze_jobs)
+        )
+        result = json.loads(await get_change_status(mock_ctx, "95001"))
+        summary = result["chain_summary"]
+        assert summary["total"] == 2  # dispatched builds
+        assert summary["expected_total"] == 5  # from freeze-jobs
+        assert summary["completed"] == 1
+        assert summary["running"] == 1
+
+    @respx.mock
+    async def test_not_in_pipeline_expected_total_absent_on_freeze_error(self, mock_ctx):
+        """chain_summary works without expected_total when freeze-jobs fails."""
+        from tests.conftest import make_build
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/95002").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F95002%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        builds = [
+            make_build(uuid="b-0", job_name="deploy-infra", result="SUCCESS"),
+        ]
+        bs = make_buildset(uuid="bs-no-freeze", result="IN_PROGRESS", builds=builds)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[{"uuid": "bs-no-freeze"}])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-no-freeze").mock(
+            return_value=httpx.Response(200, json=bs)
+        )
+        # freeze-jobs returns 404 (pipeline not found)
+        respx.get(url__regex=r".*/freeze-jobs$").mock(return_value=httpx.Response(404))
+        result = json.loads(await get_change_status(mock_ctx, "95002"))
+        summary = result["chain_summary"]
+        assert summary["total"] == 1
+        assert "expected_total" not in summary  # graceful degradation
+        assert summary["completed"] == 1
+
     # ---- exception logging in not_in_pipeline fallback ----
 
     @respx.mock
@@ -937,6 +1013,55 @@ class TestGetChangeStatus:
         # ValueError should be logged
         assert any(
             "not_in_pipeline" in r.message.lower() or "ValueError" in r.message
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    @respx.mock
+    async def test_not_in_pipeline_4xx_logged_5xx_silent(self, mock_ctx, caplog):
+        """Non-5xx HTTP errors in buildset enrichment should be logged at WARNING."""
+        import logging
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/93001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F93001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(403, text="Forbidden")
+        )
+        with caplog.at_level(logging.WARNING, logger="zuul-mcp"):
+            result = json.loads(await get_change_status(mock_ctx, "93001"))
+        # Should still return valid not_in_pipeline without crashing
+        assert result["status"] == "not_in_pipeline"
+        assert "latest_buildset" not in result
+        # 403 (client error) should be logged
+        assert any("403" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
+
+    @respx.mock
+    async def test_not_in_pipeline_5xx_silent(self, mock_ctx, caplog):
+        """5xx HTTP errors should be silently ignored (transient server errors)."""
+        import logging
+
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/94001").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get(
+            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
+            "refs%2Fmerge-requests%2F94001%2Fhead"
+        ).mock(return_value=httpx.Response(200, json=[]))
+        # api() retries once on 500, so mock both attempts
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(503, text="Service Unavailable")
+        )
+        with caplog.at_level(logging.WARNING, logger="zuul-mcp"):
+            result = json.loads(await get_change_status(mock_ctx, "94001"))
+        assert result["status"] == "not_in_pipeline"
+        # 5xx should NOT produce a WARNING from the not_in_pipeline handler
+        assert not any(
+            "not_in_pipeline buildset enrichment" in r.message
             for r in caplog.records
             if r.levelno >= logging.WARNING
         )
