@@ -18,6 +18,7 @@ from mcp_zuul.helpers import (
     error,
     fetch_log_url,
     is_ssl_error,
+    parse_iso_timestamp,
     parse_zuul_url,
     safepath,
     strip_ansi,
@@ -143,6 +144,47 @@ class TestParseZuulUrl:
 
     def test_not_a_url(self):
         assert parse_zuul_url("just-a-string") is None
+
+
+class TestParseIsoTimestamp:
+    def test_parses_zulu_time(self):
+        from datetime import UTC
+
+        result = parse_iso_timestamp("2026-04-18T14:30:00Z")
+        assert result is not None
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 18
+        assert result.hour == 14
+        assert result.minute == 30
+        assert result.tzinfo == UTC
+
+    def test_parses_utc_offset(self):
+        result = parse_iso_timestamp("2026-04-18T14:30:00+00:00")
+        assert result is not None
+        assert result.year == 2026
+        assert result.hour == 14
+
+    def test_parses_no_timezone_assumes_utc(self):
+        from datetime import UTC
+
+        result = parse_iso_timestamp("2026-04-18T14:30:00")
+        assert result is not None
+        assert result.tzinfo == UTC
+
+    def test_parses_with_timezone_offset(self):
+        result = parse_iso_timestamp("2026-04-18T14:30:00-05:00")
+        assert result is not None
+        assert result.year == 2026
+
+    def test_empty_string_returns_none(self):
+        assert parse_iso_timestamp("") is None
+
+    def test_invalid_format_returns_none(self):
+        assert parse_iso_timestamp("not-a-date") is None
+
+    def test_none_returns_none(self):
+        assert parse_iso_timestamp(None) is None  # type: ignore[arg-type]
 
 
 class TestConfig:

@@ -10,7 +10,7 @@ from mcp.server.fastmcp import Context
 from ..classifier import Classification, classify_failure, determine_failure_phase
 from ..errors import handle_errors
 from ..formatters import fmt_build, fmt_buildset
-from ..helpers import api, app, clean, safepath, stream_log, strip_ansi
+from ..helpers import api, app, clean, parse_iso_timestamp, safepath, stream_log, strip_ansi
 from ..helpers import tenant as _tenant
 from ..parsers import grep_log_context
 from ..server import mcp
@@ -114,6 +114,10 @@ async def list_builds(
     patchset: str = "",
     ref: str = "",
     result: str = "",
+    completed_after: str = "",
+    completed_before: str = "",
+    started_after: str = "",
+    started_before: str = "",
     limit: int = 20,
     skip: int = 0,
 ) -> str:
@@ -129,12 +133,32 @@ async def list_builds(
         patchset: Filter by patchset
         ref: Filter by git ref
         result: Filter by result (SUCCESS, FAILURE, TIMED_OUT, SKIPPED, etc.)
+        completed_after: Filter builds completed after this time (ISO 8601, e.g. "2026-04-18T00:00:00Z")
+        completed_before: Filter builds completed before this time (ISO 8601)
+        started_after: Filter builds started after this time (ISO 8601)
+        started_before: Filter builds started before this time (ISO 8601)
         limit: Max results, 1-100 (default 20)
         skip: Offset for pagination (default 0)
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
-    params: dict[str, Any] = {"limit": limit + 1, "skip": skip}
+
+    # Parse time filters
+    completed_after_dt = parse_iso_timestamp(completed_after) if completed_after else None
+    completed_before_dt = parse_iso_timestamp(completed_before) if completed_before else None
+    started_after_dt = parse_iso_timestamp(started_after) if started_after else None
+    started_before_dt = parse_iso_timestamp(started_before) if started_before else None
+
+    # Check if any time filters are active
+    has_time_filter = any(
+        [completed_after_dt, completed_before_dt, started_after_dt, started_before_dt]
+    )
+
+    # When time filtering is active, fetch more results initially to account for filtering
+    # Use 3x multiplier but cap at 300 to avoid excessive API calls
+    fetch_limit = min(limit * 3, 300) if has_time_filter else limit
+
+    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": skip}
     for key, val in [
         ("project", project),
         ("pipeline", pipeline),
@@ -149,6 +173,35 @@ async def list_builds(
             params[key] = val
 
     data = await api(ctx, f"/tenant/{safepath(t)}/builds", params)
+
+    # Apply time-based filtering if any time parameters were provided
+    if has_time_filter:
+        filtered = []
+        for build in data:
+            # Parse build timestamps
+            end_time = parse_iso_timestamp(build.get("end_time", ""))
+            start_time = parse_iso_timestamp(build.get("start_time", ""))
+
+            # Apply completed_after filter
+            if completed_after_dt and end_time and end_time < completed_after_dt:
+                continue
+
+            # Apply completed_before filter
+            if completed_before_dt and end_time and end_time > completed_before_dt:
+                continue
+
+            # Apply started_after filter
+            if started_after_dt and start_time and start_time < started_after_dt:
+                continue
+
+            # Apply started_before filter
+            if started_before_dt and start_time and start_time > started_before_dt:
+                continue
+
+            filtered.append(build)
+
+        data = filtered
+
     has_more = len(data) > limit
     builds = [fmt_build(b) for b in data[:limit]]
     return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more})
@@ -399,6 +452,10 @@ async def list_buildsets(
     branch: str = "",
     ref: str = "",
     result: str = "",
+    completed_after: str = "",
+    completed_before: str = "",
+    started_after: str = "",
+    started_before: str = "",
     limit: int = 20,
     skip: int = 0,
     include_builds: bool = False,
@@ -413,6 +470,10 @@ async def list_buildsets(
         branch: Filter by branch name
         ref: Filter by git ref
         result: Filter by result
+        completed_after: Filter buildsets completed after this time (ISO 8601, e.g. "2026-04-18T00:00:00Z")
+        completed_before: Filter buildsets completed before this time (ISO 8601)
+        started_after: Filter buildsets started after this time (ISO 8601)
+        started_before: Filter buildsets started before this time (ISO 8601)
         limit: Max results, 1-100 (default 20)
         skip: Offset for pagination
         include_builds: Fetch full details (builds, events) for each buildset.
@@ -421,7 +482,22 @@ async def list_buildsets(
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
-    params: dict[str, Any] = {"limit": limit + 1, "skip": skip}
+
+    # Parse time filters
+    completed_after_dt = parse_iso_timestamp(completed_after) if completed_after else None
+    completed_before_dt = parse_iso_timestamp(completed_before) if completed_before else None
+    started_after_dt = parse_iso_timestamp(started_after) if started_after else None
+    started_before_dt = parse_iso_timestamp(started_before) if started_before else None
+
+    # Check if any time filters are active
+    has_time_filter = any(
+        [completed_after_dt, completed_before_dt, started_after_dt, started_before_dt]
+    )
+
+    # When time filtering is active, fetch more results initially
+    fetch_limit = min(limit * 3, 300) if has_time_filter else limit
+
+    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": skip}
     for key, val in [
         ("project", project),
         ("pipeline", pipeline),
@@ -434,6 +510,36 @@ async def list_buildsets(
             params[key] = val
 
     data = await api(ctx, f"/tenant/{safepath(t)}/buildsets", params)
+
+    # Apply time-based filtering if any time parameters were provided
+    if has_time_filter:
+        filtered = []
+        for buildset in data:
+            # Parse buildset timestamps
+            # Buildsets may have first_build_start_time and last_build_end_time
+            first_start = parse_iso_timestamp(buildset.get("first_build_start_time", ""))
+            last_end = parse_iso_timestamp(buildset.get("last_build_end_time", ""))
+
+            # Apply completed_after filter
+            if completed_after_dt and last_end and last_end < completed_after_dt:
+                continue
+
+            # Apply completed_before filter
+            if completed_before_dt and last_end and last_end > completed_before_dt:
+                continue
+
+            # Apply started_after filter
+            if started_after_dt and first_start and first_start < started_after_dt:
+                continue
+
+            # Apply started_before filter
+            if started_before_dt and first_start and first_start > started_before_dt:
+                continue
+
+            filtered.append(buildset)
+
+        data = filtered
+
     has_more = len(data) > limit
     trimmed = data[:limit]
 
