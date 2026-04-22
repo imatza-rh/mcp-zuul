@@ -99,6 +99,214 @@ class TestListBuilds:
         assert params["limit"] == "101"  # clamped to 100 + 1
 
 
+class TestListBuildsTimeFiltering:
+    """Tests for client-side time filtering in list_builds."""
+
+    @respx.mock
+    async def test_completed_after_filters_old_builds(self, mock_ctx):
+        builds = [
+            make_build(uuid="new", end_time="2026-04-20T12:00:00Z"),
+            make_build(uuid="old", end_time="2026-04-18T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z"))
+        assert result["count"] == 1
+        assert result["builds"][0]["uuid"] == "new"
+
+    @respx.mock
+    async def test_completed_before_filters_recent_builds(self, mock_ctx):
+        builds = [
+            make_build(uuid="new", end_time="2026-04-20T12:00:00Z"),
+            make_build(uuid="old", end_time="2026-04-18T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, completed_before="2026-04-19T00:00:00Z"))
+        assert result["count"] == 1
+        assert result["builds"][0]["uuid"] == "old"
+
+    @respx.mock
+    async def test_started_after_filters_old_builds(self, mock_ctx):
+        builds = [
+            make_build(uuid="new", start_time="2026-04-20T12:00:00Z"),
+            make_build(uuid="old", start_time="2026-04-18T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, started_after="2026-04-19T00:00:00Z"))
+        assert result["count"] == 1
+        assert result["builds"][0]["uuid"] == "new"
+
+    @respx.mock
+    async def test_combined_time_window(self, mock_ctx):
+        builds = [
+            make_build(uuid="too-new", end_time="2026-04-22T12:00:00Z"),
+            make_build(uuid="in-window", end_time="2026-04-20T12:00:00Z"),
+            make_build(uuid="too-old", end_time="2026-04-17T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(
+                mock_ctx,
+                completed_after="2026-04-19T00:00:00Z",
+                completed_before="2026-04-21T00:00:00Z",
+            )
+        )
+        assert result["count"] == 1
+        assert result["builds"][0]["uuid"] == "in-window"
+
+    @respx.mock
+    async def test_no_matches_returns_empty(self, mock_ctx):
+        builds = [make_build(uuid="old", end_time="2026-01-01T00:00:00Z")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, completed_after="2026-12-01T00:00:00Z"))
+        assert result["count"] == 0
+        assert result["builds"] == []
+
+    @respx.mock
+    async def test_missing_timestamp_passes_through(self, mock_ctx):
+        """Builds without end_time pass completed_after filter (not excluded)."""
+        builds = [
+            make_build(uuid="has-time", end_time="2026-04-20T12:00:00Z"),
+            make_build(uuid="no-time", end_time=None),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z"))
+        assert result["count"] == 2
+        uuids = [b["uuid"] for b in result["builds"]]
+        assert "has-time" in uuids
+        assert "no-time" in uuids
+
+    @respx.mock
+    async def test_overfetch_multiplier(self, mock_ctx):
+        """When time filters active, API limit is 3x user limit."""
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z", limit=10)
+        params = dict(route.calls[0].request.url.params)
+        assert params["limit"] == "31"  # min(10*3, 300) + 1
+
+    @respx.mock
+    async def test_skip_applied_client_side_with_time_filter(self, mock_ctx):
+        """With time filters, skip=0 sent to API; skip applied after filtering."""
+        builds = [
+            make_build(uuid=f"b-{i}", end_time=f"2026-04-{20 - i:02d}T12:00:00Z") for i in range(5)
+        ]
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(
+                mock_ctx,
+                completed_after="2026-04-01T00:00:00Z",
+                limit=2,
+                skip=2,
+            )
+        )
+        # API should receive skip=0
+        params = dict(route.calls[0].request.url.params)
+        assert params["skip"] == "0"
+        # Results should be items 2-3 of the filtered set
+        assert result["count"] == 2
+        assert result["builds"][0]["uuid"] == "b-2"
+        assert result["builds"][1]["uuid"] == "b-3"
+
+    @respx.mock
+    async def test_skip_passed_to_api_without_time_filter(self, mock_ctx):
+        """Without time filters, skip is passed directly to API."""
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        await list_builds(mock_ctx, skip=10)
+        params = dict(route.calls[0].request.url.params)
+        assert params["skip"] == "10"
+
+    @respx.mock
+    async def test_has_more_true_when_api_has_more_data(self, mock_ctx):
+        """has_more=True when API returned full fetch even if filtered count <= limit."""
+        # 61 builds returned (fetch_limit=60 for limit=20), all match filter
+        builds = [make_build(uuid=f"b-{i}", end_time="2026-04-20T12:00:00Z") for i in range(61)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z", limit=20)
+        )
+        assert result["has_more"] is True
+
+    @respx.mock
+    async def test_has_more_true_when_filtered_below_limit_but_api_full(self, mock_ctx):
+        """has_more=True even if filtering drops count below limit, if API had more."""
+        # 61 builds, but only 5 match the filter — API returned full fetch
+        builds = []
+        for i in range(61):
+            ts = "2026-04-20T12:00:00Z" if i < 5 else "2026-01-01T00:00:00Z"
+            builds.append(make_build(uuid=f"b-{i}", end_time=ts))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z", limit=20)
+        )
+        assert result["count"] == 5
+        assert result["has_more"] is True
+
+    @respx.mock
+    async def test_has_more_false_when_api_returned_partial(self, mock_ctx):
+        """has_more=False when API returned fewer than fetch_limit (no more data)."""
+        builds = [make_build(uuid=f"b-{i}", end_time="2026-04-20T12:00:00Z") for i in range(3)]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(mock_ctx, completed_after="2026-04-19T00:00:00Z", limit=20)
+        )
+        assert result["count"] == 3
+        assert result["has_more"] is False
+
+    @respx.mock
+    async def test_without_time_filters_unchanged(self, mock_ctx):
+        """No time filters: behavior identical to before (no overfetch, API skip)."""
+        builds = [make_build(uuid=f"b-{i}") for i in range(3)]
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx, limit=5, skip=10))
+        params = dict(route.calls[0].request.url.params)
+        assert params["limit"] == "6"  # 5 + 1, no overfetch
+        assert params["skip"] == "10"
+        assert result["count"] == 3
+
+    @respx.mock
+    async def test_negative_skip_clamped_to_zero(self, mock_ctx):
+        """Negative skip is clamped to 0 to prevent reverse slicing."""
+        builds = [make_build(uuid=f"b-{i}", end_time="2026-04-20T12:00:00Z") for i in range(3)]
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(
+            await list_builds(
+                mock_ctx,
+                completed_after="2026-01-01T00:00:00Z",
+                skip=-5,
+            )
+        )
+        params = dict(route.calls[0].request.url.params)
+        assert params["skip"] == "0"
+        assert result["count"] == 3
+
+
 class TestGetBuild:
     @respx.mock
     async def test_returns_full_build(self, mock_ctx):
@@ -1215,6 +1423,75 @@ class TestListBuildsets:
         result = json.loads(await list_buildsets(mock_ctx, limit=20, include_builds=True))
         # Only 10 returned due to include_builds cap, but 15 exist
         assert result["count"] == 10
+        assert result["has_more"] is True
+
+
+class TestListBuildsetsTimeFiltering:
+    """Tests for client-side time filtering in list_buildsets."""
+
+    @respx.mock
+    async def test_completed_after_filters_old_buildsets(self, mock_ctx):
+        buildsets = [
+            make_buildset(uuid="new", last_build_end_time="2026-04-20T12:00:00Z"),
+            make_buildset(uuid="old", last_build_end_time="2026-04-18T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=buildsets)
+        )
+        result = json.loads(await list_buildsets(mock_ctx, completed_after="2026-04-19T00:00:00Z"))
+        assert result["count"] == 1
+        assert result["buildsets"][0]["uuid"] == "new"
+
+    @respx.mock
+    async def test_started_before_filters_recent_buildsets(self, mock_ctx):
+        buildsets = [
+            make_buildset(uuid="new", first_build_start_time="2026-04-20T12:00:00Z"),
+            make_buildset(uuid="old", first_build_start_time="2026-04-18T12:00:00Z"),
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=buildsets)
+        )
+        result = json.loads(await list_buildsets(mock_ctx, started_before="2026-04-19T00:00:00Z"))
+        assert result["count"] == 1
+        assert result["buildsets"][0]["uuid"] == "old"
+
+    @respx.mock
+    async def test_skip_applied_client_side_with_time_filter(self, mock_ctx):
+        buildsets = [
+            make_buildset(uuid=f"bs-{i}", last_build_end_time=f"2026-04-{20 - i:02d}T12:00:00Z")
+            for i in range(5)
+        ]
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=buildsets)
+        )
+        result = json.loads(
+            await list_buildsets(
+                mock_ctx,
+                completed_after="2026-04-01T00:00:00Z",
+                limit=2,
+                skip=1,
+            )
+        )
+        params = dict(route.calls[0].request.url.params)
+        assert params["skip"] == "0"
+        assert result["count"] == 2
+        assert result["buildsets"][0]["uuid"] == "bs-1"
+
+    @respx.mock
+    async def test_has_more_when_api_full_and_filtered(self, mock_ctx):
+        """has_more=True when API returned full fetch even if filtered count is small."""
+        # 7 buildsets (fetch_limit=6 for limit=2), only 1 matches
+        buildsets = []
+        for i in range(7):
+            ts = "2026-04-20T12:00:00Z" if i == 0 else "2026-01-01T00:00:00Z"
+            buildsets.append(make_buildset(uuid=f"bs-{i}", last_build_end_time=ts))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=buildsets)
+        )
+        result = json.loads(
+            await list_buildsets(mock_ctx, completed_after="2026-04-19T00:00:00Z", limit=2)
+        )
+        assert result["count"] == 1
         assert result["has_more"] is True
 
 

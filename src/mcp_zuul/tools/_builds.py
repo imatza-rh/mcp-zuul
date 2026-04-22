@@ -10,11 +10,18 @@ from mcp.server.fastmcp import Context
 from ..classifier import Classification, classify_failure, determine_failure_phase
 from ..errors import handle_errors
 from ..formatters import fmt_build, fmt_buildset
-from ..helpers import api, app, clean, parse_iso_timestamp, safepath, stream_log, strip_ansi
+from ..helpers import api, app, clean, safepath, stream_log, strip_ansi
 from ..helpers import tenant as _tenant
 from ..parsers import grep_log_context
 from ..server import mcp
-from ._common import _READ_ONLY, _fetch_job_output, _no_log_url_error, _resolve
+from ._common import (
+    _READ_ONLY,
+    TimeFilters,
+    _apply_time_filters,
+    _fetch_job_output,
+    _no_log_url_error,
+    _resolve,
+)
 
 # Matches repo-relative file paths like roles/deploy_loki/README.md
 # Requires: at least one dir/ component, a filename with extension.
@@ -142,23 +149,13 @@ async def list_builds(
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
+    skip = max(0, skip)
+    tf = TimeFilters(completed_after, completed_before, started_after, started_before)
+    fetch_limit = tf.fetch_limit(limit)
 
-    # Parse time filters
-    completed_after_dt = parse_iso_timestamp(completed_after) if completed_after else None
-    completed_before_dt = parse_iso_timestamp(completed_before) if completed_before else None
-    started_after_dt = parse_iso_timestamp(started_after) if started_after else None
-    started_before_dt = parse_iso_timestamp(started_before) if started_before else None
-
-    # Check if any time filters are active
-    has_time_filter = any(
-        [completed_after_dt, completed_before_dt, started_after_dt, started_before_dt]
-    )
-
-    # When time filtering is active, fetch more results initially to account for filtering
-    # Use 3x multiplier but cap at 300 to avoid excessive API calls
-    fetch_limit = min(limit * 3, 300) if has_time_filter else limit
-
-    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": skip}
+    # When time filters are active, skip is applied client-side after filtering
+    api_skip = 0 if tf.active else skip
+    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": api_skip}
     for key, val in [
         ("project", project),
         ("pipeline", pipeline),
@@ -173,36 +170,13 @@ async def list_builds(
             params[key] = val
 
     data = await api(ctx, f"/tenant/{safepath(t)}/builds", params)
+    api_returned_full = len(data) > fetch_limit
+    data = _apply_time_filters(data, tf)
 
-    # Apply time-based filtering if any time parameters were provided
-    if has_time_filter:
-        filtered = []
-        for build in data:
-            # Parse build timestamps
-            end_time = parse_iso_timestamp(build.get("end_time", ""))
-            start_time = parse_iso_timestamp(build.get("start_time", ""))
+    if tf.active and skip:
+        data = data[skip:]
 
-            # Apply completed_after filter
-            if completed_after_dt and end_time and end_time < completed_after_dt:
-                continue
-
-            # Apply completed_before filter
-            if completed_before_dt and end_time and end_time > completed_before_dt:
-                continue
-
-            # Apply started_after filter
-            if started_after_dt and start_time and start_time < started_after_dt:
-                continue
-
-            # Apply started_before filter
-            if started_before_dt and start_time and start_time > started_before_dt:
-                continue
-
-            filtered.append(build)
-
-        data = filtered
-
-    has_more = len(data) > limit
+    has_more = len(data) > limit or (tf.active and api_returned_full)
     builds = [fmt_build(b) for b in data[:limit]]
     return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more})
 
@@ -482,22 +456,12 @@ async def list_buildsets(
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
+    skip = max(0, skip)
+    tf = TimeFilters(completed_after, completed_before, started_after, started_before)
+    fetch_limit = tf.fetch_limit(limit)
 
-    # Parse time filters
-    completed_after_dt = parse_iso_timestamp(completed_after) if completed_after else None
-    completed_before_dt = parse_iso_timestamp(completed_before) if completed_before else None
-    started_after_dt = parse_iso_timestamp(started_after) if started_after else None
-    started_before_dt = parse_iso_timestamp(started_before) if started_before else None
-
-    # Check if any time filters are active
-    has_time_filter = any(
-        [completed_after_dt, completed_before_dt, started_after_dt, started_before_dt]
-    )
-
-    # When time filtering is active, fetch more results initially
-    fetch_limit = min(limit * 3, 300) if has_time_filter else limit
-
-    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": skip}
+    api_skip = 0 if tf.active else skip
+    params: dict[str, Any] = {"limit": fetch_limit + 1, "skip": api_skip}
     for key, val in [
         ("project", project),
         ("pipeline", pipeline),
@@ -510,37 +474,15 @@ async def list_buildsets(
             params[key] = val
 
     data = await api(ctx, f"/tenant/{safepath(t)}/buildsets", params)
+    api_returned_full = len(data) > fetch_limit
+    data = _apply_time_filters(
+        data, tf, end_field="last_build_end_time", start_field="first_build_start_time"
+    )
 
-    # Apply time-based filtering if any time parameters were provided
-    if has_time_filter:
-        filtered = []
-        for buildset in data:
-            # Parse buildset timestamps
-            # Buildsets may have first_build_start_time and last_build_end_time
-            first_start = parse_iso_timestamp(buildset.get("first_build_start_time", ""))
-            last_end = parse_iso_timestamp(buildset.get("last_build_end_time", ""))
+    if tf.active and skip:
+        data = data[skip:]
 
-            # Apply completed_after filter
-            if completed_after_dt and last_end and last_end < completed_after_dt:
-                continue
-
-            # Apply completed_before filter
-            if completed_before_dt and last_end and last_end > completed_before_dt:
-                continue
-
-            # Apply started_after filter
-            if started_after_dt and first_start and first_start < started_after_dt:
-                continue
-
-            # Apply started_before filter
-            if started_before_dt and first_start and first_start > started_before_dt:
-                continue
-
-            filtered.append(buildset)
-
-        data = filtered
-
-    has_more = len(data) > limit
+    has_more = len(data) > limit or (tf.active and api_returned_full)
     trimmed = data[:limit]
 
     if include_builds:

@@ -9,7 +9,7 @@ import httpx
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
-from ..helpers import app, error, fetch_log_url, parse_zuul_url
+from ..helpers import app, error, fetch_log_url, parse_iso_timestamp, parse_zuul_url
 from ..helpers import tenant as _tenant
 
 # Re-export parsers for backward compat (tests import from mcp_zuul.tools)
@@ -166,3 +166,58 @@ async def _fetch_job_output(ctx: Context, log_url: str) -> tuple[list[dict], lis
         ):
             continue
     return playbooks, failed_tasks, False
+
+
+class TimeFilters:
+    """Parsed time filter parameters for list_builds / list_buildsets."""
+
+    __slots__ = ("active", "completed_after", "completed_before", "started_after", "started_before")
+
+    def __init__(
+        self,
+        completed_after: str = "",
+        completed_before: str = "",
+        started_after: str = "",
+        started_before: str = "",
+    ) -> None:
+        self.completed_after = parse_iso_timestamp(completed_after) if completed_after else None
+        self.completed_before = parse_iso_timestamp(completed_before) if completed_before else None
+        self.started_after = parse_iso_timestamp(started_after) if started_after else None
+        self.started_before = parse_iso_timestamp(started_before) if started_before else None
+        self.active = any(
+            (self.completed_after, self.completed_before, self.started_after, self.started_before)
+        )
+
+    def fetch_limit(self, user_limit: int) -> int:
+        """API fetch limit: overfetch 3x (capped at 300) when filters are active."""
+        if not self.active:
+            return user_limit
+        return min(user_limit * 3, 300)
+
+
+def _apply_time_filters(
+    items: list[dict],
+    tf: TimeFilters,
+    end_field: str = "end_time",
+    start_field: str = "start_time",
+) -> list[dict]:
+    """Filter items by parsed time boundaries.
+
+    Items missing the relevant timestamp field pass through (not excluded).
+    """
+    if not tf.active:
+        return items
+    filtered = []
+    for item in items:
+        end_time = parse_iso_timestamp(item.get(end_field) or "")
+        start_time = parse_iso_timestamp(item.get(start_field) or "")
+        if tf.completed_after and end_time and end_time < tf.completed_after:
+            continue
+        if tf.completed_before and end_time and end_time > tf.completed_before:
+            continue
+        if tf.started_after and start_time and start_time < tf.started_after:
+            continue
+        if tf.started_before and start_time and start_time > tf.started_before:
+            continue
+        filtered.append(item)
+    return filtered

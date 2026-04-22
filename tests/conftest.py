@@ -64,6 +64,8 @@ def make_build(
     log_url: str = "https://logs.example.com/build-uuid-1/",
     project: str = "org/repo",
     change: int = 12345,
+    start_time: str | None = "2025-01-01T00:00:00",
+    end_time: str | None = "2025-01-01T00:05:00",
 ) -> dict:
     """Create a sample build API response."""
     return {
@@ -73,8 +75,8 @@ def make_build(
         "pipeline": pipeline,
         "duration": duration,
         "voting": True,
-        "start_time": "2025-01-01T00:00:00",
-        "end_time": "2025-01-01T00:05:00",
+        "start_time": start_time,
+        "end_time": end_time,
         "event_timestamp": "2025-01-01T00:00:00",
         "log_url": log_url,
         "nodeset": "centos-9-stream",
@@ -96,6 +98,8 @@ def make_buildset(
     result: str = "SUCCESS",
     pipeline: str = "check",
     builds: list | None = None,
+    first_build_start_time: str = "2025-01-01T00:00:00",
+    last_build_end_time: str = "2025-01-01T00:05:00",
 ) -> dict:
     """Create a sample buildset API response."""
     return {
@@ -104,8 +108,8 @@ def make_buildset(
         "pipeline": pipeline,
         "event_timestamp": "2025-01-01T00:00:00",
         "message": "Build succeeded",
-        "first_build_start_time": "2025-01-01T00:00:00",
-        "last_build_end_time": "2025-01-01T00:05:00",
+        "first_build_start_time": first_build_start_time,
+        "last_build_end_time": last_build_end_time,
         "refs": [
             {"project": "org/repo", "change": 12345, "ref_url": "https://review.example.com/12345"}
         ],
