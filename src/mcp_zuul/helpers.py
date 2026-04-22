@@ -66,7 +66,10 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
     re-authenticates via Kerberos on 401.
     """
     a = app(ctx)
-    url = f"/api{path}"
+    # Use an absolute URL so deployments behind a sub-path (e.g. /zuul/) work.
+    # A path-absolute reference like "/api/..." would strip any prefix from
+    # base_url during httpx URL resolution (RFC 3986 §5.2).
+    url = f"{a.config.base_url}/api{path}"
 
     for attempt in range(2):
         resp = await a.client.get(url, params=params)
@@ -108,7 +111,7 @@ async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = 
     a = app(ctx)
     if a.config.read_only:
         raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
-    url = f"/api{path}"
+    url = f"{a.config.base_url}/api{path}"
 
     for attempt in range(2):
         if method == "POST":
