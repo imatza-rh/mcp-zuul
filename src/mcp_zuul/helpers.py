@@ -8,6 +8,7 @@ import re
 import ssl
 import time as _time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -365,3 +366,27 @@ def is_ssl_error(exc: httpx.ConnectError) -> bool:
 def clean(d: dict) -> dict:
     """Remove None, empty string, and empty list values to save tokens."""
     return {k: v for k, v in d.items() if v is not None and v != "" and v != []}
+
+
+def parse_iso_timestamp(ts_str: str) -> datetime | None:
+    """Parse ISO 8601 timestamp string to timezone-aware datetime.
+
+    Handles formats like:
+        - "2026-04-18T00:00:00Z"
+        - "2026-04-18T00:00:00+00:00"
+        - "2026-04-18T14:30:00"
+
+    Returns None if parsing fails.
+    """
+    if not ts_str:
+        return None
+    try:
+        # Replace 'Z' with '+00:00' for fromisoformat compatibility
+        normalized = ts_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        # If no timezone info, assume UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    except (ValueError, AttributeError):
+        return None
