@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations - 36 tools (31 read-only + 4 write + 1 LogJuicer)."""
+"""Zuul MCP tool implementations - 37 tools (31 read-only + 4 write + 1 LogJuicer + 1 console stream)."""
 
 # Re-export symbols used by prompts.py and tests
 # Re-export all tool functions for backward compatibility (tests import from mcp_zuul.tools)
@@ -37,6 +37,7 @@ from ._config import (
     list_projects,
     list_semaphores,
 )
+from ._console import stream_build_console
 from ._logjuicer import get_build_anomalies
 from ._logs import browse_build_logs, get_build_log, tail_build_log
 from ._status import (
@@ -94,5 +95,6 @@ __all__ = [
     "list_projects",
     "list_semaphores",
     "list_tenants",
+    "stream_build_console",
     "tail_build_log",
 ]

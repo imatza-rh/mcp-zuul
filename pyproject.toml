@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 kerberos = ["gssapi>=1.8.0"]
+console = ["websockets>=14.0"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
@@ -93,5 +94,9 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = "gssapi.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "websockets.*"
 ignore_missing_imports = true
 
