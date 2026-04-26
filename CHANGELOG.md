@@ -8,9 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.6.0] - 2026-04-26
 
 ### Added
-- New tool: `stream_build_console` — live console output from RUNNING builds via Zuul's WebSocket console-stream endpoint. Buffers for N seconds and returns the last M lines (tail behavior). Optional dependency — requires `pip install mcp-zuul[console]`
-- New optional extra: `[console]` installs `websockets>=14.0` for live streaming support
-- `_no_log_url_error` now suggests `stream_build_console` when log tools are called on IN_PROGRESS builds
+- New tool: `stream_build_console` — live console output from RUNNING builds via Zuul's WebSocket console-stream endpoint. Connects to the WebSocket, buffers for N seconds (default 10, max 30), and returns the last M lines (default 100, max 500) using a circular buffer for tail behavior. Accepts `uuid` or `url` parameter like other build tools
+- New optional extra: `[console]` installs `websockets>=14.0` for live streaming support. Users who don't need live streaming skip the dependency entirely. The tool returns a clear install message when called without the dependency
+- `_no_log_url_error` now suggests `stream_build_console` when log tools are called on IN_PROGRESS builds, guiding users to the right tool for running jobs
+
+### Highlights
+- **Protocol**: Auth via JWT token in the WebSocket message body (not HTTP headers), verified against upstream Zuul source. Supports both authenticated and public tenants
+- **Chunk reassembly**: Zuul streams raw 4KB chunks from the executor's finger protocol that can split mid-line. A pending-line buffer reassembles lines across chunk boundaries to prevent garbled output
+- **SSL**: Handles both `wss://` (with configurable certificate verification via `ZUUL_VERIFY_SSL`) and `ws://` connections
+- **Error handling**: Specific messages for auth failure (403), completed build (404), validation error (close code 4000), streaming error (4011), connection timeout, and connection refused
 
 ## [0.5.1] - 2026-03-29
 
