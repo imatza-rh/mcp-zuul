@@ -696,3 +696,144 @@ class TestStreamBuildConsole:
 
         assert "error" in result
         assert "timed out" in result["error"].lower()
+
+
+class TestStreamBuildConsoleKerberos:
+    """Tests for Kerberos cookie propagation and re-auth in stream_build_console."""
+
+    async def test_kerberos_cookies_forwarded(self, mock_ctx):
+        """Session cookies from httpx client are sent as additional_headers."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mock_ctx.request_context.lifespan_context.client.cookies.set("_sso_session", "kerb-tok-123")
+        ws = _make_ws(["output\n"])
+        mod = _mock_ws_module(connect_rv=ws)
+
+        with patch("mcp_zuul.tools._console._import_websockets", return_value=mod):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert result["lines_returned"] == 1
+        call_kwargs = mod.connect.call_args[1]
+        headers = call_kwargs.get("additional_headers")
+        assert headers is not None
+        assert "Cookie" in headers
+        assert "_sso_session=kerb-tok-123" in headers["Cookie"]
+
+        mock_ctx.request_context.lifespan_context.client.cookies.clear()
+
+    async def test_no_cookies_no_header(self, mock_ctx):
+        """When client has no cookies, additional_headers is None."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        ws = _make_ws(["output\n"])
+        mod = _mock_ws_module(connect_rv=ws)
+
+        with patch("mcp_zuul.tools._console._import_websockets", return_value=mod):
+            await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+
+        call_kwargs = mod.connect.call_args[1]
+        assert call_kwargs.get("additional_headers") is None
+
+    async def test_kerberos_reauth_on_401(self, mock_ctx):
+        """On 401 with Kerberos enabled, re-auth and retry. Second attempt succeeds."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = True
+        ws_success = _make_ws(["reauthed output\n"])
+        mod = _mock_ws_module()
+
+        # First connect raises 401, second succeeds
+        exc_401 = mod.InvalidStatus()
+        exc_401.response = MagicMock()
+        exc_401.response.status_code = 401
+        mod.connect = MagicMock(side_effect=[exc_401, ws_success])
+
+        with (
+            patch("mcp_zuul.tools._console._import_websockets", return_value=mod),
+            patch("mcp_zuul.tools._console.kerberos_auth", new_callable=AsyncMock) as mock_kerb,
+        ):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert "console" in result
+        assert "reauthed output" in result["console"]
+        mock_kerb.assert_called_once()
+        assert mod.connect.call_count == 2
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = False
+
+    async def test_kerberos_reauth_fails_still_401(self, mock_ctx):
+        """When re-auth succeeds but server still returns 401, clear error message."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = True
+        mod = _mock_ws_module()
+
+        exc_401_a = mod.InvalidStatus()
+        exc_401_a.response = MagicMock()
+        exc_401_a.response.status_code = 401
+        exc_401_b = mod.InvalidStatus()
+        exc_401_b.response = MagicMock()
+        exc_401_b.response.status_code = 401
+        mod.connect = MagicMock(side_effect=[exc_401_a, exc_401_b])
+
+        with (
+            patch("mcp_zuul.tools._console._import_websockets", return_value=mod),
+            patch("mcp_zuul.tools._console.kerberos_auth", new_callable=AsyncMock),
+        ):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert "error" in result
+        assert "kerberos" in result["error"].lower()
+        assert "re-auth" in result["error"].lower() or "kinit" in result["error"].lower()
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = False
+
+    async def test_non_kerberos_401_no_retry(self, mock_ctx):
+        """Without Kerberos, 401 returns error immediately without re-auth."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mod = _mock_ws_module()
+        exc = mod.InvalidStatus()
+        exc.response = MagicMock()
+        exc.response.status_code = 401
+        mod.connect = MagicMock(side_effect=exc)
+
+        with (
+            patch("mcp_zuul.tools._console._import_websockets", return_value=mod),
+            patch("mcp_zuul.tools._console.kerberos_auth", new_callable=AsyncMock) as mock_kerb,
+        ):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert "error" in result
+        assert "401" in result["error"]
+        mock_kerb.assert_not_called()
+        assert mod.connect.call_count == 1
+
+    async def test_multiple_cookies_forwarded(self, mock_ctx):
+        """Multiple cookies are joined with '; ' separator."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        cookies = mock_ctx.request_context.lifespan_context.client.cookies
+        cookies.set("session", "abc")
+        cookies.set("csrf", "xyz")
+        ws = _make_ws(["output\n"])
+        mod = _mock_ws_module(connect_rv=ws)
+
+        with patch("mcp_zuul.tools._console._import_websockets", return_value=mod):
+            await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+
+        headers = mod.connect.call_args[1].get("additional_headers", {})
+        cookie_val = headers.get("Cookie", "")
+        assert "session=abc" in cookie_val
+        assert "csrf=xyz" in cookie_val
+        assert "; " in cookie_val
+
+        cookies.clear()
