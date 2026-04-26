@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-04-26
+
+### Added
+- New tool: `stream_build_console` — live console output from RUNNING builds via Zuul's WebSocket console-stream endpoint. Buffers for N seconds and returns the last M lines (tail behavior). Optional dependency — requires `pip install mcp-zuul[console]`
+- New optional extra: `[console]` installs `websockets>=14.0` for live streaming support
+- `_no_log_url_error` now suggests `stream_build_console` when log tools are called on IN_PROGRESS builds
+
 ## [0.5.1] - 2026-03-29
 
 ### Added
