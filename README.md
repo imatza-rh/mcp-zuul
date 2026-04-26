@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-36 tools (31 read-only + 4 write + 1 LogJuicer), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+37 tools (31 read-only + 4 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -90,6 +90,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `get_build_log` | Read and search log files. Modes: `summary` (tail + error lines), `full` (paginated), `grep` (regex + context), `start_line`/`end_line` (exact range). Supports `log_name` for any file. Accepts `url` or `uuid`. |
 | `tail_build_log` | **Fastest failure check.** Last N lines of a log (default 50, max 500). More token-efficient than `get_build_log` summary mode. Accepts `url` or `uuid`. |
 | `browse_build_logs` | List log directory contents or fetch specific files (inventory, artifacts, must-gather). Max 512KB per file. Accepts `url` or `uuid`. |
+| `stream_build_console` | **Live console from RUNNING builds.** Connects to Zuul WebSocket, returns last N lines (tail). For completed builds, use `tail_build_log`. Optional — requires `pip install mcp-zuul[console]`. |
 
 ### Buildsets
 
@@ -451,7 +452,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (36 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (37 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 

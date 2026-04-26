@@ -108,7 +108,10 @@ def _no_log_url_error(build: dict, uuid: str) -> str:
         )
         if detail:
             msg += f" Error detail: {detail}"
-        msg += " Use get_change_status for live progress or wait for the build to complete."
+        msg += (
+            " Use stream_build_console for live output, "
+            "get_change_status for progress, or wait for the build to complete."
+        )
         return error(msg)
     return error(
         f"No log_url for build {uuid} (result: {result}). "
