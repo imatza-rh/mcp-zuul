@@ -129,9 +129,9 @@ async def stream_build_console(
     # Build WebSocket URL from API base URL
     base = a.config.base_url
     if base.startswith("https://"):
-        ws_url = "wss://" + base[len("https://"):]
+        ws_url = "wss://" + base[len("https://") :]
     elif base.startswith("http://"):
-        ws_url = "ws://" + base[len("http://"):]
+        ws_url = "ws://" + base[len("http://") :]
     else:
         return error(f"Cannot build WebSocket URL from base: {base}")
     ws_url = f"{ws_url}/api/tenant/{safepath(t)}/console-stream"
@@ -154,70 +154,62 @@ async def stream_build_console(
     # Session cookies from Kerberos auth (sent during HTTP upgrade)
     ws_headers = _cookie_header(a)
 
-    try:
-        buffer, total_lines = await _ws_stream(
-            websockets, ws_url, ssl_ctx, ws_headers, init_msg, lines, timeout
-        )
-    except websockets.InvalidStatus as e:
-        code = getattr(getattr(e, "response", None), "status_code", 0)
+    for _attempt in range(2):
+        try:
+            buffer, total_lines = await _ws_stream(
+                websockets, ws_url, ssl_ctx, ws_headers, init_msg, lines, timeout
+            )
+            break
+        except websockets.InvalidStatus as e:
+            code = getattr(getattr(e, "response", None), "status_code", 0)
 
-        # Re-authenticate on 401 when using Kerberos (session expired)
-        if code == 401 and a.config.use_kerberos:
-            gen = a._auth_generation
-            async with a._auth_lock:
-                if a._auth_generation == gen:
-                    log.info("WebSocket 401, re-authenticating via Kerberos")
-                    await kerberos_auth(a.client, a.config.base_url)
-                    a._auth_generation += 1
-            ws_headers = _cookie_header(a)
-            try:
-                buffer, total_lines = await _ws_stream(
-                    websockets, ws_url, ssl_ctx, ws_headers, init_msg, lines, timeout
-                )
-            except websockets.InvalidStatus as e2:
-                code2 = getattr(getattr(e2, "response", None), "status_code", 0)
+            # Re-authenticate on 401 when using Kerberos (session expired)
+            if code == 401 and a.config.use_kerberos and _attempt == 0:
+                gen = a._auth_generation
+                async with a._auth_lock:
+                    if a._auth_generation == gen:
+                        log.info("WebSocket 401, re-authenticating via Kerberos")
+                        await kerberos_auth(a.client, a.config.base_url)
+                        a._auth_generation += 1
+                ws_headers = _cookie_header(a)
+                continue
+
+            if code == 401:
+                if _attempt > 0:
+                    return error(
+                        f"WebSocket auth failed after Kerberos re-auth: HTTP {code}. "
+                        "Check Kerberos ticket (kinit) and tenant auth configuration."
+                    )
                 return error(
-                    f"WebSocket auth failed after Kerberos re-auth: HTTP {code2}. "
-                    "Check Kerberos ticket (kinit) and tenant auth configuration."
+                    "WebSocket auth failed (401). "
+                    "For Kerberos: set ZUUL_USE_KERBEROS=true and run kinit. "
+                    "For JWT: set ZUUL_AUTH_TOKEN."
                 )
-            except (
-                websockets.ConnectionClosedError,
-                TimeoutError,
-                ConnectionRefusedError,
-                OSError,
-            ):
-                raise
-        elif code == 401:
-            return error(
-                "WebSocket auth failed (401). "
-                "For Kerberos: set ZUUL_USE_KERBEROS=true and run kinit. "
-                "For JWT: set ZUUL_AUTH_TOKEN."
-            )
-        elif code == 403:
-            return error(
-                "WebSocket auth failed (403). "
-                "Check auth token (ZUUL_AUTH_TOKEN) or tenant auth configuration."
-            )
-        elif code == 404:
-            return error(
-                f"Console stream not available for build {build_uuid}. "
-                "Build may have completed — use tail_build_log instead."
-            )
-        else:
-            return error(f"WebSocket connection failed: HTTP {code}")
-    except websockets.ConnectionClosedError as e:
-        rcvd = getattr(e, "rcvd", None)
-        code = getattr(rcvd, "code", 0)
-        reason = getattr(rcvd, "reason", "")
-        if code == 4000:
-            return error(f"Console stream rejected (4000): {reason}")
-        if code == 4011:
-            return error(f"Console stream error (4011): {reason}")
-        return error(f"Console stream connection closed: code={code} {reason}".strip())
-    except TimeoutError:
-        return error("Console stream connection timed out")
-    except (ConnectionRefusedError, OSError) as e:
-        return error(f"Cannot connect to console stream: {e}")
+            elif code == 403:
+                return error(
+                    "WebSocket auth failed (403). "
+                    "Check auth token (ZUUL_AUTH_TOKEN) or tenant auth configuration."
+                )
+            elif code == 404:
+                return error(
+                    f"Console stream not available for build {build_uuid}. "
+                    "Build may have completed — use tail_build_log instead."
+                )
+            else:
+                return error(f"WebSocket connection failed: HTTP {code}")
+        except websockets.ConnectionClosedError as e:
+            rcvd = getattr(e, "rcvd", None)
+            code = getattr(rcvd, "code", 0)
+            reason = getattr(rcvd, "reason", "")
+            if code == 4000:
+                return error(f"Console stream rejected (4000): {reason}")
+            if code == 4011:
+                return error(f"Console stream error (4011): {reason}")
+            return error(f"Console stream connection closed: code={code} {reason}".strip())
+        except TimeoutError:
+            return error("Console stream connection timed out")
+        except (ConnectionRefusedError, OSError) as e:
+            return error(f"Cannot connect to console stream: {e}")
 
     if not buffer:
         return error(

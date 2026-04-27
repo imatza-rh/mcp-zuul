@@ -837,3 +837,71 @@ class TestStreamBuildConsoleKerberos:
         assert "; " in cookie_val
 
         cookies.clear()
+
+    async def test_retry_timeout_gets_specific_error(self, mock_ctx):
+        """Retry after Kerberos re-auth that times out gets specific error, not generic."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = True
+        mod = _mock_ws_module()
+
+        # First connect raises 401, second raises TimeoutError
+        exc_401 = mod.InvalidStatus()
+        exc_401.response = MagicMock()
+        exc_401.response.status_code = 401
+        mod.connect = MagicMock(side_effect=[exc_401, TimeoutError("timed out")])
+
+        with (
+            patch("mcp_zuul.tools._console._import_websockets", return_value=mod),
+            patch("mcp_zuul.tools._console.kerberos_auth", new_callable=AsyncMock),
+        ):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert "error" in result
+        assert "timed out" in result["error"].lower()
+        # Must NOT be the generic @handle_errors message
+        assert "internal error" not in result["error"].lower()
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = False
+
+    async def test_retry_connection_closed_gets_specific_error(self, mock_ctx):
+        """Retry after Kerberos re-auth with ConnectionClosed gets specific error."""
+        from mcp_zuul.tools._console import stream_build_console
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = True
+        mod = _mock_ws_module()
+
+        exc_401 = mod.InvalidStatus()
+        exc_401.response = MagicMock()
+        exc_401.response.status_code = 401
+        exc_closed = mod.ConnectionClosedError()
+        exc_closed.rcvd = _FakeClose(4011, "executor died")
+
+        # First connect raises 401; second raises ConnectionClosedError inside the WS
+        ws_fail = AsyncMock()
+        ws_fail.__aenter__ = AsyncMock(return_value=ws_fail)
+        ws_fail.__aexit__ = AsyncMock(return_value=False)
+        ws_fail.send = AsyncMock()
+
+        async def _raise_closed():
+            raise exc_closed
+            yield  # make it a generator
+
+        ws_fail.__aiter__ = lambda self: _raise_closed()
+        mod.connect = MagicMock(side_effect=[exc_401, ws_fail])
+
+        with (
+            patch("mcp_zuul.tools._console._import_websockets", return_value=mod),
+            patch("mcp_zuul.tools._console.kerberos_auth", new_callable=AsyncMock),
+        ):
+            result = json.loads(
+                await stream_build_console(mock_ctx, uuid="abc123", tenant="test-tenant", timeout=3)
+            )
+
+        assert "error" in result
+        assert "4011" in result["error"]
+        assert "internal error" not in result["error"].lower()
+
+        mock_ctx.request_context.lifespan_context.config.use_kerberos = False
