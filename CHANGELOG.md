@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-04-27
+
+### Fixed
+- `stream_build_console` now forwards Kerberos session cookies to the WebSocket HTTP upgrade request. Previously, the websockets library didn't share the httpx cookie jar, causing 401 failures on Kerberos-authenticated Zuul instances
+- `stream_build_console` Kerberos re-auth retry path now returns specific error messages (e.g. "Console stream connection timed out") instead of generic "Internal error" on retry failures. Restructured from nested try/except to a retry loop matching the `api()` pattern
+- `get_change_status` with URL parameter now correctly strips the `,sha` suffix from Zuul status URLs (e.g. `/status/change/2134,799a6ec...` extracts `2134`). Previously the full string was percent-encoded, producing an API path the server couldn't match
+- `get_change_status` now finds GitLab MRs in the live pipeline by searching the full `/status` response when the `/status/change/` endpoint returns empty. The per-change endpoint doesn't work reliably for GitLab MRs on Apache-fronted Zuul (`%2F`-encoded refs get 404, raw-slash refs serve SPA HTML). This eliminates false `not_in_pipeline` results with stale SQL data for active GitLab MRs
+- Full pipeline status search gracefully degrades to SQL on malformed or non-JSON `/status` responses instead of crashing
+
+### Added
+- `_find_change_in_status` helper matches changes by numeric ID (Gerrit/GitHub) and by ref pattern (GitLab `refs/merge-requests/N/head`, GitHub `refs/pull/N/head`)
+
 ## [0.6.0] - 2026-04-26
 
 ### Added
