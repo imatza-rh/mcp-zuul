@@ -431,8 +431,9 @@ class TestGetChangeStatus:
 
     @respx.mock
     async def test_accepts_change_url(self, mock_ctx):
+        """Change URL with 'number,sha' strips the sha — API gets just the number."""
         item = make_status_item(change=99999)
-        respx.get("https://zuul.example.com/api/tenant/my-tenant/status/change/99999%2Cabc").mock(
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/status/change/99999").mock(
             return_value=httpx.Response(200, json=[item])
         )
         result = json.loads(
@@ -453,6 +454,22 @@ class TestGetChangeStatus:
         )
         assert "error" in result
         assert "Expected change" in result["error"]
+
+    @respx.mock
+    async def test_url_strips_comma_sha_from_change_id(self, mock_ctx):
+        """Status URLs use 'number,sha' format — only the number is used for API calls."""
+        item = make_status_item(change=2134)
+        respx.get("https://zuul.example.com/api/tenant/my-tenant/status/change/2134").mock(
+            return_value=httpx.Response(200, json=[item])
+        )
+        result = json.loads(
+            await get_change_status(
+                mock_ctx,
+                url="https://zuul.example.com/t/my-tenant/status/change/2134,799a6ec2a2e0df4164b3bfe2731544d5a3a743ad",
+            )
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
 
     @respx.mock
     async def test_github_ref_extracts_change_number(self, mock_ctx):
