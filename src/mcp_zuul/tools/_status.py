@@ -134,15 +134,22 @@ async def get_status(
 
 
 def _find_change_in_status(status: dict, change: str) -> list[dict]:
-    """Search the full /status response for a change by number or MR ref."""
+    """Search the full /status response for a change by number or ref.
+
+    Matches against ref-level ``change`` (int, for Gerrit/GitHub) and
+    ``ref`` (string, for GitLab MRs where ``change`` is null).
+    """
     change_int = int(change)
-    mr_ref = f"refs/merge-requests/{change}/head"
+    match_refs = {
+        f"refs/merge-requests/{change}/head",
+        f"refs/pull/{change}/head",
+    }
     for pipeline in status.get("pipelines", []):
         for queue in pipeline.get("change_queues", []):
             for head in queue.get("heads", []):
                 for item in head:
                     for ref in item.get("refs", []):
-                        if ref.get("change") == change_int or ref.get("ref") == mr_ref:
+                        if ref.get("change") == change_int or ref.get("ref") in match_refs:
                             return [item]
     return []
 
@@ -209,7 +216,15 @@ async def get_change_status(
         try:
             full_status = await api(ctx, f"/tenant/{safepath(t)}/status")
             data = _find_change_in_status(full_status, change)
-        except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError):
+        except (
+            httpx.HTTPStatusError,
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            ValueError,
+            KeyError,
+            TypeError,
+            AttributeError,
+        ):
             pass
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save

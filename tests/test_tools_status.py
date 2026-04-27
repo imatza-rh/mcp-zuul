@@ -353,6 +353,40 @@ class TestGetChangeStatus:
         assert len(result) == 1
 
     @respx.mock
+    async def test_gitlab_mr_found_when_change_field_is_null(self, mock_ctx):
+        """Real GitLab MRs have change=None in refs — match via ref field instead."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/2134").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        item = make_status_item(change=2134)
+        item["refs"][0]["change"] = None
+        item["refs"][0]["ref"] = "refs/merge-requests/2134/head"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={"pipelines": [{"name": "check", "change_queues": [{"heads": [[item]]}]}]},
+            )
+        )
+        result = json.loads(await get_change_status(mock_ctx, "2134"))
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    @respx.mock
+    async def test_full_status_error_falls_to_sql(self, mock_ctx):
+        """Non-JSON /status response falls through to SQL instead of crashing."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/5555").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, text="<html>OIDC login</html>")
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await get_change_status(mock_ctx, "5555"))
+        assert result["status"] == "not_in_pipeline"
+
+    @respx.mock
     async def test_digit_change_not_in_pipeline_skips_to_sql(self, mock_ctx):
         """Digit-only change not in direct or full status goes to SQL buildset lookup."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
