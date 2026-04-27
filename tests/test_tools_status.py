@@ -133,11 +133,10 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/99999").mock(
             return_value=httpx.Response(200, json=[])
         )
-        # GitLab MR ref fallback also returns empty
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F99999%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        # Full pipeline status fallback also returns empty
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-latest"}])
         )
@@ -154,10 +153,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/77777").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F77777%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             side_effect=httpx.ReadTimeout("timed out")
         )
@@ -170,11 +168,10 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/88888").mock(
             return_value=httpx.Response(200, json=[])
         )
-        # GitLab MR ref fallback also returns empty
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F88888%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        # Full pipeline status fallback also returns empty
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -188,10 +185,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/44444").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F44444%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-url-test"}])
         )
@@ -209,10 +205,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55555").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F55555%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         bs = make_buildset(uuid="bs-running", result="IN_PROGRESS")
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-running"}])
@@ -235,10 +230,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55556").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F55556%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid="b-done", job_name="job-a", result="SUCCESS"),
             make_build(uuid="b-run", job_name="job-b", result=None, duration=None),
@@ -265,10 +259,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/77777").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F77777%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         running_build = make_build(
             uuid="b-running",
             result=None,
@@ -303,10 +296,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/55557").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F55557%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid="b-1", job_name="job-a", result="SUCCESS"),
             make_build(uuid="b-2", job_name="job-b", result="FAILURE"),
@@ -329,10 +321,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/66666").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F66666%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-done"}])
         )
@@ -344,31 +335,32 @@ class TestGetChangeStatus:
         assert "status_hint" not in result
 
     @respx.mock
-    async def test_gitlab_mr_ref_fallback(self, mock_ctx):
-        """Digit-only change retries with refs/merge-requests/N/head for GitLab MRs."""
+    async def test_gitlab_mr_found_via_full_status(self, mock_ctx):
+        """Digit-only change found via full /status search when /status/change/ returns empty."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
             return_value=httpx.Response(200, json=[])
         )
         item = make_status_item(change=1925)
         item["refs"][0]["ref"] = "refs/merge-requests/1925/head"
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F1925%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[item]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={"pipelines": [{"name": "check", "change_queues": [{"heads": [[item]]}]}]},
+            )
+        )
         result = json.loads(await get_change_status(mock_ctx, "1925"))
         assert isinstance(result, list)
         assert len(result) == 1
 
     @respx.mock
-    async def test_digit_change_not_in_pipeline_skips_full_scan(self, mock_ctx):
-        """Digit-only change with no direct match goes to buildset lookup, not full scan."""
+    async def test_digit_change_not_in_pipeline_skips_to_sql(self, mock_ctx):
+        """Digit-only change not in direct or full status goes to SQL buildset lookup."""
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/1925").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F1925%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[])
         )
@@ -382,10 +374,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/2001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F2001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-uuid-1"}])
         )
@@ -698,10 +689,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90003").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F90003%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-brief"}])
         )
@@ -736,10 +726,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90004").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F90004%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         bs = make_buildset(
             uuid="bs-size",
             builds=[make_build(uuid=f"b-{i}", job_name=f"job-{i}") for i in range(5)],
@@ -763,10 +752,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90005").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F90005%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-rurl"}])
         )
@@ -785,10 +773,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90006").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F90006%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         running_build = make_build(uuid="b-run", result=None, duration=None)
         running_build["start_time"] = "2020-01-01T00:00:00"
         running_build["end_time"] = None
@@ -823,10 +810,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F91001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid=f"b-{i}", job_name=f"job-{i}", result="SUCCESS") for i in range(3)
         ]
@@ -855,10 +841,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91002").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F91002%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         done = make_build(uuid="b-done", job_name="deploy-infra", result="SUCCESS")
         running1 = make_build(uuid="b-run1", job_name="deploy-ocp", result=None, duration=None)
         running1["start_time"] = "2020-01-01T00:00:00"
@@ -893,10 +878,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91003").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F91003%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid="b-0", job_name="job-0", result="SUCCESS"),
             make_build(uuid="b-1", job_name="job-1", result="FAILURE"),
@@ -926,10 +910,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91004").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F91004%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         # Build the response directly — make_buildset(builds=[]) falls through
         # to default because [] is falsy in Python.
         bs = {
@@ -959,10 +942,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/91005").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F91005%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid="b-f0", job_name="job-0", result="FAILURE"),
             make_build(uuid="b-f1", job_name="job-1", result="NODE_FAILURE"),
@@ -992,10 +974,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/95001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F95001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         # Buildset has 2 dispatched builds, but pipeline has 5 jobs
         builds = [
             make_build(uuid="b-0", job_name="deploy-infra", result="SUCCESS"),
@@ -1036,10 +1017,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/95002").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F95002%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         builds = [
             make_build(uuid="b-0", job_name="deploy-infra", result="SUCCESS"),
         ]
@@ -1068,10 +1048,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/92001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F92001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(200, json=[{"uuid": "bs-err"}])
         )
@@ -1101,10 +1080,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/93001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F93001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(403, text="Forbidden")
         )
@@ -1124,10 +1102,9 @@ class TestGetChangeStatus:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/94001").mock(
             return_value=httpx.Response(200, json=[])
         )
-        respx.get(
-            "https://zuul.example.com/api/tenant/test-tenant/status/change/"
-            "refs%2Fmerge-requests%2F94001%2Fhead"
-        ).mock(return_value=httpx.Response(200, json=[]))
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(200, json={"pipelines": []})
+        )
         # api() retries once on 500, so mock both attempts
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildsets").mock(
             return_value=httpx.Response(503, text="Service Unavailable")

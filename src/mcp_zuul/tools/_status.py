@@ -133,6 +133,20 @@ async def get_status(
     return json.dumps(out)
 
 
+def _find_change_in_status(status: dict, change: str) -> list[dict]:
+    """Search the full /status response for a change by number or MR ref."""
+    change_int = int(change)
+    mr_ref = f"refs/merge-requests/{change}/head"
+    for pipeline in status.get("pipelines", []):
+        for queue in pipeline.get("change_queues", []):
+            for head in queue.get("heads", []):
+                for item in head:
+                    for ref in item.get("refs", []):
+                        if ref.get("change") == change_int or ref.get("ref") == mr_ref:
+                            return [item]
+    return []
+
+
 @mcp.tool(title="Change Status", annotations=_READ_ONLY)
 @handle_errors
 async def get_change_status(
@@ -187,19 +201,16 @@ async def get_change_status(
         else:
             raise
     if not data and change.isdigit():
-        # Digit-only change not found — retry with GitLab MR ref format.
-        # Some Zuul versions index GitLab MRs by full ref only, so
-        # /status/change/456 returns [] while /status/change/refs/merge-requests/456/head works.
+        # Digit-only change not found — search the full pipeline status.
+        # The /status/change/ endpoint doesn't work reliably for GitLab MRs
+        # on Apache-fronted Zuul: bare numbers return empty, %2F-encoded refs
+        # get 404, and raw-slash refs serve the SPA HTML instead of the API.
+        # Fall back to fetching /status and matching by MR number.
         try:
-            data = await api(
-                ctx,
-                f"/tenant/{safepath(t)}/status/change/refs%2Fmerge-requests%2F{change}%2Fhead",
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                data = []
-            else:
-                raise
+            full_status = await api(ctx, f"/tenant/{safepath(t)}/status")
+            data = _find_change_in_status(full_status, change)
+        except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError):
+            pass
     if not data:
         # Not in pipeline — fetch the latest completed buildset to save
         # the caller a list_buildsets + get_buildset round-trip.
