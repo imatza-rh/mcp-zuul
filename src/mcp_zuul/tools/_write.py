@@ -7,13 +7,12 @@ from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
 from ..helpers import api, api_delete, api_post, clean, error, safepath
-from ..helpers import app as _app
 from ..helpers import tenant as _tenant
 from ..server import mcp
 from ._common import _DESTRUCTIVE, _WRITE, _resolve
 
 
-@mcp.tool(title="Enqueue Change", annotations=_WRITE)
+@mcp.tool(title="Enqueue", annotations=_WRITE)
 @handle_errors
 async def enqueue(
     ctx: Context,
@@ -21,18 +20,24 @@ async def enqueue(
     pipeline: str,
     change: str = "",
     ref: str = "",
+    oldrev: str = "",
+    newrev: str = "",
     tenant: str = "",
 ) -> str:
     """Enqueue a change or ref into a pipeline for testing.
 
     Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
     Provide either change (e.g. "12345,1") or ref (e.g. "refs/heads/main").
+    For ref-based enqueue (periodic pipelines), oldrev and newrev are also sent
+    (empty strings to re-trigger).
 
     Args:
         project: Project name (e.g. "org/repo")
         pipeline: Pipeline to enqueue into (e.g. "check", "gate")
         change: Change to enqueue (e.g. "12345,1" for Gerrit)
-        ref: Git ref to enqueue (for ref-based pipelines)
+        ref: Git ref to enqueue (e.g. "refs/heads/main" for periodic pipelines)
+        oldrev: Old revision for ref-based enqueue (empty string for re-trigger)
+        newrev: New revision for ref-based enqueue (empty string for re-trigger)
         tenant: Tenant name (uses default if empty)
     """
     if not change and not ref:
@@ -43,6 +48,8 @@ async def enqueue(
         body["change"] = change
     if ref:
         body["ref"] = ref
+        body["oldrev"] = oldrev
+        body["newrev"] = newrev
     path = f"/tenant/{safepath(t)}/project/{safepath(project)}/enqueue"
     result = await api_post(ctx, path, body)
     return json.dumps(
@@ -151,48 +158,6 @@ async def autohold_delete(
     return json.dumps({"status": "deleted", "autohold_id": autohold_id})
 
 
-@mcp.tool(title="Enqueue Ref", annotations=_WRITE)
-@handle_errors
-async def enqueue_ref(
-    ctx: Context,
-    project: str,
-    pipeline: str,
-    ref: str,
-    oldrev: str = "",
-    newrev: str = "",
-    tenant: str = "",
-) -> str:
-    """Re-enqueue a ref (branch) into a pipeline — triggers periodic jobs without waiting for the timer.
-
-    Uses the same /enqueue endpoint as enqueue but with ref+oldrev+newrev
-    instead of change, which triggers the ref-based enqueue path in Zuul.
-
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
-
-    Args:
-        project: Project name (e.g. "ci-framework/integration")
-        pipeline: Pipeline name (e.g. "openstack-uni-jobs-periodic-integration-rhoso18.0-rhel9")
-        ref: Git ref (e.g. "refs/heads/shiftstack")
-        oldrev: Old revision (empty string for re-trigger)
-        newrev: New revision (empty string for re-trigger)
-        tenant: Tenant name (uses default if empty)
-    """
-    t = _tenant(ctx, tenant)
-    body: dict[str, Any] = {
-        "pipeline": pipeline,
-        "ref": ref,
-        "oldrev": oldrev,
-        "newrev": newrev,
-    }
-    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/enqueue"
-    result = await api_post(ctx, path, body)
-    return json.dumps(
-        clean(
-            {"status": "enqueued", "project": project, "pipeline": pipeline, "ref": ref, **result}
-        )
-    )
-
-
 @mcp.tool(title="Re-enqueue Buildset", annotations=_WRITE)
 @handle_errors
 async def reenqueue_buildset(
@@ -213,8 +178,6 @@ async def reenqueue_buildset(
         tenant: Tenant name (uses default if empty)
         url: Zuul buildset URL (alternative to uuid + tenant)
     """
-    if _app(ctx).config.read_only:
-        raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
     bs_uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")
     data = await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}")
 

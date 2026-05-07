@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations - 39 tools (31 read-only + 6 write + 1 LogJuicer + 1 console stream)."""
+"""Zuul MCP tool implementations - 38 tools (31 read-only + 5 write + 1 LogJuicer + 1 console stream)."""
 
 # Re-export symbols used by prompts.py and tests
 # Re-export all tool functions for backward compatibility (tests import from mcp_zuul.tools)
@@ -54,7 +54,6 @@ from ._write import (
     autohold_delete,
     dequeue,
     enqueue,
-    enqueue_ref,
     reenqueue_buildset,
 )
 
@@ -73,7 +72,6 @@ __all__ = [
     "dequeue",
     "diagnose_build",
     "enqueue",
-    "enqueue_ref",
     "find_flaky_jobs",
     "get_build",
     "get_build_anomalies",

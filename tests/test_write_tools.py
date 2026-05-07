@@ -1,4 +1,4 @@
-"""Tests for write operations (enqueue, dequeue, autohold, enqueue_ref, reenqueue_buildset)."""
+"""Tests for write operations (enqueue, dequeue, autohold, reenqueue_buildset)."""
 
 import json
 
@@ -10,7 +10,6 @@ from mcp_zuul.tools import (
     autohold_delete,
     dequeue,
     enqueue,
-    enqueue_ref,
     reenqueue_buildset,
 )
 
@@ -28,14 +27,36 @@ class TestEnqueue:
         assert result["pipeline"] == "check"
 
     @respx.mock
-    async def test_enqueues_ref(self, mock_ctx):
-        respx.post(
+    async def test_enqueues_ref_with_oldrev_newrev(self, mock_ctx):
+        route = respx.post(
             "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/enqueue"
         ).mock(return_value=httpx.Response(200, json={}))
         result = json.loads(
             await enqueue(mock_ctx, project="org/repo", pipeline="gate", ref="refs/heads/main")
         )
         assert result["status"] == "enqueued"
+        body = json.loads(route.calls[0].request.content)
+        assert body["ref"] == "refs/heads/main"
+        assert body["oldrev"] == ""
+        assert body["newrev"] == ""
+        assert "change" not in body
+
+    @respx.mock
+    async def test_enqueues_ref_with_custom_revs(self, mock_ctx):
+        route = respx.post(
+            "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/enqueue"
+        ).mock(return_value=httpx.Response(200, json={}))
+        await enqueue(
+            mock_ctx,
+            project="org/repo",
+            pipeline="gate",
+            ref="refs/heads/main",
+            oldrev="abc123",
+            newrev="def456",
+        )
+        body = json.loads(route.calls[0].request.content)
+        assert body["oldrev"] == "abc123"
+        assert body["newrev"] == "def456"
 
     async def test_requires_change_or_ref(self, mock_ctx):
         result = json.loads(await enqueue(mock_ctx, project="org/repo", pipeline="check"))
@@ -91,65 +112,6 @@ class TestAutoholdDelete:
         result = json.loads(await autohold_delete(mock_ctx, autohold_id="42"))
         assert result["status"] == "deleted"
         assert result["autohold_id"] == "42"
-
-
-class TestEnqueueRef:
-    @respx.mock
-    async def test_enqueues_ref(self, mock_ctx):
-        route = respx.post(
-            "https://zuul.example.com/api/tenant/test-tenant"
-            "/project/ci-framework%2Fintegration/enqueue"
-        ).mock(return_value=httpx.Response(200, json={}))
-        result = json.loads(
-            await enqueue_ref(
-                mock_ctx,
-                project="ci-framework/integration",
-                pipeline="periodic-pipeline",
-                ref="refs/heads/shiftstack",
-            )
-        )
-        assert result["status"] == "enqueued"
-        assert result["pipeline"] == "periodic-pipeline"
-        assert result["ref"] == "refs/heads/shiftstack"
-        assert result["project"] == "ci-framework/integration"
-        body = json.loads(route.calls[0].request.content)
-        assert body == {
-            "pipeline": "periodic-pipeline",
-            "ref": "refs/heads/shiftstack",
-            "oldrev": "",
-            "newrev": "",
-        }
-
-    @respx.mock
-    async def test_sends_oldrev_newrev(self, mock_ctx):
-        route = respx.post(
-            "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/enqueue"
-        ).mock(return_value=httpx.Response(200, json={}))
-        await enqueue_ref(
-            mock_ctx,
-            project="org/repo",
-            pipeline="gate",
-            ref="refs/heads/main",
-            oldrev="abc123",
-            newrev="def456",
-        )
-        body = json.loads(route.calls[0].request.content)
-        assert body["oldrev"] == "abc123"
-        assert body["newrev"] == "def456"
-        assert body["ref"] == "refs/heads/main"
-
-    async def test_blocked_in_read_only(self, mock_ctx):
-        mock_ctx.request_context.lifespan_context.config.read_only = True
-        result = json.loads(
-            await enqueue_ref(
-                mock_ctx,
-                project="org/repo",
-                pipeline="check",
-                ref="refs/heads/main",
-            )
-        )
-        assert "error" in result
-        assert "Write operations disabled" in result["error"]
 
 
 class TestReenqueueBuildset:
@@ -249,7 +211,19 @@ class TestReenqueueBuildset:
         assert "error" in result
         assert "no refs" in result["error"]
 
+    @respx.mock
     async def test_blocked_in_read_only(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid-1").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "uuid": "bs-uuid-1",
+                    "pipeline": "check",
+                    "refs": [{"project": "org/repo", "ref": "refs/heads/main"}],
+                    "builds": [],
+                },
+            )
+        )
         mock_ctx.request_context.lifespan_context.config.read_only = True
         result = json.loads(await reenqueue_buildset(mock_ctx, uuid="bs-uuid-1"))
         assert "error" in result

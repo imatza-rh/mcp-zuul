@@ -118,7 +118,6 @@ class TestLifespanReadOnly:
 
         assert set(removed) >= {
             "enqueue",
-            "enqueue_ref",
             "dequeue",
             "autohold_create",
             "autohold_delete",
@@ -149,7 +148,6 @@ class TestLifespanReadOnly:
 
         write_tools = {
             "enqueue",
-            "enqueue_ref",
             "dequeue",
             "autohold_create",
             "autohold_delete",
