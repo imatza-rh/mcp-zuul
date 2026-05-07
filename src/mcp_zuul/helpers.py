@@ -107,29 +107,37 @@ async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = 
 
     All write tools declare idempotentHint=True, so transient 503 from
     load balancers can safely be retried (same pattern as api() for GET).
+
+    Uses follow_redirects=False to prevent POST→GET conversion on 302
+    redirects (HTTP spec converts POST to GET on 301/302/303). An OIDC
+    redirect on a write request means the session expired — we trigger
+    re-auth and retry the original method with body intact.
     """
     a = app(ctx)
     if a.config.read_only:
         raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
     url = f"{a.config.base_url}/api{path}"
 
-    for attempt in range(2):
+    def _send():
         if method == "POST":
-            resp = await a.client.post(url, json=body)
-        else:
-            resp = await a.client.delete(url)
+            return a.client.post(url, json=body, follow_redirects=False)
+        return a.client.delete(url, follow_redirects=False)
 
-        if resp.status_code == 401 and a.config.use_kerberos:
+    for attempt in range(2):
+        resp = await _send()
+
+        # 302/301/303 = OIDC redirect (session expired). Don't follow —
+        # httpx would convert POST to GET, losing the request body.
+        # 401 = direct auth challenge from the endpoint.
+        # Both cases trigger Kerberos re-auth and retry.
+        if resp.status_code in (301, 302, 303, 401) and a.config.use_kerberos:
             gen = a._auth_generation
             async with a._auth_lock:
                 if a._auth_generation == gen:
                     log.info("Session expired, re-authenticating via Kerberos")
                     await kerberos_auth(a.client, a.config.base_url)
                     a._auth_generation += 1
-            if method == "POST":
-                resp = await a.client.post(url, json=body)
-            else:
-                resp = await a.client.delete(url)
+            resp = await _send()
 
         if resp.status_code in (500, 503) and attempt == 0:
             log.info("API returned %d for %s %s, retrying in 2s", resp.status_code, method, path)

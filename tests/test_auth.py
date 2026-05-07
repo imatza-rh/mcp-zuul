@@ -90,13 +90,23 @@ class TestKerberosAuth:
         expected_token = base64.b64encode(b"spnego-token-bytes").decode()
         assert auth_header == f"Negotiate {expected_token}"
 
-    async def test_no_negotiate_challenge(self, mock_gssapi):
+    async def test_200_treated_as_already_authed(self, mock_gssapi):
+        """If server returns 200 (session valid after cookie clear), accept it."""
         from mcp_zuul.auth import kerberos_auth
 
         client = AsyncMock(spec=httpx.AsyncClient)
         client.get = AsyncMock(return_value=httpx.Response(200))
 
-        with pytest.raises(RuntimeError, match="expected 401 Negotiate"):
+        await kerberos_auth(client, "https://zuul.example.com")
+
+    async def test_unexpected_status_raises(self, mock_gssapi):
+        """Non-200, non-401 status raises RuntimeError."""
+        from mcp_zuul.auth import kerberos_auth
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.get = AsyncMock(return_value=httpx.Response(403))
+
+        with pytest.raises(RuntimeError, match=r"expected 401 Negotiate.*got 403"):
             await kerberos_auth(client, "https://zuul.example.com")
 
     async def test_wrong_auth_scheme(self, mock_gssapi):
@@ -142,3 +152,23 @@ class TestKerberosAuth:
 
         with pytest.raises(RuntimeError, match="final response was 403"):
             await kerberos_auth(client, "https://zuul.example.com")
+
+    async def test_clears_cookies_before_auth(self, mock_gssapi):
+        """Stale session cookies are cleared so the OIDC chain starts fresh."""
+        from mcp_zuul.auth import kerberos_auth
+
+        mock_ctx = MagicMock()
+        mock_ctx.step.return_value = b"token"
+        mock_gssapi.SecurityContext.return_value = mock_ctx
+
+        client = AsyncMock(spec=httpx.AsyncClient)
+        client.cookies = MagicMock()
+        client.get = AsyncMock(
+            side_effect=[
+                httpx.Response(401, headers={"www-authenticate": "Negotiate"}),
+                httpx.Response(200),
+            ]
+        )
+
+        await kerberos_auth(client, "https://zuul.example.com")
+        client.cookies.clear.assert_called_once()

@@ -33,6 +33,11 @@ async def kerberos_auth(client: httpx.AsyncClient, base_url: str) -> None:
     max_hops = 10
     url = f"{base_url}/api/tenants"
 
+    # Clear stale session cookies so the OIDC redirect chain starts fresh.
+    # Without this, a partially-valid session cookie causes the SSO to
+    # return 200 instead of the expected 401 Negotiate challenge.
+    client.cookies.clear()
+
     # The client may have Accept: application/json which causes some servers
     # to return 401 directly instead of redirecting to SSO.  Override with
     # a browser-like Accept during the auth handshake.
@@ -48,6 +53,9 @@ async def kerberos_auth(client: httpx.AsyncClient, base_url: str) -> None:
         else:
             break
 
+    if resp.status_code == 200:
+        log.info("Kerberos auth: session still valid after cookie clear")
+        return
     if resp.status_code != 401:
         raise RuntimeError(
             f"Kerberos auth: expected 401 Negotiate challenge, got {resp.status_code}"

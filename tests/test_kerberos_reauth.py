@@ -287,6 +287,37 @@ class TestApiMutateKerberosReauth:
         assert reauth_count == 1
         assert a._auth_generation == 1
 
+    @respx.mock
+    async def test_post_redirect_triggers_reauth(self, krb_ctx):
+        """POST 302 (OIDC redirect) → re-auth → retry POST → 200.
+
+        Without follow_redirects=False, httpx would convert POST to GET on 302,
+        losing the request body. The fix detects 302 and triggers re-auth instead.
+        """
+        route = respx.post("https://zuul.example.com/api/tenant/test-tenant/enqueue")
+        route.side_effect = [
+            httpx.Response(302, headers={"location": "https://sso.example.com/auth"}),
+            httpx.Response(200, json={"status": "ok"}),
+        ]
+        with patch("mcp_zuul.helpers.kerberos_auth", new_callable=AsyncMock) as mock_auth:
+            result = await api_post(krb_ctx, "/tenant/test-tenant/enqueue", {"change": "1"})
+
+        assert result == {"status": "ok"}
+        mock_auth.assert_awaited_once()
+
+    @respx.mock
+    async def test_post_redirect_raises_if_retry_also_redirects(self, krb_ctx):
+        """POST 302 → re-auth → retry → 302 again → raises (no infinite loop)."""
+        respx.post("https://zuul.example.com/api/tenant/test-tenant/enqueue").mock(
+            return_value=httpx.Response(302, headers={"location": "https://sso.example.com/auth"})
+        )
+        with (
+            patch("mcp_zuul.helpers.kerberos_auth", new_callable=AsyncMock),
+            pytest.raises(httpx.HTTPStatusError) as exc_info,
+        ):
+            await api_post(krb_ctx, "/tenant/test-tenant/enqueue", {"change": "1"})
+        assert exc_info.value.response.status_code == 302
+
 
 # ---------------------------------------------------------------------------
 # _stream_response() re-auth (via fetch_log_url / stream_log)
