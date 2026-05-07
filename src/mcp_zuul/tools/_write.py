@@ -6,10 +6,11 @@ from typing import Any
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
-from ..helpers import api_delete, api_post, clean, error, safepath
+from ..helpers import api, api_delete, api_post, clean, error, safepath
+from ..helpers import app as _app
 from ..helpers import tenant as _tenant
 from ..server import mcp
-from ._common import _DESTRUCTIVE, _WRITE
+from ._common import _DESTRUCTIVE, _WRITE, _resolve
 
 
 @mcp.tool(title="Enqueue Change", annotations=_WRITE)
@@ -148,3 +149,110 @@ async def autohold_delete(
     path = f"/tenant/{safepath(t)}/autohold/{safepath(autohold_id)}"
     await api_delete(ctx, path)
     return json.dumps({"status": "deleted", "autohold_id": autohold_id})
+
+
+@mcp.tool(title="Enqueue Ref", annotations=_WRITE)
+@handle_errors
+async def enqueue_ref(
+    ctx: Context,
+    project: str,
+    pipeline: str,
+    ref: str,
+    oldrev: str = "",
+    newrev: str = "",
+    tenant: str = "",
+) -> str:
+    """Re-enqueue a ref (branch) into a pipeline — triggers periodic jobs without waiting for the timer.
+
+    Uses the same /enqueue endpoint as enqueue but with ref+oldrev+newrev
+    instead of change, which triggers the ref-based enqueue path in Zuul.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        project: Project name (e.g. "ci-framework/integration")
+        pipeline: Pipeline name (e.g. "openstack-uni-jobs-periodic-integration-rhoso18.0-rhel9")
+        ref: Git ref (e.g. "refs/heads/shiftstack")
+        oldrev: Old revision (empty string for re-trigger)
+        newrev: New revision (empty string for re-trigger)
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    body: dict[str, Any] = {
+        "pipeline": pipeline,
+        "ref": ref,
+        "oldrev": oldrev,
+        "newrev": newrev,
+    }
+    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/enqueue"
+    result = await api_post(ctx, path, body)
+    return json.dumps(
+        clean(
+            {"status": "enqueued", "project": project, "pipeline": pipeline, "ref": ref, **result}
+        )
+    )
+
+
+@mcp.tool(title="Re-enqueue Buildset", annotations=_WRITE)
+@handle_errors
+async def reenqueue_buildset(
+    ctx: Context,
+    uuid: str = "",
+    tenant: str = "",
+    url: str = "",
+) -> str:
+    """Re-enqueue a buildset — reads project/pipeline/ref from a previous buildset and enqueues it again.
+
+    Convenience wrapper: looks up the buildset, extracts project/pipeline/ref, and re-enqueues it.
+    Useful for re-triggering periodic pipeline runs without manually looking up parameters.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        uuid: Buildset UUID
+        tenant: Tenant name (uses default if empty)
+        url: Zuul buildset URL (alternative to uuid + tenant)
+    """
+    if _app(ctx).config.read_only:
+        raise ValueError("Write operations disabled (ZUUL_READ_ONLY=true)")
+    bs_uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")
+    data = await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(bs_uuid)}")
+
+    pipeline = data.get("pipeline")
+    if not pipeline:
+        return error(f"Buildset {bs_uuid} has no pipeline")
+
+    refs = data.get("refs") or []
+    if not refs:
+        return error(f"Buildset {bs_uuid} has no refs")
+
+    first_ref = refs[0]
+    project = first_ref.get("project")
+    ref = first_ref.get("ref")
+    if not project:
+        return error(f"Buildset {bs_uuid} ref has no project")
+    if not ref:
+        return error(
+            f"Buildset {bs_uuid} ref has no ref (change-based buildsets cannot be re-enqueued as ref)"
+        )
+
+    body: dict[str, Any] = {
+        "pipeline": pipeline,
+        "ref": ref,
+        "oldrev": "",
+        "newrev": "",
+    }
+    path = f"/tenant/{safepath(t)}/project/{safepath(project)}/enqueue"
+    result = await api_post(ctx, path, body)
+    return json.dumps(
+        clean(
+            {
+                "status": "enqueued",
+                "project": project,
+                "pipeline": pipeline,
+                "ref": ref,
+                "from_buildset": bs_uuid,
+                **result,
+            }
+        )
+    )

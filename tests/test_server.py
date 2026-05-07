@@ -116,7 +116,14 @@ class TestLifespanReadOnly:
             async with lifespan(mcp):
                 pass
 
-        assert set(removed) >= {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
+        assert set(removed) >= {
+            "enqueue",
+            "enqueue_ref",
+            "dequeue",
+            "autohold_create",
+            "autohold_delete",
+            "reenqueue_buildset",
+        }
 
     async def test_write_enabled_keeps_write_tools(self):
         """ZUUL_READ_ONLY=false does NOT remove write tools."""
@@ -140,7 +147,14 @@ class TestLifespanReadOnly:
             async with lifespan(mcp):
                 pass
 
-        write_tools = {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
+        write_tools = {
+            "enqueue",
+            "enqueue_ref",
+            "dequeue",
+            "autohold_create",
+            "autohold_delete",
+            "reenqueue_buildset",
+        }
         assert write_tools.isdisjoint(set(removed))
 
 

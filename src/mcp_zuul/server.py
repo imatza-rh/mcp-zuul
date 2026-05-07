@@ -89,7 +89,14 @@ async def lifespan(server: FastMCP):
                 raise
 
         # Remove write tools when in read-only mode (default)
-        _WRITE_TOOLS = {"enqueue", "dequeue", "autohold_create", "autohold_delete"}
+        _WRITE_TOOLS = {
+            "enqueue",
+            "enqueue_ref",
+            "dequeue",
+            "autohold_create",
+            "autohold_delete",
+            "reenqueue_buildset",
+        }
         if config.read_only:
             for name in _WRITE_TOOLS:
                 _remove_tool(server, name)

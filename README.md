@@ -10,7 +10,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-37 tools (31 read-only + 4 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+39 tools (31 read-only + 6 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -71,7 +71,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs.
 
-**Write operations** — Enqueue/dequeue changes and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
+**Write operations** — Enqueue/dequeue changes, re-enqueue refs and buildsets, and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
 
 **LogJuicer integration** — `get_build_anomalies` uses ML-based log analysis to find unusual lines by comparing failed logs against successful baselines. Optional — requires `LOGJUICER_URL`.
 
@@ -142,6 +142,8 @@ Disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enabl
 | Tool | What it does |
 |------|-------------|
 | `enqueue` | Enqueue a change or ref into a pipeline for testing. |
+| `enqueue_ref` | Re-enqueue a ref (branch) into a pipeline — triggers periodic jobs without waiting for the timer. |
+| `reenqueue_buildset` | Re-enqueue a buildset — reads project/pipeline/ref from a previous buildset and enqueues it again. |
 | `dequeue` | Remove a change or ref from a pipeline. **Destructive.** |
 | `autohold_create` | Create an autohold request — hold nodes after failure for debugging. |
 | `autohold_delete` | Delete an autohold request. **Destructive.** |
@@ -219,7 +221,7 @@ claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
 | `MCP_PORT` | No | `8000` | HTTP server port (non-stdio transports) |
 | `ZUUL_ENABLED_TOOLS` | No | — | Comma-separated list of tools to enable (disables all others) |
 | `ZUUL_DISABLED_TOOLS` | No | — | Comma-separated list of tools to disable (mutually exclusive with above) |
-| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, dequeue, autohold) |
+| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, enqueue_ref, reenqueue_buildset, dequeue, autohold) |
 | `LOGJUICER_URL` | No | — | LogJuicer base URL for ML-based log anomaly detection |
 
 ### Token authentication
@@ -452,7 +454,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (37 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (39 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Contributing
 
