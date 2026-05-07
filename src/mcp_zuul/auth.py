@@ -184,7 +184,11 @@ async def _acquire_admin_jwt(
                 parts = www_auth.strip().split()
                 if len(parts) >= 2 and parts[0].lower() == "negotiate":
                     in_token = base64.b64decode(parts[1])
-                out_token = ctx.step(in_token)
+                try:
+                    out_token = ctx.step(in_token)
+                except gssapi.exceptions.GSSError:
+                    log.warning("JWT acquisition: SPNEGO re-negotiate failed")
+                    return
                 if out_token:
                     resp = await client.get(
                         location,
