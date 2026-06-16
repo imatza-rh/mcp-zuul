@@ -258,12 +258,12 @@ pip install mcp-zuul[kerberos]    # or: uvx --with "mcp-zuul[kerberos]" mcp-zuul
 
 Via CLI:
 ```bash
-claude mcp add -s user \
+claude mcp add -s user zuul-internal \
                -e ZUUL_URL=https://internal-zuul.example.com/zuul \
                -e ZUUL_DEFAULT_TENANT=my-tenant \
                -e ZUUL_USE_KERBEROS=true \
                -e ZUUL_VERIFY_SSL=false \
-               zuul -- uvx --with "mcp-zuul[kerberos]" mcp-zuul
+               -- uvx --with "mcp-zuul[kerberos]" mcp-zuul
 ```
 
 Or via JSON config:
