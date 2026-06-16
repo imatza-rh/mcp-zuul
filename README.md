@@ -30,9 +30,10 @@ claude mcp add zuul -- uvx mcp-zuul
 ```
 Then set the required env var:
 ```bash
-claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
+claude mcp add zuul \
+               -e ZUUL_URL=https://softwarefactory-project.io/zuul \
                -e ZUUL_DEFAULT_TENANT=rdoproject.org \
-               zuul -- uvx mcp-zuul
+               -- uvx mcp-zuul
 ```
 
 **pip**:
@@ -200,9 +201,10 @@ All clients use the same JSON structure. Add to your client's MCP config file:
 
 Or via CLI:
 ```bash
-claude mcp add -e ZUUL_URL=https://softwarefactory-project.io/zuul \
+claude mcp add zuul \
+               -e ZUUL_URL=https://softwarefactory-project.io/zuul \
                -e ZUUL_DEFAULT_TENANT=rdoproject.org \
-               zuul -- uvx mcp-zuul
+               -- uvx mcp-zuul
 ```
 
 ### Environment variables
