@@ -502,10 +502,6 @@ docker build -t mcp-zuul .
 - [pepy.tech](https://pepy.tech/projects/mcp-zuul) — Download statistics
 - [Docker](https://github.com/imatza-rh/mcp-zuul/pkgs/container/mcp-zuul) — `ghcr.io/imatza-rh/mcp-zuul`
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=imatza-rh/mcp-zuul&type=Date)](https://www.star-history.com/#imatza-rh/mcp-zuul&Date)
-
 ## Contributing
 
 Contributions welcome. Please open an issue first to discuss significant changes.
