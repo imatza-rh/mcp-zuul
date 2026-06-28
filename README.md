@@ -11,7 +11,12 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-44 tools (36 read-only + 6 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+**One command, no install:**
+```bash
+claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
+```
+
+44 tools, 3 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -23,13 +28,21 @@ Claude: → get_build_failures(uuid="abc123")
         Confidence: Confirmed — verified in ci_script_008_run.log:325-329.
 ```
 
+## Why mcp-zuul?
+
+| | mcp-zuul | Raw Zuul API | Zuul web UI |
+|---|---|---|---|
+| **Failure analysis** | Structured — task, host, error, rc | Raw JSON, parse yourself | Click through log pages |
+| **Log search** | Regex + context lines + line ranges | Not available | Browser Ctrl+F |
+| **Flaky detection** | Automatic pass/fail statistics | Manual query + calculate | Not available |
+| **Test results** | Parsed JUnit XML with failure details | Not available | External link |
+| **Anomaly detection** | ML-based via LogJuicer | Not available | Not available |
+| **Live status** | Job progress, ETA, pre-failure alerts | Polling API | Manual refresh |
+| **Multi-instance** | One config entry per Zuul | Different base URLs | Different browser tabs |
+
 ## Quick Start
 
 **uvx** (no install, recommended):
-```bash
-claude mcp add zuul -- uvx mcp-zuul
-```
-Then set the required env var:
 ```bash
 claude mcp add zuul \
                -e ZUUL_URL=https://softwarefactory-project.io/zuul \
@@ -61,7 +74,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Live pipeline awareness** — `get_change_status` returns live job progress with elapsed times, estimated completion, and pre-failure detection (`pre_fail` field). When the change isn't in pipeline, automatically fetches the latest completed buildset.
 
-**Kerberos/SPNEGO auth** — First-class support for Zuul instances behind OIDC + Kerberos. Drives the full SPNEGO redirect chain automatically. Session cookies persist and re-authenticate transparently on expiry.
+**Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs — the rest are removed from the server entirely.
 
 **URL-based input** — Paste a Zuul build URL directly. Tools auto-parse the tenant and UUID from URLs like `https://zuul.example.com/t/tenant/build/abc123` — no manual extraction needed.
 
@@ -69,15 +82,17 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Job dependency graph** — `get_freeze_jobs` returns the fully-resolved job graph for a pipeline/project/branch, showing all jobs with their dependencies after inheritance resolution.
 
-**Streamable HTTP transport** — Run as a persistent HTTP server with `MCP_TRANSPORT=streamable-http` for remote/shared deployment. Supports stdio (default), SSE, and streamable-http.
+**Kerberos/SPNEGO auth** — First-class support for Zuul instances behind OIDC + Kerberos. Drives the full SPNEGO redirect chain automatically. Session cookies persist and re-authenticate transparently on expiry.
 
-**Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs.
+**Streamable HTTP transport** — Run as a persistent HTTP server with `MCP_TRANSPORT=streamable-http` for remote/shared deployment. Supports stdio (default), SSE, and streamable-http.
 
 **Write operations** — Enqueue/dequeue/promote changes, re-enqueue buildsets, and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
 
 **LogJuicer integration** — `get_build_anomalies` uses ML-based log analysis to find unusual lines by comparing failed logs against successful baselines. Optional — requires `LOGJUICER_URL`.
 
 **Token-efficient output** — All responses strip None values and use compact formatters. `tail_build_log` returns just the last N lines — the fastest way to check why a build failed.
+
+**Error handling** — All tools return JSON, errors included. Network failures, auth issues, and invalid parameters produce `{"error": "descriptive message"}`. Tools never raise unhandled exceptions.
 
 ## Tools
 
