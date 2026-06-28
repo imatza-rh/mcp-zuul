@@ -12,6 +12,8 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
+> If mcp-zuul saves you a debugging session, a ⭐ [star](https://github.com/imatza-rh/mcp-zuul) helps others find it.
+
 **One command, no install:**
 ```bash
 claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
@@ -499,6 +501,10 @@ docker build -t mcp-zuul .
 - [HiFriendBot](https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/) — AI tools directory
 - [pepy.tech](https://pepy.tech/projects/mcp-zuul) — Download statistics
 - [Docker](https://github.com/imatza-rh/mcp-zuul/pkgs/container/mcp-zuul) — `ghcr.io/imatza-rh/mcp-zuul`
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=imatza-rh/mcp-zuul&type=Date)](https://www.star-history.com/#imatza-rh/mcp-zuul&Date)
 
 ## Contributing
 

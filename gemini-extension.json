@@ -1,0 +1,13 @@
+{
+  "name": "mcp-zuul",
+  "version": "1.0.0",
+  "description": "MCP server for Zuul CI — build failure analysis, log search, pipeline status, job configuration, and write operations",
+  "mcpServers": {
+    "mcp-zuul": {
+      "command": "uvx",
+      "args": ["mcp-zuul"]
+    }
+  },
+  "contextFileName": "README.md",
+  "excludeTools": []
+}
