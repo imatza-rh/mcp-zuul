@@ -490,6 +490,7 @@ docker build -t mcp-zuul .
 - [Glama](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul) — Quality: A/A/A
 - [Conare](https://conare.ai/marketplace/mcp/mcp-zuul) — Marketplace listing
 - [PulseMCP](https://www.pulsemcp.com/servers?q=zuul) — Server directory
+- [LobeHub](https://lobehub.com/mcp/imatza-rh-mcp-zuul) — MCP marketplace with agent install
 - [HiFriendBot](https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/) — AI tools directory
 - [pepy.tech](https://pepy.tech/projects/mcp-zuul) — Download statistics
 - [Docker](https://github.com/imatza-rh/mcp-zuul/pkgs/container/mcp-zuul) — `ghcr.io/imatza-rh/mcp-zuul`
