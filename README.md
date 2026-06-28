@@ -61,6 +61,11 @@ pip install mcp-zuul
 docker build -t mcp-zuul .
 ```
 
+**[LobeHub](https://lobehub.com/mcp/imatza-rh-mcp-zuul)** — send this to your AI agent:
+```
+Read https://lobehub.com/mcp/imatza-rh-mcp-zuul/skill.md and follow the instructions to install the MCP server.
+```
+
 See [Setup](#setup) for full configuration options including Kerberos and multi-instance.
 
 ## Features
