@@ -34,6 +34,12 @@ jobs:
         run: uv sync --extra dev --python ${{ matrix.python-version }}
       - name: Run tests
         run: uv run pytest tests/ -v --cov=mcp_zuul --cov-fail-under=85 --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
       - name: Coverage summary
         if: matrix.python-version == '3.13' && always()
         run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
