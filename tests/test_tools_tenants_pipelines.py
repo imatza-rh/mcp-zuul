@@ -867,3 +867,69 @@ class TestGetBadge:
         assert result["params"]["project"] == "org/repo"
         assert "embed_markdown" in result
         assert "![CI]" in result["embed_markdown"]
+
+    async def test_url_encodes_special_chars(self, mock_ctx):
+        result = json.loads(await get_badge(mock_ctx, project="org/repo&evil=1", pipeline="check"))
+        assert "&evil" not in result["embed_markdown"]
+        assert "org%2Frepo%26evil%3D1" in result["embed_markdown"]
+
+
+class TestGetAutoholdMissingNodes:
+    @respx.mock
+    async def test_handles_missing_nodes_key(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold/99").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "99",
+                    "project": "org/repo",
+                    "job": "my-job",
+                },
+            )
+        )
+        result = json.loads(await get_autohold(mock_ctx, autohold_id="99"))
+        assert result["id"] == "99"
+        assert result["nodes_count"] == 0
+        assert "nodes" not in result  # empty list cleaned to None, then stripped
+
+
+class TestListImagesNoUploads:
+    @respx.mock
+    async def test_handles_artifacts_without_uploads(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/images").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "no-upload-image",
+                        "canonical_name": "no-upload",
+                        "build_artifacts": [{"id": "a1"}],
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_images(mock_ctx))
+        assert result["images"][0]["build_count"] == 1
+        assert "uploads" not in result["images"][0]  # empty uploads cleaned
+
+
+class TestListSystemEventsEmpty:
+    @respx.mock
+    async def test_empty_events(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/system-events").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await list_system_events(mock_ctx))
+        assert result["count"] == 0
+        assert result["events"] == []
+
+
+class TestListProvidersEmpty:
+    @respx.mock
+    async def test_empty_providers(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/providers").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        result = json.loads(await list_providers(mock_ctx))
+        assert result["count"] == 0
+        assert result["providers"] == []

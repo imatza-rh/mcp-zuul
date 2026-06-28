@@ -2,12 +2,13 @@
 
 import json
 from typing import Any
+from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
 from ..formatters import fmt_job_variants, fmt_project
-from ..helpers import api, clean, safepath
+from ..helpers import api, app, clean, safepath
 from ..helpers import tenant as _tenant
 from ..server import mcp
 from ._common import _READ_ONLY
@@ -433,10 +434,14 @@ async def list_system_events(
         skip: Offset for pagination
     """
     t = _tenant(ctx, tenant)
-    params: dict[str, Any] = {"limit": limit, "skip": skip}
+    params: dict[str, Any] = {}
     if event_type:
         params["event_type"] = event_type
-    data = await api(ctx, f"/tenant/{safepath(t)}/system-events", params)
+    if limit != 50:
+        params["limit"] = limit
+    if skip:
+        params["skip"] = skip
+    data = await api(ctx, f"/tenant/{safepath(t)}/system-events", params or None)
     events = [
         clean(
             {
@@ -543,19 +548,15 @@ async def get_badge(
         params["pipeline"] = pipeline
     if branch:
         params["branch"] = branch
-    from ..helpers import app
-
     a = app(ctx)
     url = f"{a.config.base_url}/tenant/{safepath(t)}/badge"
+    qs = urlencode(params)
     return json.dumps(
         clean(
             {
                 "badge_url": url,
                 "params": params,
-                "embed_markdown": f"![CI]({url}?project={project}"
-                + (f"&pipeline={pipeline}" if pipeline else "")
-                + (f"&branch={branch}" if branch else "")
-                + ")",
+                "embed_markdown": f"![CI]({url}?{qs})",
             }
         )
     )
