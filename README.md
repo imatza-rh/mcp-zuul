@@ -8,6 +8,7 @@
 [![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
 [![MCP](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badges/score.svg)](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul)
 [![Downloads](https://img.shields.io/pepy/dt/mcp-zuul)](https://pepy.tech/projects/mcp-zuul)
+[![Listed on AiList](https://hifriendbot.com/ai-list/badge/zuul-ci-by-imatza-rh.svg)](https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/)
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
