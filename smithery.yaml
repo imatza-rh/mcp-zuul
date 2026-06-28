@@ -1,0 +1,22 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - ZUUL_URL
+    properties:
+      ZUUL_URL:
+        type: string
+        description: Base URL of the Zuul instance
+      ZUUL_DEFAULT_TENANT:
+        type: string
+        description: Default tenant to query
+  commandFunction: |
+    (config) => ({
+      command: "uvx",
+      args: ["mcp-zuul"],
+      env: {
+        ZUUL_URL: config.ZUUL_URL,
+        ...(config.ZUUL_DEFAULT_TENANT && { ZUUL_DEFAULT_TENANT: config.ZUUL_DEFAULT_TENANT })
+      }
+    })

@@ -7,6 +7,7 @@
 [![License](https://img.shields.io/github/license/imatza-rh/mcp-zuul)](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE)
 [![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
 [![MCP](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badges/score.svg)](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul)
+[![Downloads](https://img.shields.io/pepy/dt/mcp-zuul)](https://pepy.tech/projects/mcp-zuul)
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
@@ -456,6 +457,19 @@ docker build -t mcp-zuul .
 ```
 
 **Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (38 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+
+## Listings
+
+<a href="https://glama.ai/mcp/servers/imatza-rh/mcp-zuul">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badge" alt="mcp-zuul MCP server" />
+</a>
+
+- [PyPI](https://pypi.org/project/mcp-zuul/) — `pip install mcp-zuul`
+- [Glama](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul) — Quality: A/A/A
+- [Conare](https://conare.ai/marketplace/mcp/mcp-zuul) — Marketplace listing
+- [PulseMCP](https://www.pulsemcp.com/servers?q=zuul) — Server directory
+- [pepy.tech](https://pepy.tech/projects/mcp-zuul) — Download statistics
+- [Docker](https://github.com/imatza-rh/mcp-zuul/pkgs/container/mcp-zuul) — `ghcr.io/imatza-rh/mcp-zuul`
 
 ## Contributing
 
