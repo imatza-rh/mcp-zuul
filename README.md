@@ -11,7 +11,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
 
-38 tools (31 read-only + 5 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
+44 tools (36 read-only + 6 write + 1 LogJuicer + 1 console stream), 3 prompt templates, and 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Supports stdio, SSE, and streamable-http transports. Works with Claude Code, Claude Desktop, Cursor, and any MCP-compatible client.
 
 ```
 You:   "Why did the latest gate job fail?"
@@ -73,7 +73,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Tool filtering** — Reduce LLM tool-selection noise with `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS`. Only expose the tools your workflow needs.
 
-**Write operations** — Enqueue/dequeue changes, re-enqueue refs and buildsets, and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
+**Write operations** — Enqueue/dequeue/promote changes, re-enqueue buildsets, and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
 
 **LogJuicer integration** — `get_build_anomalies` uses ML-based log analysis to find unusual lines by comparing failed logs against successful baselines. Optional — requires `LOGJUICER_URL`.
 
@@ -134,6 +134,11 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `list_labels` | Available nodepool labels — what node types jobs can request. |
 | `list_semaphores` | Resource locks with current holders and max capacity. Check when jobs wait unexpectedly. |
 | `list_autoholds` | Active autohold requests — nodes held after failure for debugging. |
+| `get_autohold` | Full details of a specific autohold request — held nodes, timing, project/job. |
+| `list_providers` | Nodepool cloud providers with flavors (VM sizes), images, and labels. |
+| `list_images` | Nodepool disk images with build status and provider upload state. |
+| `list_system_events` | System events — config updates, reconfigurations, pipeline changes. Useful for "why did my job stop running?" |
+| `get_badge` | CI status badge URL (SVG) for a project — embeddable in READMEs with Markdown snippet. |
 | `get_connections` | Configured source connections — Gerrit, GitHub, GitLab instances with driver and hostname. |
 | `get_components` | System components — schedulers, executors, mergers, web servers with state and version. |
 
@@ -144,6 +149,7 @@ Disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enabl
 | Tool | What it does |
 |------|-------------|
 | `enqueue` | Enqueue a change or ref into a pipeline. Supports both change-based (check/gate) and ref-based (periodic) enqueue. |
+| `promote` | Promote changes to the top of a pipeline queue. Use for urgent fixes when gate has a long queue. |
 | `reenqueue_buildset` | Re-enqueue a buildset — reads project/pipeline/ref from a previous buildset and enqueues it again. |
 | `dequeue` | Remove a change or ref from a pipeline. **Destructive.** |
 | `autohold_create` | Create an autohold request — hold nodes after failure for debugging. |
@@ -223,7 +229,7 @@ claude mcp add zuul \
 | `MCP_PORT` | No | `8000` | HTTP server port (non-stdio transports) |
 | `ZUUL_ENABLED_TOOLS` | No | — | Comma-separated list of tools to enable (disables all others) |
 | `ZUUL_DISABLED_TOOLS` | No | — | Comma-separated list of tools to disable (mutually exclusive with above) |
-| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, reenqueue_buildset, dequeue, autohold) |
+| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, promote, dequeue, reenqueue_buildset, autohold) |
 | `LOGJUICER_URL` | No | — | LogJuicer base URL for ML-based log anomaly detection |
 
 ### Token authentication
@@ -456,7 +462,7 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools.py` (38 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools/` (44 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
 
 ## Listings
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-06-29
+
+### Added
+- `promote` tool: reorder changes in a pipeline queue (write operation, requires auth). Use for urgent fixes when the gate has a long queue
+- `get_autohold` tool: get full details of a specific autohold request — held nodes, timing, project/job
+- `list_system_events` tool: list system events (config updates, reconfigurations, pipeline changes). Useful for debugging "why did my job stop running?"
+- `list_providers` tool: list nodepool cloud providers with flavors, images, and labels
+- `list_images` tool: list nodepool disk images with build status and provider upload state
+- `get_badge` tool: get a CI status badge URL (SVG) for a project, with embeddable Markdown snippet
+- `smithery.yaml` for Smithery registry integration
+- `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1)
+- Download count badge in README
+- Listings section in README with all marketplace links
+
+### Changed
+- PyPI description updated to "build failure analysis, log search, pipeline status, and job configuration" (previously said "read-only access")
+- Added PyPI classifiers: Build Tools, Systems Administration
+- Tool count: 38 → 44 (36 read-only + 6 write + 1 LogJuicer + 1 console stream)
+
+### Fixed
+- `get_badge` uses `urllib.parse.urlencode` for query parameters instead of raw string concatenation, preventing URL injection via project names containing special characters
+- `list_system_events` only sends non-default query parameters, consistent with other tools
+
 ## [0.7.0] - 2026-05-11
 
 ### Changed
