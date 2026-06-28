@@ -57,6 +57,37 @@ async def enqueue(
     )
 
 
+@mcp.tool(title="Promote Changes", annotations=_WRITE)
+@handle_errors
+async def promote(
+    ctx: Context,
+    pipeline: str,
+    changes: list[str],
+    tenant: str = "",
+) -> str:
+    """Promote changes to the top of a pipeline queue.
+
+    Reorders the pipeline so the specified changes are processed first.
+    Common use case: merging an urgent fix when the gate has a long queue.
+
+    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+
+    Args:
+        pipeline: Pipeline name (e.g. "gate")
+        changes: List of changes to promote (e.g. ["12345,1", "12346,2"])
+        tenant: Tenant name (uses default if empty)
+    """
+    if not changes:
+        return error("At least one change is required")
+    t = _tenant(ctx, tenant)
+    body: dict[str, Any] = {"pipeline": pipeline, "changes": changes}
+    path = f"/tenant/{safepath(t)}/promote"
+    result = await api_post(ctx, path, body)
+    return json.dumps(
+        clean({"status": "promoted", "pipeline": pipeline, "changes": changes, **result})
+    )
+
+
 @mcp.tool(title="Dequeue Change", annotations=_DESTRUCTIVE)
 @handle_errors
 async def dequeue(

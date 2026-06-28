@@ -362,6 +362,205 @@ async def list_autoholds(
     return json.dumps({"autoholds": result, "count": len(result)})
 
 
+@mcp.tool(title="Autohold Details", annotations=_READ_ONLY)
+@handle_errors
+async def get_autohold(
+    ctx: Context,
+    autohold_id: str,
+    tenant: str = "",
+) -> str:
+    """Get details of a specific autohold request.
+
+    Shows full details including held nodes, timing, and the project/job
+    that triggered the hold.
+
+    Args:
+        autohold_id: Autohold request ID (from list_autoholds)
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/autohold/{safepath(autohold_id)}")
+    nodes = data.get("nodes") or []
+    return json.dumps(
+        clean(
+            {
+                "id": data.get("id"),
+                "project": data.get("project"),
+                "job": data.get("job"),
+                "ref_filter": data.get("ref_filter"),
+                "reason": data.get("reason"),
+                "count": data.get("count"),
+                "current_count": data.get("current_count"),
+                "max_count": data.get("max_count"),
+                "node_expiration": data.get("node_expiration"),
+                "expired": data.get("expired"),
+                "nodes": [
+                    clean(
+                        {
+                            "id": n.get("id"),
+                            "state": n.get("state"),
+                            "label": n.get("label"),
+                            "provider": n.get("provider"),
+                        }
+                    )
+                    for n in nodes
+                ]
+                or None,
+                "nodes_count": len(nodes),
+            }
+        )
+    )
+
+
+@mcp.tool(title="System Events", annotations=_READ_ONLY)
+@handle_errors
+async def list_system_events(
+    ctx: Context,
+    tenant: str = "",
+    event_type: str = "",
+    limit: int = 50,
+    skip: int = 0,
+) -> str:
+    """List system events — config updates, reconfigurations, pipeline changes.
+
+    Useful for debugging "why did my job stop running?" or tracking config
+    deployments. Shows event type, timestamp, and description.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+        event_type: Filter by event type (optional)
+        limit: Max results (default 50)
+        skip: Offset for pagination
+    """
+    t = _tenant(ctx, tenant)
+    params: dict[str, Any] = {"limit": limit, "skip": skip}
+    if event_type:
+        params["event_type"] = event_type
+    data = await api(ctx, f"/tenant/{safepath(t)}/system-events", params)
+    events = [
+        clean(
+            {
+                "event_type": e.get("event_type"),
+                "event_time": e.get("event_time"),
+                "description": (e.get("description") or "")[:500] or None,
+                "event_id": e.get("event_id"),
+            }
+        )
+        for e in data
+    ]
+    return json.dumps({"events": events, "count": len(events)})
+
+
+@mcp.tool(title="Nodepool Providers", annotations=_READ_ONLY)
+@handle_errors
+async def list_providers(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List nodepool cloud providers with flavors and images.
+
+    Shows what infrastructure is available for running jobs — provider names,
+    available flavors (VM sizes), and images (base OS).
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/providers")
+    result = [
+        clean(
+            {
+                "name": p.get("name"),
+                "canonical_name": p.get("canonical_name"),
+                "flavors": [f.get("name") for f in p.get("flavors", [])],
+                "images": [i.get("name") for i in p.get("images", [])],
+                "labels": [lb.get("name") for lb in p.get("labels", [])],
+            }
+        )
+        for p in data
+    ]
+    return json.dumps({"providers": result, "count": len(result)})
+
+
+@mcp.tool(title="Nodepool Images", annotations=_READ_ONLY)
+@handle_errors
+async def list_images(
+    ctx: Context,
+    tenant: str = "",
+) -> str:
+    """List nodepool disk images with build status and upload artifacts.
+
+    Shows available base images for job nodes, including build history
+    and which providers they've been uploaded to.
+
+    Args:
+        tenant: Tenant name (uses default if empty)
+    """
+    t = _tenant(ctx, tenant)
+    data = await api(ctx, f"/tenant/{safepath(t)}/images")
+    result = [
+        clean(
+            {
+                "name": i.get("name"),
+                "canonical_name": i.get("canonical_name"),
+                "build_count": len(i.get("build_artifacts", [])),
+                "uploads": [
+                    clean({"provider": u.get("provider_name"), "state": u.get("state")})
+                    for artifact in i.get("build_artifacts", [])
+                    for u in artifact.get("uploads", [])
+                ]
+                or None,
+            }
+        )
+        for i in data
+    ]
+    return json.dumps({"images": result, "count": len(result)})
+
+
+@mcp.tool(title="Project Badge", annotations=_READ_ONLY)
+@handle_errors
+async def get_badge(
+    ctx: Context,
+    project: str,
+    tenant: str = "",
+    pipeline: str = "",
+    branch: str = "",
+) -> str:
+    """Get a status badge for a project's latest buildset result.
+
+    Returns the badge URL (SVG) that can be embedded in READMEs to show
+    current CI status. Returns 404 info if no buildset found.
+
+    Args:
+        project: Project name (e.g. "org/repo")
+        tenant: Tenant name (uses default if empty)
+        pipeline: Filter by pipeline (optional)
+        branch: Filter by branch (optional)
+    """
+    t = _tenant(ctx, tenant)
+    params: dict[str, str] = {"project": project}
+    if pipeline:
+        params["pipeline"] = pipeline
+    if branch:
+        params["branch"] = branch
+    from ..helpers import app
+
+    a = app(ctx)
+    url = f"{a.config.base_url}/tenant/{safepath(t)}/badge"
+    return json.dumps(
+        clean(
+            {
+                "badge_url": url,
+                "params": params,
+                "embed_markdown": f"![CI]({url}?project={project}"
+                + (f"&pipeline={pipeline}" if pipeline else "")
+                + (f"&branch={branch}" if branch else "")
+                + ")",
+            }
+        )
+    )
+
+
 @mcp.tool(title="Resolved Job Graph", annotations=_READ_ONLY)
 @handle_errors
 async def get_freeze_jobs(

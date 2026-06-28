@@ -10,6 +10,7 @@ from mcp_zuul.tools import (
     autohold_delete,
     dequeue,
     enqueue,
+    promote,
     reenqueue_buildset,
 )
 
@@ -67,6 +68,33 @@ class TestEnqueue:
         result = json.loads(
             await enqueue(mock_ctx, project="org/repo", pipeline="check", change="12345,1")
         )
+        assert "error" in result
+        assert "Write operations disabled" in result["error"]
+
+
+class TestPromote:
+    @respx.mock
+    async def test_promotes_changes(self, mock_ctx):
+        route = respx.post("https://zuul.example.com/api/tenant/test-tenant/promote").mock(
+            return_value=httpx.Response(200, json={})
+        )
+        result = json.loads(
+            await promote(mock_ctx, pipeline="gate", changes=["12345,1", "12346,2"])
+        )
+        assert result["status"] == "promoted"
+        assert result["pipeline"] == "gate"
+        assert result["changes"] == ["12345,1", "12346,2"]
+        body = json.loads(route.calls[0].request.content)
+        assert body["pipeline"] == "gate"
+        assert body["changes"] == ["12345,1", "12346,2"]
+
+    async def test_requires_changes(self, mock_ctx):
+        result = json.loads(await promote(mock_ctx, pipeline="gate", changes=[]))
+        assert "error" in result
+
+    async def test_blocked_in_read_only(self, mock_ctx):
+        mock_ctx.request_context.lifespan_context.config.read_only = True
+        result = json.loads(await promote(mock_ctx, pipeline="gate", changes=["12345,1"]))
         assert "error" in result
         assert "Write operations disabled" in result["error"]
 

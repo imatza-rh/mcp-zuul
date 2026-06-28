@@ -7,6 +7,8 @@ import respx
 
 from mcp_zuul.tools import (
     find_flaky_jobs,
+    get_autohold,
+    get_badge,
     get_build_times,
     get_components,
     get_config_errors,
@@ -17,12 +19,15 @@ from mcp_zuul.tools import (
     get_project,
     get_tenant_info,
     list_autoholds,
+    list_images,
     list_jobs,
     list_labels,
     list_nodes,
     list_pipelines,
     list_projects,
+    list_providers,
     list_semaphores,
+    list_system_events,
     list_tenants,
 )
 
@@ -720,3 +725,145 @@ class TestGetTenantInfo:
         assert result["job_history"] is True
         assert "SF" in result["auth_realms"]
         assert result["websocket_url"] == "wss://zuul.example.com/console"
+
+
+class TestGetAutohold:
+    @respx.mock
+    async def test_returns_autohold_details(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold/42").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "42",
+                    "project": "org/repo",
+                    "job": "my-job",
+                    "ref_filter": "",
+                    "reason": "Debug OOM",
+                    "count": 1,
+                    "current_count": 0,
+                    "max_count": 1,
+                    "node_expiration": 86400,
+                    "expired": False,
+                    "nodes": [
+                        {"id": "n1", "state": "held", "label": "cloud-centos", "provider": "rax"},
+                    ],
+                },
+            )
+        )
+        result = json.loads(await get_autohold(mock_ctx, autohold_id="42"))
+        assert result["id"] == "42"
+        assert result["project"] == "org/repo"
+        assert result["job"] == "my-job"
+        assert result["reason"] == "Debug OOM"
+        assert result["nodes_count"] == 1
+        assert result["nodes"][0]["state"] == "held"
+
+
+class TestListSystemEvents:
+    @respx.mock
+    async def test_returns_events(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/system-events").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "event_type": "reconfig",
+                        "event_time": "2026-06-28T10:00:00Z",
+                        "description": "Reconfiguration complete",
+                        "event_id": "evt-1",
+                    },
+                    {
+                        "event_type": "config_update",
+                        "event_time": "2026-06-28T09:00:00Z",
+                        "description": "Project org/repo updated",
+                        "event_id": "evt-2",
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_system_events(mock_ctx))
+        assert result["count"] == 2
+        assert result["events"][0]["event_type"] == "reconfig"
+        assert result["events"][1]["event_id"] == "evt-2"
+
+    @respx.mock
+    async def test_filters_by_event_type(self, mock_ctx):
+        route = respx.get("https://zuul.example.com/api/tenant/test-tenant/system-events").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        await list_system_events(mock_ctx, event_type="reconfig")
+        assert route.calls[0].request.url.params["event_type"] == "reconfig"
+
+
+class TestListProviders:
+    @respx.mock
+    async def test_returns_providers(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/providers").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "rax-iad",
+                        "canonical_name": "rax-iad",
+                        "flavors": [{"name": "v3-standard-4"}, {"name": "v3-standard-8"}],
+                        "images": [{"name": "centos-9-stream"}],
+                        "labels": [{"name": "cloud-centos-9"}],
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_providers(mock_ctx))
+        assert result["count"] == 1
+        assert result["providers"][0]["name"] == "rax-iad"
+        assert "v3-standard-4" in result["providers"][0]["flavors"]
+        assert "centos-9-stream" in result["providers"][0]["images"]
+
+
+class TestListImages:
+    @respx.mock
+    async def test_returns_images(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/images").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "name": "centos-9-stream",
+                        "canonical_name": "centos-9-stream",
+                        "build_artifacts": [
+                            {
+                                "uploads": [
+                                    {"provider_name": "rax-iad", "state": "ready"},
+                                    {"provider_name": "rax-ord", "state": "ready"},
+                                ]
+                            }
+                        ],
+                    },
+                ],
+            )
+        )
+        result = json.loads(await list_images(mock_ctx))
+        assert result["count"] == 1
+        assert result["images"][0]["name"] == "centos-9-stream"
+        assert result["images"][0]["build_count"] == 1
+        assert len(result["images"][0]["uploads"]) == 2
+
+    @respx.mock
+    async def test_handles_no_artifacts(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/images").mock(
+            return_value=httpx.Response(
+                200,
+                json=[{"name": "empty-image", "canonical_name": "empty", "build_artifacts": []}],
+            )
+        )
+        result = json.loads(await list_images(mock_ctx))
+        assert result["images"][0]["build_count"] == 0
+
+
+class TestGetBadge:
+    async def test_returns_badge_url(self, mock_ctx):
+        result = json.loads(await get_badge(mock_ctx, project="org/repo", pipeline="check"))
+        assert "badge_url" in result
+        assert "zuul.example.com" in result["badge_url"]
+        assert result["params"]["project"] == "org/repo"
+        assert "embed_markdown" in result
+        assert "![CI]" in result["embed_markdown"]

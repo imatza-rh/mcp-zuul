@@ -91,6 +91,7 @@ async def lifespan(server: FastMCP):
         # Remove write tools when in read-only mode (default)
         _WRITE_TOOLS = {
             "enqueue",
+            "promote",
             "dequeue",
             "autohold_create",
             "autohold_delete",

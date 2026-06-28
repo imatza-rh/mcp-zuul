@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations - 38 tools (31 read-only + 5 write + 1 LogJuicer + 1 console stream)."""
+"""Zuul MCP tool implementations - 44 tools (36 read-only + 6 write + 1 LogJuicer + 1 console stream)."""
 
 # Re-export symbols used by prompts.py and tests
 # Re-export all tool functions for backward compatibility (tests import from mcp_zuul.tools)
@@ -21,6 +21,8 @@ from ._common import (
     _smart_truncate,
 )
 from ._config import (
+    get_autohold,
+    get_badge,
     get_components,
     get_config_errors,
     get_connections,
@@ -30,12 +32,15 @@ from ._config import (
     get_project,
     get_tenant_info,
     list_autoholds,
+    list_images,
     list_jobs,
     list_labels,
     list_nodes,
     list_pipelines,
     list_projects,
+    list_providers,
     list_semaphores,
+    list_system_events,
 )
 from ._console import stream_build_console
 from ._logjuicer import get_build_anomalies
@@ -54,6 +59,7 @@ from ._write import (
     autohold_delete,
     dequeue,
     enqueue,
+    promote,
     reenqueue_buildset,
 )
 
@@ -73,6 +79,8 @@ __all__ = [
     "diagnose_build",
     "enqueue",
     "find_flaky_jobs",
+    "get_autohold",
+    "get_badge",
     "get_build",
     "get_build_anomalies",
     "get_build_failures",
@@ -94,13 +102,17 @@ __all__ = [
     "list_autoholds",
     "list_builds",
     "list_buildsets",
+    "list_images",
     "list_jobs",
     "list_labels",
     "list_nodes",
     "list_pipelines",
     "list_projects",
+    "list_providers",
     "list_semaphores",
+    "list_system_events",
     "list_tenants",
+    "promote",
     "reenqueue_buildset",
     "stream_build_console",
     "tail_build_log",
