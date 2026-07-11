@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.1] - 2026-07-12
+
+### Added
+- Animated demo GIF showing real failure diagnosis workflow
+- Architecture diagram in README Development section
+- Minimal tool example in CONTRIBUTING.md for new contributors
+- `.env.example` with all configuration variables documented
+- Documentation URL in PyPI metadata sidebar
+- Codecov coverage upload in CI pipeline
+
+### Changed
+- README opening reordered: outcome tagline and demo GIF before install command
+- Badge row centered with HTML for consistent presentation
+- CONTRIBUTING.md rewritten for `tools/` package (was referencing removed `tools.py`)
+- CONTRIBUTING.md now shows annotations as `@mcp.tool()` args with `title` parameter
+
+### Fixed
+- CONTRIBUTING.md referenced non-existent `src/mcp_zuul/tools.py` (split into `tools/` package since v0.5.0)
+
 ## [0.8.0] - 2026-06-29
 
 ### Added
