@@ -488,25 +488,27 @@ docker build -t mcp-zuul .
 MCP Client (Claude Code, Cursor, etc.)
     │
     ▼
-┌─────────────────────────────────────┐
-│  FastMCP Server  (server.py)        │
-│  ├── config.py     env vars, transport, tool filtering
-│  ├── auth.py       Kerberos/SPNEGO + OIDC redirect chain
-│  └── errors.py     @handle_errors decorator
-├─────────────────────────────────────┤
-│  tools/            44 tools across 8 submodules
-│  prompts.py        3 prompt templates
-│  resources.py      3 zuul:// resources
-├─────────────────────────────────────┤
-│  helpers.py        API client, URL parsing, log streaming
-│  formatters.py     token-efficient output
-│  parsers.py        Ansible/JUnit/log parsing
-│  classifier.py     failure classification
-├─────────────────────────────────────┤
-│  httpx clients     API client (auth) + log client (no auth)
-└───────┬─────────────────────┬───────┘
-        ▼                     ▼
-   Zuul REST API         Log file hosts
+┌──────────────────────────────────────────────────┐
+│  src/mcp_zuul/                                   │
+│                                                  │
+│  server.py       FastMCP instance                │
+│  config.py       env vars, transport, filtering  │
+│  auth.py         Kerberos/SPNEGO + OIDC          │
+│  errors.py       @handle_errors decorator        │
+├──────────────────────────────────────────────────┤
+│  tools/          44 tools across 8 submodules    │
+│  prompts.py      3 prompt templates              │
+│  resources.py    3 zuul:// resources             │
+├──────────────────────────────────────────────────┤
+│  helpers.py      API client, URL parsing         │
+│  formatters.py   token-efficient output          │
+│  parsers.py      Ansible/JUnit/log parsing       │
+│  classifier.py   failure classification          │
+├──────────────────────────────────────────────────┤
+│  httpx clients   API (auth) + logs (no auth)     │
+└────────┬─────────────────────────┬───────────────┘
+         ▼                         ▼
+    Zuul REST API           Log file hosts
 ```
 
 See `CLAUDE.md` for full architecture details.

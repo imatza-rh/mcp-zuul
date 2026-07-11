@@ -47,7 +47,7 @@ mcp-zuul = "mcp_zuul:main"
 
 [project.urls]
 Homepage = "https://github.com/imatza-rh/mcp-zuul"
-Documentation = "https://github.com/imatza-rh/mcp-zuul#readme"
+Documentation = "https://github.com/imatza-rh/mcp-zuul#why-mcp-zuul"
 Repository = "https://github.com/imatza-rh/mcp-zuul"
 Issues = "https://github.com/imatza-rh/mcp-zuul/issues"
 Changelog = "https://github.com/imatza-rh/mcp-zuul/releases"
