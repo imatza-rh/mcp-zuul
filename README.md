@@ -11,7 +11,11 @@
 [![codecov](https://codecov.io/gh/imatza-rh/mcp-zuul/graph/badge.svg)](https://codecov.io/gh/imatza-rh/mcp-zuul)
 [![Listed on AiList](https://hifriendbot.com/ai-list/badge/zuul-ci-by-imatza-rh.svg)](https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/)
 
-An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/). Debug build failures by asking questions, not clicking through web UIs.
+Debug build failures by asking questions, not clicking through web UIs. An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/).
+
+<p align="center">
+  <img src="assets/demo.gif" alt="mcp-zuul diagnosing a build failure" width="800" />
+</p>
 
 > If mcp-zuul saves you a debugging session, a ⭐ [star](https://github.com/imatza-rh/mcp-zuul) helps others find it.
 
@@ -21,10 +25,6 @@ claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
 ```
 
 44 tools, 3 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
-
-<p align="center">
-  <img src="assets/demo.gif" alt="mcp-zuul diagnosing a build failure" width="800" />
-</p>
 
 ## Why mcp-zuul?
 
@@ -480,7 +480,34 @@ uv run mypy src/mcp_zuul/
 docker build -t mcp-zuul .
 ```
 
-**Architecture:** Multi-module package in `src/mcp_zuul/` — `config.py` (env vars, transport, tool filtering, read-only mode), `auth.py` (Kerberos/SPNEGO), `server.py` (FastMCP + lifespan + tool filtering + write-tool gating), `helpers.py` (API client with GET/POST/DELETE, URL parsing, log streaming), `formatters.py` (token-efficient output), `errors.py` (uniform error handling), `tools/` (44 tools), `prompts.py` (3 prompts), `resources.py` (3 resources). See `CLAUDE.md` for full architecture description.
+### Architecture
+
+```
+MCP Client (Claude Code, Cursor, etc.)
+    │
+    ▼
+┌─────────────────────────────────────┐
+│  FastMCP Server  (server.py)        │
+│  ├── config.py     env vars, transport, tool filtering
+│  ├── auth.py       Kerberos/SPNEGO + OIDC redirect chain
+│  └── errors.py     @handle_errors decorator
+├─────────────────────────────────────┤
+│  tools/            44 tools across 8 submodules
+│  prompts.py        3 prompt templates
+│  resources.py      3 zuul:// resources
+├─────────────────────────────────────┤
+│  helpers.py        API client, URL parsing, log streaming
+│  formatters.py     token-efficient output
+│  parsers.py        Ansible/JUnit/log parsing
+│  classifier.py     failure classification
+├─────────────────────────────────────┤
+│  httpx clients     API client (auth) + log client (no auth)
+└───────┬─────────────────────┬───────┘
+        ▼                     ▼
+   Zuul REST API         Log file hosts
+```
+
+See `CLAUDE.md` for full architecture details.
 
 ## Listings
 

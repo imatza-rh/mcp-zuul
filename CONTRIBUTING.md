@@ -24,13 +24,30 @@ Or use `make check` to run all three (lint, typecheck, test).
 
 ## Adding a New Tool
 
-1. Add the tool function to `src/mcp_zuul/tools.py` with the `@mcp.tool()` and `@handle_errors` decorators
-2. Use `_READ_ONLY` or `_WRITE` annotations
-3. All tools must return JSON strings (use `json.dumps()`)
-4. Accept optional `tenant` param resolved via `_tenant(ctx, tenant)`
-5. For build/buildset tools, accept `url` param via `_resolve()`
-6. Add tests in `tests/` using `respx` for HTTP mocking and `mock_ctx` fixture
-7. Update the tool count in `README.md` and `CLAUDE.md`
+Tools live in `src/mcp_zuul/tools/` as domain-specific submodules:
+
+| Submodule | Domain |
+|-----------|--------|
+| `_builds.py` | Build listing, failures, diagnosis |
+| `_logs.py` | Log reading, grep, browsing |
+| `_status.py` | Pipeline status, change status, flaky detection |
+| `_config.py` | Jobs, projects, nodes, labels, semaphores |
+| `_write.py` | Enqueue, dequeue, promote, autohold |
+| `_tests.py` | JUnit XML test result parsing |
+| `_logjuicer.py` | ML-based log anomaly detection |
+| `_console.py` | Live WebSocket console streaming |
+
+To add a tool:
+
+1. Add the function to the appropriate submodule (or create a new `_domain.py` if none fits)
+2. Decorate with `@mcp.tool()` and `@handle_errors`
+3. Use annotations from `_common.py`: `_READ_ONLY`, `_WRITE`, or `_DESTRUCTIVE`
+4. All tools must return JSON strings (use `json.dumps()`)
+5. Accept optional `tenant` param resolved via `_tenant(ctx, tenant)`
+6. For build/buildset tools, accept `url` param via `_resolve()`
+7. Re-export the function from `tools/__init__.py` for backward compatibility
+8. Add tests in `tests/` using `respx` for HTTP mocking and `mock_ctx` fixture
+9. Update the tool count in `README.md` and `CLAUDE.md`
 
 ## Adding a New Prompt or Resource
 
