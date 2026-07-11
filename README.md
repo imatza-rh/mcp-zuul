@@ -2,14 +2,16 @@
 
 # mcp-zuul
 
-[![PyPI](https://img.shields.io/pypi/v/mcp-zuul)](https://pypi.org/project/mcp-zuul/)
-[![Python](https://img.shields.io/pypi/pyversions/mcp-zuul)](https://pypi.org/project/mcp-zuul/)
-[![License](https://img.shields.io/github/license/imatza-rh/mcp-zuul)](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE)
-[![CI](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg)](https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml)
-[![MCP](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badges/score.svg)](https://glama.ai/mcp/servers/imatza-rh/mcp-zuul)
-[![Downloads](https://img.shields.io/pepy/dt/mcp-zuul)](https://pepy.tech/projects/mcp-zuul)
-[![codecov](https://codecov.io/gh/imatza-rh/mcp-zuul/graph/badge.svg)](https://codecov.io/gh/imatza-rh/mcp-zuul)
-[![Listed on AiList](https://hifriendbot.com/ai-list/badge/zuul-ci-by-imatza-rh.svg)](https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/)
+<p align="center">
+  <a href="https://pypi.org/project/mcp-zuul/"><img src="https://img.shields.io/pypi/v/mcp-zuul" alt="PyPI"></a>
+  <a href="https://pypi.org/project/mcp-zuul/"><img src="https://img.shields.io/pypi/pyversions/mcp-zuul" alt="Python"></a>
+  <a href="https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE"><img src="https://img.shields.io/github/license/imatza-rh/mcp-zuul" alt="License"></a>
+  <a href="https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml"><img src="https://github.com/imatza-rh/mcp-zuul/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://glama.ai/mcp/servers/imatza-rh/mcp-zuul"><img src="https://glama.ai/mcp/servers/imatza-rh/mcp-zuul/badges/score.svg" alt="MCP"></a>
+  <a href="https://pepy.tech/projects/mcp-zuul"><img src="https://img.shields.io/pepy/dt/mcp-zuul" alt="Downloads"></a>
+  <a href="https://codecov.io/gh/imatza-rh/mcp-zuul"><img src="https://codecov.io/gh/imatza-rh/mcp-zuul/graph/badge.svg" alt="codecov"></a>
+  <a href="https://hifriendbot.com/ai-list/zuul-ci-by-imatza-rh/"><img src="https://hifriendbot.com/ai-list/badge/zuul-ci-by-imatza-rh.svg" alt="Listed on AiList"></a>
+</p>
 
 Debug build failures by asking questions, not clicking through web UIs. An [MCP](https://modelcontextprotocol.io/) server for [Zuul CI](https://zuul-ci.org/).
 
