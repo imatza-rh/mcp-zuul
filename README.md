@@ -22,15 +22,9 @@ claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
 
 44 tools, 3 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
 
-```
-You:   "Why did the latest gate job fail?"
-Claude: → get_build_failures(uuid="abc123")
-        → get_build_log(uuid="abc123", log_name="controller/logs/ci_script_008_run.log",
-                        grep="error|failed|timed out", context=2)
-
-        Root cause: cert-manager pod in Completed state blocked oc wait.
-        Confidence: Confirmed — verified in ci_script_008_run.log:325-329.
-```
+<p align="center">
+  <img src="assets/demo.gif" alt="mcp-zuul diagnosing a build failure" width="800" />
+</p>
 
 ## Why mcp-zuul?
 
