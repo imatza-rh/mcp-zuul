@@ -1,5 +1,6 @@
 """FastMCP server instance and lifespan management."""
 
+import asyncio
 import concurrent.futures
 import logging
 import sys
@@ -78,15 +79,31 @@ async def lifespan(server: FastMCP):
         ) as log_client,
     ):
         if config.use_kerberos:
-            try:
-                await kerberos_auth(client, config.base_url)
-            except httpx.ConnectError as e:
-                if is_ssl_error(e):
-                    raise RuntimeError(
-                        "SSL certificate verification failed during Kerberos authentication. "
-                        "Set ZUUL_VERIFY_SSL=false for self-signed certificates"
-                    ) from e
-                raise
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    await kerberos_auth(client, config.base_url)
+                    break
+                except httpx.ConnectError as e:
+                    if is_ssl_error(e):
+                        raise RuntimeError(
+                            "SSL certificate verification failed during Kerberos authentication. "
+                            "Set ZUUL_VERIFY_SSL=false for self-signed certificates"
+                        ) from e
+                    if attempt >= max_retries - 1:
+                        raise
+                except Exception:
+                    if attempt >= max_retries - 1:
+                        raise
+                # Retry with increasing delay (5s, 10s, 15s)
+                delay = 5 * (attempt + 1)
+                log.warning(
+                    "Kerberos auth failed (attempt %d/%d). Retrying in %ds",
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
         # Remove write tools when in read-only mode (default)
         _WRITE_TOOLS = {

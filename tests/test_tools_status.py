@@ -1524,3 +1524,42 @@ class TestChainSummary:
         # Fresh remaining = estimated(6540) - elapsed(3600) = 2940s = 49m 0s
         # NOT the stale "96m 0s" from Zuul
         assert job["remaining"] == "49m 0s", f"Expected 49m 0s, got {job['remaining']}"
+
+
+class TestCheckHealth:
+    @respx.mock
+    async def test_healthy_server(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenants").mock(
+            return_value=httpx.Response(
+                200,
+                json=[{"name": "t1", "projects": 5}, {"name": "t2", "projects": 3}],
+            )
+        )
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "connected"
+        assert result["tenant_count"] == 2
+        assert result["tenants"] == ["t1", "t2"]
+        assert result["kerberos"] is False
+        assert result["read_only"] is False
+
+    @respx.mock
+    async def test_auth_error(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenants").mock(return_value=httpx.Response(401))
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "error"
+        assert result["http_status"] == 401
+
+    @respx.mock
+    async def test_unreachable(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenants").mock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "unreachable"
+        assert "Connection refused" in result["error"]

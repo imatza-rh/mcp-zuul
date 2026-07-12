@@ -1,6 +1,7 @@
 """Tests for server.py: BearerAuth, tool removal, tool listing, lifespan."""
 
 import os
+import ssl
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -303,3 +304,109 @@ class TestLifespanContext:
 
             # After exiting, executor should be shut down
             assert executor._shutdown
+
+
+class TestKerberosRetry:
+    """Test Kerberos auth retry with backoff at startup."""
+
+    async def test_retries_on_connect_error(self):
+        """ConnectError on first attempt retries, succeeds on second."""
+        env = {
+            "ZUUL_URL": "https://zuul.example.com",
+            "ZUUL_DEFAULT_TENANT": "test",
+            "ZUUL_USE_KERBEROS": "true",
+        }
+        from mcp_zuul.server import lifespan, mcp
+
+        call_count = 0
+
+        async def mock_kerberos(client, base_url):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise httpx.ConnectError("Connection refused")
+
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
+            patch("mcp_zuul.server._remove_tool", return_value=True),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+        ):
+            async with lifespan(mcp):
+                pass
+
+        assert call_count == 2
+
+    async def test_retries_on_runtime_error(self):
+        """RuntimeError (e.g. expired ticket) retries and succeeds."""
+        env = {
+            "ZUUL_URL": "https://zuul.example.com",
+            "ZUUL_DEFAULT_TENANT": "test",
+            "ZUUL_USE_KERBEROS": "true",
+        }
+        from mcp_zuul.server import lifespan, mcp
+
+        call_count = 0
+
+        async def mock_kerberos(client, base_url):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Kerberos auth: expected 401, got 502")
+
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
+            patch("mcp_zuul.server._remove_tool", return_value=True),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+        ):
+            async with lifespan(mcp):
+                pass
+
+        assert call_count == 2
+
+    async def test_raises_after_max_retries(self):
+        """Raises after 3 consecutive failures."""
+        env = {
+            "ZUUL_URL": "https://zuul.example.com",
+            "ZUUL_DEFAULT_TENANT": "test",
+            "ZUUL_USE_KERBEROS": "true",
+        }
+        from mcp_zuul.server import lifespan, mcp
+
+        async def always_fail(client, base_url):
+            raise httpx.ConnectError("Connection refused")
+
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("mcp_zuul.server.kerberos_auth", side_effect=always_fail),
+            patch("mcp_zuul.server._remove_tool", return_value=True),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+            pytest.raises(httpx.ConnectError, match="Connection refused"),
+        ):
+            async with lifespan(mcp):
+                pass
+
+    async def test_ssl_error_not_retried(self):
+        """SSL errors are not retried — they raise immediately."""
+        env = {
+            "ZUUL_URL": "https://zuul.example.com",
+            "ZUUL_DEFAULT_TENANT": "test",
+            "ZUUL_USE_KERBEROS": "true",
+        }
+        from mcp_zuul.server import lifespan, mcp
+
+        ssl_err = ssl.SSLError("certificate verify failed")
+        inner = Exception()
+        inner.__context__ = ssl_err
+        connect_err = httpx.ConnectError("SSL failed")
+        connect_err.__cause__ = inner
+
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("mcp_zuul.server.kerberos_auth", side_effect=connect_err),
+            patch("mcp_zuul.server._remove_tool", return_value=True),
+            pytest.raises(RuntimeError, match="SSL certificate"),
+        ):
+            async with lifespan(mcp):
+                pass

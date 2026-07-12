@@ -1,4 +1,4 @@
-"""Zuul MCP tool implementations - 44 tools (36 read-only + 6 write + 1 LogJuicer + 1 console stream)."""
+"""Zuul MCP tool implementations - 45 tools (37 read-only + 6 write + 1 LogJuicer + 1 console stream)."""
 
 # Re-export symbols used by prompts.py and tests
 # Re-export all tool functions for backward compatibility (tests import from mcp_zuul.tools)
@@ -46,6 +46,7 @@ from ._console import stream_build_console
 from ._logjuicer import get_build_anomalies
 from ._logs import browse_build_logs, get_build_log, tail_build_log
 from ._status import (
+    check_health,
     find_flaky_jobs,
     get_build_times,
     get_change_status,
@@ -75,6 +76,7 @@ __all__ = [
     "autohold_create",
     "autohold_delete",
     "browse_build_logs",
+    "check_health",
     "dequeue",
     "diagnose_build",
     "enqueue",

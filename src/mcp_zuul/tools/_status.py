@@ -570,3 +570,40 @@ async def get_job_durations(
     if fetch_errors:
         out["fetch_errors"] = fetch_errors
     return json.dumps(out)
+
+
+@mcp.tool(title="Health Check", annotations=_READ_ONLY)
+@handle_errors
+async def check_health(ctx: Context) -> str:
+    """Test Zuul API connectivity, auth status, and server version.
+
+    Use this to verify the server is working after startup or when
+    tool calls start failing. Re-authentication happens automatically
+    via the api() wrapper if the Kerberos session has expired.
+    """
+    a = app(ctx)
+    result: dict[str, Any] = {
+        "zuul_url": a.config.base_url,
+        "kerberos": a.config.use_kerberos,
+        "read_only": a.config.read_only,
+    }
+    try:
+        data = await api(ctx, "/tenants")
+        result["status"] = "connected"
+        result["tenant_count"] = len(data) if isinstance(data, list) else 0
+        if isinstance(data, list) and data:
+            names = [t.get("name") for t in data[:10]]
+            result["tenants"] = names
+            if len(data) > 10:
+                result["tenants_truncated"] = True
+    except httpx.HTTPStatusError as exc:
+        result["status"] = "error"
+        result["http_status"] = exc.response.status_code
+        result["error"] = str(exc)
+    except httpx.ConnectError as exc:
+        result["status"] = "unreachable"
+        result["error"] = str(exc)
+    except Exception as exc:
+        result["status"] = "error"
+        result["error"] = str(exc)
+    return json.dumps(result)
