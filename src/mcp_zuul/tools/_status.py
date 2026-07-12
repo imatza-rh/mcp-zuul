@@ -575,7 +575,7 @@ async def get_job_durations(
 @mcp.tool(title="Health Check", annotations=_READ_ONLY)
 @handle_errors
 async def check_health(ctx: Context) -> str:
-    """Test Zuul API connectivity, auth status, and server version.
+    """Test Zuul API connectivity and auth status.
 
     Use this to verify the server is working after startup or when
     tool calls start failing. Re-authentication happens automatically

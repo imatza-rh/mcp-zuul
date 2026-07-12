@@ -1563,3 +1563,29 @@ class TestCheckHealth:
         result = json.loads(await check_health(mock_ctx))
         assert result["status"] == "unreachable"
         assert "Connection refused" in result["error"]
+
+    @respx.mock
+    async def test_auth_error_includes_error_field(self, mock_ctx):
+        """HTTPStatusError branch populates both http_status and error."""
+        respx.get("https://zuul.example.com/api/tenants").mock(return_value=httpx.Response(403))
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "error"
+        assert result["http_status"] == 403
+        assert "error" in result
+
+    @respx.mock
+    async def test_many_tenants_truncated(self, mock_ctx):
+        """More than 10 tenants shows truncation indicator."""
+        tenants = [{"name": f"t{i}"} for i in range(15)]
+        respx.get("https://zuul.example.com/api/tenants").mock(
+            return_value=httpx.Response(200, json=tenants)
+        )
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "connected"
+        assert result["tenant_count"] == 15
+        assert len(result["tenants"]) == 10
+        assert result["tenants_truncated"] is True

@@ -95,7 +95,7 @@ async def lifespan(server: FastMCP):
                 except Exception:
                     if attempt >= max_retries - 1:
                         raise
-                # Retry with increasing delay (5s, 10s, 15s)
+                # Retry with increasing delay (5s, 10s)
                 delay = 5 * (attempt + 1)
                 log.warning(
                     "Kerberos auth failed (attempt %d/%d). Retrying in %ds",
