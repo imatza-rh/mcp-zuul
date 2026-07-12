@@ -144,6 +144,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 | `find_flaky_jobs` | Analyze recent build history for intermittent failures. Computes pass/fail rate and flags jobs as flaky (>20% failure with mixed results). |
 | `get_build_times` | Build duration trends with avg/min/max stats. Detect performance regressions or timeout-prone jobs. |
 | `get_job_durations` | Batch avg/min/max duration for multiple jobs in one call. Designed for monitoring an entire pipeline chain without N separate calls. |
+| `check_health` | Test API connectivity, auth status, and config. Triggers re-auth automatically if the Kerberos session expired. |
 | `get_tenant_info` | Tenant capabilities — auth realms, job history support, websocket URL. |
 
 ### Infrastructure

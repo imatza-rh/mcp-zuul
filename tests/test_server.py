@@ -367,12 +367,13 @@ class TestKerberosRetry:
             patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
             patch("mcp_zuul.server._remove_tool", return_value=True),
-            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
         ):
             async with lifespan(mcp):
                 pass
 
         assert call_count == 2
+        mock_sleep.assert_called_once_with(5)
 
     async def test_retries_on_runtime_error(self):
         """RuntimeError (e.g. expired ticket) retries and succeeds."""
@@ -395,12 +396,13 @@ class TestKerberosRetry:
             patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
             patch("mcp_zuul.server._remove_tool", return_value=True),
-            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
         ):
             async with lifespan(mcp):
                 pass
 
         assert call_count == 2
+        mock_sleep.assert_called_once_with(5)
 
     async def test_raises_after_max_retries(self):
         """Raises after 3 consecutive failures."""
@@ -418,11 +420,16 @@ class TestKerberosRetry:
             patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=always_fail),
             patch("mcp_zuul.server._remove_tool", return_value=True),
-            patch("mcp_zuul.server.asyncio.sleep", return_value=None),
+            patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
             pytest.raises(httpx.ConnectError, match="Connection refused"),
         ):
             async with lifespan(mcp):
                 pass
+
+        # 3 attempts = 2 sleeps (5s after attempt 1, 10s after attempt 2)
+        assert mock_sleep.call_count == 2
+        mock_sleep.assert_any_call(5)
+        mock_sleep.assert_any_call(10)
 
     async def test_ssl_error_not_retried(self):
         """SSL errors are not retried — they raise immediately."""
