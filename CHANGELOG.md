@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-07-12
+
+### Added
+- `check_health` tool — test API connectivity, auth status, and config in one call; triggers Kerberos re-auth automatically via the `api()` wrapper
+- Startup Kerberos auth retry with backoff (3 attempts, 5s/10s delays) — prevents MCP server startup failure when the Kerberos ticket is not yet valid
+- `_sanitize_url()` helper — strips credentials from URLs for safe display in tool responses
+- Tool count consistency test — prevents drift between `__init__.py`, `CLAUDE.md`, and `README.md`
+
+### Fixed
+- Startup auth logs now include the exception details for production debuggability
+
 ## [0.8.1] - 2026-07-12
 
 ### Added
