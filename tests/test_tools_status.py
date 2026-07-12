@@ -1589,3 +1589,16 @@ class TestCheckHealth:
         assert result["tenant_count"] == 15
         assert len(result["tenants"]) == 10
         assert result["tenants_truncated"] is True
+
+    @respx.mock
+    async def test_non_list_api_response(self, mock_ctx):
+        """Non-list JSON (e.g., error dict) handled gracefully."""
+        respx.get("https://zuul.example.com/api/tenants").mock(
+            return_value=httpx.Response(200, json={"error": "unexpected"})
+        )
+        from mcp_zuul.tools import check_health
+
+        result = json.loads(await check_health(mock_ctx))
+        assert result["status"] == "connected"
+        assert result["tenant_count"] == 0
+        assert "tenants" not in result

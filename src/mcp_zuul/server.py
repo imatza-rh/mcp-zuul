@@ -91,16 +91,21 @@ async def lifespan(server: FastMCP):
                             "Set ZUUL_VERIFY_SSL=false for self-signed certificates"
                         ) from e
                     if attempt >= max_retries - 1:
+                        log.error("Kerberos auth failed after %d attempts: %s", max_retries, e)
                         raise
-                except Exception:
+                    last_err: Exception = e
+                except Exception as e:
                     if attempt >= max_retries - 1:
+                        log.error("Kerberos auth failed after %d attempts: %s", max_retries, e)
                         raise
+                    last_err = e
                 # Retry with increasing delay (5s, 10s)
                 delay = 5 * (attempt + 1)
                 log.warning(
-                    "Kerberos auth failed (attempt %d/%d). Retrying in %ds",
+                    "Kerberos auth failed (attempt %d/%d): %s. Retrying in %ds",
                     attempt + 1,
                     max_retries,
+                    last_err,
                     delay,
                 )
                 await asyncio.sleep(delay)

@@ -13,6 +13,7 @@ from mcp_zuul.config import Config
 from mcp_zuul.errors import _clean_body, handle_errors
 from mcp_zuul.formatters import fmt_build, fmt_status_item
 from mcp_zuul.helpers import (
+    _sanitize_url,
     api,
     clean,
     error,
@@ -956,3 +957,27 @@ class TestFetchLogUrlDecodingError:
         resp = await fetch_log_url(a, url)
         assert resp.status_code == 200
         assert route.call_count == 1
+
+
+class TestSanitizeUrl:
+    def test_strips_user_password(self):
+        assert _sanitize_url("https://user:pass@zuul.example.com/zuul") == (
+            "https://zuul.example.com/zuul"
+        )
+
+    def test_strips_user_only(self):
+        assert _sanitize_url("https://user@zuul.example.com/zuul") == (
+            "https://zuul.example.com/zuul"
+        )
+
+    def test_preserves_port(self):
+        assert _sanitize_url("https://user:pass@zuul.example.com:8443/zuul") == (
+            "https://zuul.example.com:8443/zuul"
+        )
+
+    def test_no_credentials_unchanged(self):
+        url = "https://zuul.example.com/zuul"
+        assert _sanitize_url(url) == url
+
+    def test_empty_string(self):
+        assert _sanitize_url("") == ""

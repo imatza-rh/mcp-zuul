@@ -20,7 +20,7 @@ from ..formatters import (
     fmt_status_item,
     iter_status_items,
 )
-from ..helpers import api, app, clean, error, parse_zuul_url, safepath
+from ..helpers import _sanitize_url, api, app, clean, error, parse_zuul_url, safepath
 from ..helpers import tenant as _tenant
 from ..server import mcp
 from ._common import _READ_ONLY, _check_url_host
@@ -583,7 +583,7 @@ async def check_health(ctx: Context) -> str:
     """
     a = app(ctx)
     result: dict[str, Any] = {
-        "zuul_url": a.config.base_url,
+        "zuul_url": _sanitize_url(a.config.base_url),
         "kerberos": a.config.use_kerberos,
         "read_only": a.config.read_only,
     }

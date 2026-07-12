@@ -371,6 +371,17 @@ def is_ssl_error(exc: httpx.ConnectError) -> bool:
     return isinstance(inner, ssl.SSLError)
 
 
+def _sanitize_url(url: str) -> str:
+    """Strip userinfo (credentials) from a URL for safe display."""
+    parsed = urlparse(url)
+    if parsed.username or parsed.password:
+        safe = parsed._replace(netloc=parsed.hostname or "")
+        if parsed.port:
+            safe = safe._replace(netloc=f"{parsed.hostname}:{parsed.port}")
+        return safe.geturl()
+    return url
+
+
 def clean(d: dict) -> dict:
     """Remove None, empty string, and empty list values to save tokens."""
     return {k: v for k, v in d.items() if v is not None and v != "" and v != []}
