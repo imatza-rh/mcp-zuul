@@ -1,7 +1,9 @@
 """Tests for server.py: BearerAuth, tool removal, tool listing, lifespan."""
 
 import os
+import re
 import ssl
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -241,6 +243,41 @@ class TestLifespanToolFiltering:
                 pass
 
         mock_log.warning.assert_any_call("Cannot disable unknown tool: %s", "nonexistent_tool")
+
+
+class TestToolCountConsistency:
+    """Verify tool count is consistent across all files that mention it."""
+
+    def test_tool_counts_match(self):
+        root = Path(__file__).parent.parent
+        init_py = (root / "src/mcp_zuul/tools/__init__.py").read_text()
+        claude_md = (root / "CLAUDE.md").read_text()
+        readme_md = (root / "README.md").read_text()
+
+        # Extract the number from __init__.py docstring
+        m = re.search(r"(\d+) tools", init_py.split("\n")[0])
+        assert m, "Could not find tool count in __init__.py docstring"
+        init_count = int(m.group(1))
+
+        # Count actual @mcp.tool registrations across all tool modules
+        tools_dir = root / "src/mcp_zuul/tools"
+        actual = 0
+        for f in tools_dir.glob("_*.py"):
+            actual += f.read_text().count("@mcp.tool(")
+
+        assert actual == init_count, (
+            f"__init__.py says {init_count} tools but found {actual} @mcp.tool decorators"
+        )
+
+        # Check CLAUDE.md mentions the same count
+        assert f"{init_count} tools" in claude_md, (
+            f"CLAUDE.md does not mention '{init_count} tools' (found in __init__.py)"
+        )
+
+        # Check README.md mentions the same count
+        assert f"{init_count} tools" in readme_md, (
+            f"README.md does not mention '{init_count} tools' (found in __init__.py)"
+        )
 
 
 class TestLifespanContext:
