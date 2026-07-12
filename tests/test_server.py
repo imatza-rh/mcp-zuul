@@ -346,13 +346,25 @@ class TestLifespanContext:
 class TestKerberosRetry:
     """Test Kerberos auth retry with backoff at startup."""
 
-    async def test_retries_on_connect_error(self):
-        """ConnectError on first attempt retries, succeeds on second."""
+    @pytest.fixture
+    def _kerb_env(self):
+        """Env for Kerberos tests — patches gssapi import for CI without krb5-devel."""
+        import types
+
         env = {
             "ZUUL_URL": "https://zuul.example.com",
             "ZUUL_DEFAULT_TENANT": "test",
             "ZUUL_USE_KERBEROS": "true",
         }
+        fake_gssapi = types.ModuleType("gssapi")
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch.dict("sys.modules", {"gssapi": fake_gssapi}),
+        ):
+            yield
+
+    async def test_retries_on_connect_error(self, _kerb_env):
+        """ConnectError on first attempt retries, succeeds on second."""
         from mcp_zuul.server import lifespan, mcp
 
         call_count = 0
@@ -364,7 +376,6 @@ class TestKerberosRetry:
                 raise httpx.ConnectError("Connection refused")
 
         with (
-            patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
             patch("mcp_zuul.server._remove_tool", return_value=True),
             patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
@@ -375,13 +386,8 @@ class TestKerberosRetry:
         assert call_count == 2
         mock_sleep.assert_called_once_with(5)
 
-    async def test_retries_on_runtime_error(self):
+    async def test_retries_on_runtime_error(self, _kerb_env):
         """RuntimeError (e.g. expired ticket) retries and succeeds."""
-        env = {
-            "ZUUL_URL": "https://zuul.example.com",
-            "ZUUL_DEFAULT_TENANT": "test",
-            "ZUUL_USE_KERBEROS": "true",
-        }
         from mcp_zuul.server import lifespan, mcp
 
         call_count = 0
@@ -393,7 +399,6 @@ class TestKerberosRetry:
                 raise RuntimeError("Kerberos auth: expected 401, got 502")
 
         with (
-            patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=mock_kerberos),
             patch("mcp_zuul.server._remove_tool", return_value=True),
             patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
@@ -404,20 +409,14 @@ class TestKerberosRetry:
         assert call_count == 2
         mock_sleep.assert_called_once_with(5)
 
-    async def test_raises_after_max_retries(self):
+    async def test_raises_after_max_retries(self, _kerb_env):
         """Raises after 3 consecutive failures."""
-        env = {
-            "ZUUL_URL": "https://zuul.example.com",
-            "ZUUL_DEFAULT_TENANT": "test",
-            "ZUUL_USE_KERBEROS": "true",
-        }
         from mcp_zuul.server import lifespan, mcp
 
         async def always_fail(client, base_url):
             raise httpx.ConnectError("Connection refused")
 
         with (
-            patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=always_fail),
             patch("mcp_zuul.server._remove_tool", return_value=True),
             patch("mcp_zuul.server.asyncio.sleep", return_value=None) as mock_sleep,
@@ -431,13 +430,8 @@ class TestKerberosRetry:
         mock_sleep.assert_any_call(5)
         mock_sleep.assert_any_call(10)
 
-    async def test_ssl_error_not_retried(self):
+    async def test_ssl_error_not_retried(self, _kerb_env):
         """SSL errors are not retried — they raise immediately."""
-        env = {
-            "ZUUL_URL": "https://zuul.example.com",
-            "ZUUL_DEFAULT_TENANT": "test",
-            "ZUUL_USE_KERBEROS": "true",
-        }
         from mcp_zuul.server import lifespan, mcp
 
         ssl_err = ssl.SSLError("certificate verify failed")
@@ -447,7 +441,6 @@ class TestKerberosRetry:
         connect_err.__cause__ = inner
 
         with (
-            patch.dict(os.environ, env, clear=False),
             patch("mcp_zuul.server.kerberos_auth", side_effect=connect_err),
             patch("mcp_zuul.server._remove_tool", return_value=True),
             pytest.raises(RuntimeError, match="SSL certificate"),
