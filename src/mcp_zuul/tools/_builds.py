@@ -260,7 +260,9 @@ async def get_build_failures(
                     **ref_meta,
                     "files_in_failure": _extract_file_paths(failed_tasks),
                     "playbook_count": len(playbooks),
-                    "playbooks": playbooks,
+                    "playbooks_passed": len(playbooks)
+                    - len([p for p in playbooks if p.get("failed")]),
+                    "playbooks": [p for p in playbooks if p.get("failed")],
                     "failed_tasks": failed_tasks,
                 }
             )
@@ -420,7 +422,8 @@ async def diagnose_build(
         "node_name": node_name,
         "pipeline": build.get("pipeline"),
         "playbook_count": len(playbooks),
-        "playbooks": playbooks,
+        "playbooks_passed": len(playbooks) - len([p for p in playbooks if p.get("failed")]),
+        "playbooks": [p for p in playbooks if p.get("failed")],
         "failed_tasks": failed_tasks,
         "log_context": log_context or None,
         "log_truncated": log_truncated or None,

@@ -251,7 +251,20 @@ async def get_change_status(
                         if builds_brief:
                             formatted_bs["builds"] = builds_brief
                     else:
+                        # Non-brief buildset wrapper (includes timing, events)
+                        # but brief builds (omits log_url, nodeset, artifacts)
+                        # with elapsed added for IN_PROGRESS builds.
                         formatted_bs = fmt_buildset(bs_detail, brief=False)
+                        builds_compact = []
+                        for b in bs_detail.get("builds", []):
+                            out = fmt_build(b, brief=True)
+                            if not b.get("result") and b.get("start_time"):
+                                elapsed = _elapsed_from_start(b["start_time"])
+                                if elapsed is not None:
+                                    out["elapsed"] = _format_duration(elapsed)
+                            builds_compact.append(out)
+                        if builds_compact:
+                            formatted_bs["builds"] = builds_compact
                     # Enrich builds with report_url (Zuul web UI link).
                     # The SQL builds API doesn't include report_url — it's
                     # a pipeline-only field.  Construct it so not_in_pipeline

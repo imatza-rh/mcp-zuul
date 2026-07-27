@@ -484,8 +484,8 @@ class TestGetBuildFailures:
         assert len(result["log_context"]) >= 1
 
     @respx.mock
-    async def test_includes_passing_playbooks(self, mock_ctx):
-        """Passing playbooks should be included with failed=False."""
+    async def test_compact_playbooks(self, mock_ctx):
+        """Passing playbooks collapsed to count, only failing ones in list."""
         build = make_build(result="FAILURE")
         # Two playbooks: one passing pre-run, one failing run
         job_output = [
@@ -520,18 +520,11 @@ class TestGetBuildFailures:
         )
         result = json.loads(await get_build_failures(mock_ctx, "fail-uuid"))
         assert result["playbook_count"] == 2
-        assert len(result["playbooks"]) == 2
-        # Passing playbooks: compact (no stats, no playbook_full)
-        assert result["playbooks"][0]["failed"] is False
-        assert result["playbooks"][0]["phase"] == "pre"
-        assert result["playbooks"][0]["playbook"] == "pre.yaml"
-        assert "stats" not in result["playbooks"][0]
-        assert "playbook_full" not in result["playbooks"][0]
-        # Failed playbooks: full detail (stats + playbook_full)
-        assert result["playbooks"][1]["failed"] is True
-        assert result["playbooks"][1]["phase"] == "run"
-        assert "stats" in result["playbooks"][1]
-        assert "playbook_full" in result["playbooks"][1]
+        assert result["playbooks_passed"] == 1
+        assert len(result["playbooks"]) == 1  # only failing playbooks
+        assert result["playbooks"][0]["failed"] is True
+        assert result["playbooks"][0]["phase"] == "run"
+        assert "stats" in result["playbooks"][0]
         assert len(result["failed_tasks"]) == 1
 
     @respx.mock

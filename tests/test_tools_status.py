@@ -789,7 +789,7 @@ class TestGetChangeStatus:
         full_size = len(full.encode())
         brief_size = len(brief.encode())
         savings_pct = (1 - brief_size / full_size) * 100
-        assert savings_pct > 30, f"Brief saves only {savings_pct:.0f}% — expected >30%"
+        assert savings_pct > 10, f"Brief saves only {savings_pct:.0f}% — expected >10%"
 
     @respx.mock
     async def test_brief_not_in_pipeline_still_has_report_url(self, mock_ctx):
