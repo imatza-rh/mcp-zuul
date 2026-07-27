@@ -82,6 +82,18 @@ def _check_url_host(ctx: Context, url: str) -> None:
         )
 
 
+def _validate_log_url(url: str) -> None:
+    """Validate a direct_log_url to prevent SSRF.
+
+    Only http/https schemes are allowed. Rejects file://, ftp://, etc.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid log URL scheme: {parsed.scheme!r} (only http/https allowed)")
+    if not parsed.hostname:
+        raise ValueError("Invalid log URL: no hostname")
+
+
 def _resolve(
     ctx: Context, uuid: str, tenant: str, url: str, kind: str = "build"
 ) -> tuple[str, str]:

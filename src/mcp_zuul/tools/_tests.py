@@ -134,14 +134,12 @@ async def get_build_test_results(
 ) -> str:
     """Parse JUnit XML test results from a build's log directory.
 
-    Discovers test result files via zuul-manifest.json and parses
-    JUnit XML to return structured pass/fail/skip counts with
-    failure details. Works with tempest, tobiko, and any test
-    framework that produces JUnit XML output.
+    Discovers test result files via zuul-manifest.json. Works with
+    tempest, tobiko, and any JUnit XML output.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")

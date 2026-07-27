@@ -21,13 +21,11 @@ async def get_build_anomalies(
 ) -> str:
     """Detect anomalous log lines using LogJuicer ML-based analysis.
 
-    Compares failed build logs against successful baselines to find
-    lines that are unusual. Requires LOGJUICER_URL to be configured.
-    Accepts a build UUID or Zuul build URL.
+    Requires LOGJUICER_URL to be configured.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
     """
     a = app(ctx)

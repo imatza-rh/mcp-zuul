@@ -26,19 +26,16 @@ async def enqueue(
 ) -> str:
     """Enqueue a change or ref into a pipeline for testing.
 
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
-    Provide either change (e.g. "12345,1") or ref (e.g. "refs/heads/main").
-    For ref-based enqueue (periodic pipelines), oldrev and newrev are also sent
-    (empty strings to re-trigger).
+    Requires ZUUL_READ_ONLY=false. Provide either change or ref.
 
     Args:
         project: Project name (e.g. "org/repo")
-        pipeline: Pipeline to enqueue into (e.g. "check", "gate")
-        change: Change to enqueue (e.g. "12345,1" for Gerrit)
-        ref: Git ref to enqueue (e.g. "refs/heads/main" for periodic pipelines)
-        oldrev: Old revision for ref-based enqueue (empty string for re-trigger)
-        newrev: New revision for ref-based enqueue (empty string for re-trigger)
-        tenant: Tenant name (uses default if empty)
+        pipeline: Pipeline (e.g. "check", "gate")
+        change: Change to enqueue (e.g. "12345,1")
+        ref: Git ref to enqueue (e.g. "refs/heads/main")
+        oldrev: Old revision for ref-based enqueue
+        newrev: New revision for ref-based enqueue
+        tenant: Tenant (default from env)
     """
     if not change and not ref:
         return error("Either change or ref is required")
@@ -67,15 +64,12 @@ async def promote(
 ) -> str:
     """Promote changes to the top of a pipeline queue.
 
-    Reorders the pipeline so the specified changes are processed first.
-    Common use case: merging an urgent fix when the gate has a long queue.
-
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Requires ZUUL_READ_ONLY=false.
 
     Args:
         pipeline: Pipeline name (e.g. "gate")
-        changes: List of changes to promote (e.g. ["12345,1", "12346,2"])
-        tenant: Tenant name (uses default if empty)
+        changes: Changes to promote (e.g. ["12345,1", "12346,2"])
+        tenant: Tenant (default from env)
     """
     if not changes:
         return error("At least one change is required")
@@ -100,14 +94,14 @@ async def dequeue(
 ) -> str:
     """Remove a change or ref from a pipeline.
 
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Requires ZUUL_READ_ONLY=false.
 
     Args:
         project: Project name (e.g. "org/repo")
         pipeline: Pipeline to dequeue from
         change: Change to dequeue (e.g. "12345,1")
         ref: Git ref to dequeue
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     if not change and not ref:
         return error("Either change or ref is required")
@@ -139,17 +133,17 @@ async def autohold_create(
 ) -> str:
     """Create an autohold request — hold nodes after a job failure for debugging.
 
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Requires ZUUL_READ_ONLY=false.
 
     Args:
         project: Project name (e.g. "org/repo")
         job: Job name to hold nodes for
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         reason: Why the hold is needed
-        count: Number of failed builds to hold (default 1)
+        count: Failed builds to hold (default 1)
         node_hold_expiration: Seconds to hold nodes (default 86400 = 24h)
-        change: Specific change to match (optional)
-        ref: Specific ref to match (optional)
+        change: Change filter (optional)
+        ref: Ref filter (optional)
     """
     t = _tenant(ctx, tenant)
     body: dict[str, Any] = {
@@ -177,11 +171,11 @@ async def autohold_delete(
 ) -> str:
     """Delete an autohold request.
 
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Requires ZUUL_READ_ONLY=false.
 
     Args:
         autohold_id: Autohold request ID (from list_autoholds)
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     path = f"/tenant/{safepath(t)}/autohold/{safepath(autohold_id)}"
@@ -197,16 +191,14 @@ async def reenqueue_buildset(
     tenant: str = "",
     url: str = "",
 ) -> str:
-    """Re-enqueue a buildset — reads project/pipeline/ref from a previous buildset and enqueues it again.
+    """Re-enqueue a buildset — re-triggers a previous buildset's pipeline run.
 
-    Convenience wrapper: looks up the buildset, extracts project/pipeline/ref, and re-enqueues it.
-    Useful for re-triggering periodic pipeline runs without manually looking up parameters.
-
-    Requires ZUUL_READ_ONLY=false and a valid auth token or Kerberos ticket.
+    Looks up the buildset, extracts project/pipeline/ref, and re-enqueues.
+    Requires ZUUL_READ_ONLY=false.
 
     Args:
         uuid: Buildset UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul buildset URL (alternative to uuid + tenant)
     """
     bs_uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")

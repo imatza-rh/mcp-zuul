@@ -131,21 +131,21 @@ async def list_builds(
     """Search builds with filters. Returns compact build summaries.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        project: Filter by project name
-        pipeline: Filter by pipeline name
-        job_name: Filter by job name
-        change: Filter by change number
-        branch: Filter by branch name
-        patchset: Filter by patchset
-        ref: Filter by git ref
-        result: Filter by result (SUCCESS, FAILURE, TIMED_OUT, SKIPPED, etc.)
-        completed_after: Filter builds completed after this time (ISO 8601, e.g. "2026-04-18T00:00:00Z")
-        completed_before: Filter builds completed before this time (ISO 8601)
-        started_after: Filter builds started after this time (ISO 8601)
-        started_before: Filter builds started before this time (ISO 8601)
+        tenant: Tenant (default from env)
+        project: Project filter
+        pipeline: Pipeline filter
+        job_name: Job name filter
+        change: Change number filter
+        branch: Branch filter
+        patchset: Patchset filter
+        ref: Git ref filter
+        result: Result filter (SUCCESS, FAILURE, TIMED_OUT, SKIPPED, etc.)
+        completed_after: ISO 8601 lower bound on completion time
+        completed_before: ISO 8601 upper bound on completion time
+        started_after: ISO 8601 lower bound on start time
+        started_before: ISO 8601 upper bound on start time
         limit: Max results, 1-100 (default 20)
-        skip: Offset for pagination (default 0)
+        skip: Pagination offset
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
@@ -193,9 +193,8 @@ async def get_build(
 
     Args:
         uuid: Build UUID (full or prefix from list_builds)
-        tenant: Tenant name (uses default if empty)
-        url: Zuul build URL (alternative to uuid + tenant, e.g.
-             "https://zuul.example.com/t/tenant/build/abc123")
+        tenant: Tenant (default from env)
+        url: Zuul build URL (alternative to uuid + tenant)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     data = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
@@ -210,24 +209,14 @@ async def get_build_failures(
     tenant: str = "",
     url: str = "",
 ) -> str:
-    """Analyze a failed build — returns exactly which task failed, on which host, with error message and return code.
+    """Analyze a failed build — which task failed, on which host, with error message.
 
-    Parses Zuul's structured job-output.json for precise failure data.
-    For most use cases, prefer diagnose_build which includes all this data
-    plus failure classification, log context, and timing details.
-
-    Failure responses include ref_url/project/change and files_in_failure
-    (file paths extracted from error output). Use these to check whether
-    failing files are part of the change before concluding if a failure is
-    change-related or a pre-existing repo issue.
-
-    Note: Ansible tasks with ``no_log: true`` will have empty ``msg``
-    fields in failed_tasks. Use get_build_log with grep to find the
-    actual error text in the raw log output.
+    Parses job-output.json for precise failure data. Prefer diagnose_build
+    for most use cases (adds classification and log context).
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
@@ -309,6 +298,7 @@ async def diagnose_build(
     uuid: str = "",
     tenant: str = "",
     url: str = "",
+    brief: bool = False,
 ) -> str:
     """One-call failure diagnosis — structured failures + relevant log context.
 
@@ -316,15 +306,14 @@ async def diagnose_build(
     targeted log grep (surrounding context from job-output.txt). Returns
     everything needed to understand a failure in a single call.
 
-    Includes ref_url/project/change and files_in_failure so consumers can
-    check whether failing files are part of the change or pre-existing.
-
     Use this instead of calling get_build_failures + get_build_log separately.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
+        brief: Return only classification + root cause (default false).
+               Omits playbooks, log_context, and full task details for ~95% smaller response.
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
@@ -390,7 +379,36 @@ async def diagnose_build(
     elif isinstance(nodeset, str) and nodeset:
         node_name = nodeset
 
-    out: dict = {
+    if brief:
+        # Brief mode: classification + root cause only (~95% smaller)
+        out: dict = {
+            "job": build.get("job_name", ""),
+            "result": result,
+            "duration": build.get("duration"),
+            "failure_phase": failure_phase,
+            "run_phase_passed": run_phase_passed,
+        }
+        if classification:
+            out["classification"] = classification.category
+            out["classification_reason"] = classification.reason
+            out["classification_confidence"] = classification.confidence
+            out["retryable"] = classification.retryable
+        if failed_tasks:
+            # When multiple phases failed ("mixed"), use the first failed task
+            # (from the earliest phase — run before post in parse_playbooks order).
+            # When single phase, use the last task (play-killer in block/rescue).
+            root = failed_tasks[0] if failure_phase == "mixed" else failed_tasks[-1]
+            out["root_cause"] = clean(
+                {
+                    "task": root.get("task"),
+                    "host": root.get("host"),
+                    "msg": (root.get("msg") or "")[:500] or None,
+                    "rc": root.get("rc"),
+                }
+            )
+        return json.dumps(clean(out))
+
+    out = {
         "job": build.get("job_name", ""),
         "result": result,
         "log_url": log_url,
@@ -441,22 +459,20 @@ async def list_buildsets(
     """Search buildsets (groups of builds triggered by a single event).
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        project: Filter by project
-        pipeline: Filter by pipeline name
-        change: Filter by change number
-        branch: Filter by branch name
-        ref: Filter by git ref
-        result: Filter by result
-        completed_after: Filter buildsets completed after this time (ISO 8601, e.g. "2026-04-18T00:00:00Z")
-        completed_before: Filter buildsets completed before this time (ISO 8601)
-        started_after: Filter buildsets started after this time (ISO 8601)
-        started_before: Filter buildsets started before this time (ISO 8601)
+        tenant: Tenant (default from env)
+        project: Project filter
+        pipeline: Pipeline filter
+        change: Change number filter
+        branch: Branch filter
+        ref: Git ref filter
+        result: Result filter
+        completed_after: ISO 8601 lower bound on completion time
+        completed_before: ISO 8601 upper bound on completion time
+        started_after: ISO 8601 lower bound on start time
+        started_before: ISO 8601 upper bound on start time
         limit: Max results, 1-100 (default 20)
-        skip: Offset for pagination
-        include_builds: Fetch full details (builds, events) for each buildset.
-                        Saves a separate get_buildset call per result, but
-                        slower for large result sets. Best with limit <= 5.
+        skip: Pagination offset
+        include_builds: Fetch full details per buildset (slower, best with limit <= 5)
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
@@ -538,7 +554,7 @@ async def get_buildset(
 
     Args:
         uuid: Buildset UUID
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul buildset URL (alternative to uuid + tenant)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")

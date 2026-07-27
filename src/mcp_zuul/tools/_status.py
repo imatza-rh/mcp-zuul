@@ -81,9 +81,9 @@ async def get_status(
     """Live pipeline status showing what's currently queued/running.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        pipeline: Filter to a specific pipeline name
-        project: Filter to a specific project
+        tenant: Tenant (default from env)
+        pipeline: Pipeline name filter
+        project: Project filter
         active_only: Only show pipelines with active items (default true)
     """
     t = _tenant(ctx, tenant)
@@ -163,22 +163,16 @@ async def get_change_status(
     url: str = "",
     brief: bool = False,
 ) -> str:
-    """Pipeline status for a specific Gerrit change or GitHub/GitLab PR/MR.
+    """Pipeline status for a specific change or PR/MR.
 
-    When the change is in the pipeline, returns live status with jobs,
-    elapsed times, and buildset UUID. When not in pipeline, automatically
-    fetches the latest completed buildset with all build results — no
-    extra ``list_buildsets`` + ``get_buildset`` round-trips needed.
+    When in pipeline: live status with jobs, elapsed times, buildset UUID.
+    When not in pipeline: fetches latest completed buildset automatically.
 
     Args:
-        change: Change number (e.g. "12345"), GitHub ref ("refs/pull/123/head"),
-                or GitLab ref ("refs/merge-requests/123/head")
-        tenant: Tenant name (uses default if empty)
+        change: Change number, GitHub ref (refs/pull/N/head), or GitLab ref
+        tenant: Tenant (default from env)
         url: Zuul change status URL (alternative to change + tenant)
-        brief: Strip response to monitoring essentials (default false).
-               Omits log_url, artifacts, stream_url, dependencies, and other
-               static fields that don't change between polls. Use this for
-               repeated status checks to reduce token consumption by ~75%.
+        brief: Strip to monitoring essentials (~75% smaller). Use for repeated polls.
     """
     if url:
         parts = parse_zuul_url(url)
@@ -362,19 +356,20 @@ async def find_flaky_jobs(
     project: str = "",
     pipeline: str = "",
     limit: int = 20,
+    detail: bool = False,
 ) -> str:
     """Detect flaky jobs by analyzing recent build history for intermittent failures.
 
-    Fetches recent builds for a job and computes pass/fail statistics.
-    A job with mixed SUCCESS/FAILURE results and >20% failure rate is
-    likely flaky. Returns per-result counts and the failure rate.
+    Computes pass/fail statistics from recent builds. A job with mixed
+    results and >20% failure rate is likely flaky.
 
     Args:
         job_name: Job name to analyze
-        tenant: Tenant name (uses default if empty)
-        project: Filter to a specific project
-        pipeline: Filter to a specific pipeline
-        limit: Number of recent builds to analyze (default 20, max 100)
+        tenant: Tenant (default from env)
+        project: Project filter
+        pipeline: Pipeline filter
+        limit: Builds to analyze (default 20, max 100)
+        detail: Include individual build list (default false)
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
@@ -405,36 +400,34 @@ async def find_flaky_jobs(
     infra_rate = round(infra_failures / completed * 100, 1) if completed > 0 else 0.0
     flaky = completed >= 3 and 0 < failures < completed and rate > 20
 
-    builds = [
-        clean(
-            {
-                "uuid": b.get("uuid"),
-                "result": b.get("result"),
-                "duration": b.get("duration"),
-                "start_time": b.get("start_time"),
-                "pipeline": b.get("pipeline"),
-                "change": b.get("ref", {}).get("change")
-                if isinstance(b.get("ref"), dict)
-                else None,
-            }
-        )
-        for b in data
-    ]
+    out: dict[str, Any] = {
+        "job": job_name,
+        "analyzed": total,
+        "completed": completed,
+        "results": results,
+        "failure_rate": rate,
+        "infra_failure_rate": infra_rate if infra_failures > 0 else None,
+        "flaky": flaky,
+    }
 
-    return json.dumps(
-        clean(
-            {
-                "job": job_name,
-                "analyzed": total,
-                "completed": completed,
-                "results": results,
-                "failure_rate": rate,
-                "infra_failure_rate": infra_rate if infra_failures > 0 else None,
-                "flaky": flaky,
-                "builds": builds,
-            }
-        )
-    )
+    if detail:
+        out["builds"] = [
+            clean(
+                {
+                    "uuid": b.get("uuid"),
+                    "result": b.get("result"),
+                    "duration": b.get("duration"),
+                    "start_time": b.get("start_time"),
+                    "pipeline": b.get("pipeline"),
+                    "change": b.get("ref", {}).get("change")
+                    if isinstance(b.get("ref"), dict)
+                    else None,
+                }
+            )
+            for b in data
+        ]
+
+    return json.dumps(clean(out))
 
 
 @mcp.tool(title="Build Duration Trends", annotations=_READ_ONLY)
@@ -448,24 +441,22 @@ async def get_build_times(
     branch: str = "",
     limit: int = 20,
     skip: int = 0,
+    detail: bool = True,
 ) -> str:
-    """Build duration trends — is a job getting slower? Compute avg/min/max from results.
+    """Build duration trends — compute avg/min/max to detect performance regressions.
 
-    Returns build durations with timing data for trend analysis.
-    Use this to detect performance regressions or timeout-prone jobs.
-
-    Note: This endpoint returns ALL results (SUCCESS, FAILURE, etc.) and does
-    not support result filtering. For filtered averages (e.g. SUCCESS-only),
+    Returns ALL results (no result filtering). For SUCCESS-only averages,
     use get_job_durations instead.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        job_name: Filter by job name
-        project: Filter by project name
-        pipeline: Filter by pipeline name
-        branch: Filter by branch name
+        tenant: Tenant (default from env)
+        job_name: Job name filter
+        project: Project filter
+        pipeline: Pipeline filter
+        branch: Branch filter
         limit: Max results, 1-100 (default 20)
-        skip: Offset for pagination
+        skip: Pagination offset
+        detail: Include individual build list (default true)
     """
     t = _tenant(ctx, tenant)
     limit = max(1, min(limit, 100))
@@ -490,21 +481,23 @@ async def get_build_times(
             "count": len(durations),
         }
 
-    builds = [
-        clean(
-            {
-                "uuid": b.get("uuid"),
-                "job": b.get("job_name"),
-                "result": b.get("result"),
-                "duration": b.get("duration"),
-                "start_time": b.get("start_time"),
-                "project": b.get("project"),
-                "pipeline": b.get("pipeline"),
-            }
-        )
-        for b in data
-    ]
-    return json.dumps({"stats": stats, "builds": builds, "count": len(builds)})
+    out: dict[str, Any] = {"stats": stats, "count": len(data)}
+    if detail:
+        out["builds"] = [
+            clean(
+                {
+                    "uuid": b.get("uuid"),
+                    "job": b.get("job_name"),
+                    "result": b.get("result"),
+                    "duration": b.get("duration"),
+                    "start_time": b.get("start_time"),
+                    "project": b.get("project"),
+                    "pipeline": b.get("pipeline"),
+                }
+            )
+            for b in data
+        ]
+    return json.dumps(out)
 
 
 @mcp.tool(title="Batch Job Duration Stats", annotations=_READ_ONLY)
@@ -518,15 +511,13 @@ async def get_job_durations(
 ) -> str:
     """Get avg/min/max duration for multiple jobs in a single call.
 
-    Fetches build history for each job in parallel and computes
-    duration statistics. Designed for monitoring tools that need
-    avg durations for an entire pipeline chain without making N
-    separate API calls.
+    Fetches build history per job in parallel. Designed for monitoring
+    tools that need durations for an entire pipeline chain.
 
     Args:
         job_names: List of job names to get stats for
-        tenant: Tenant name (uses default if empty)
-        result: Filter by result (default "SUCCESS" for clean averages)
+        tenant: Tenant (default from env)
+        result: Result filter (default "SUCCESS" for clean averages)
         limit: Builds per job to analyze (default 10, max 50)
     """
     if not job_names:
@@ -577,9 +568,8 @@ async def get_job_durations(
 async def check_health(ctx: Context) -> str:
     """Test Zuul API connectivity and auth status.
 
-    Use this to verify the server is working after startup or when
-    tool calls start failing. Re-authentication happens automatically
-    via the api() wrapper if the Kerberos session has expired.
+    Use this to verify the server is reachable. Re-auth happens
+    automatically via Kerberos if the session expired.
     """
     a = app(ctx)
     result: dict[str, Any] = {

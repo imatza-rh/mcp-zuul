@@ -549,7 +549,7 @@ class TestFindFlakyJobs:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
             return_value=httpx.Response(200, json=builds)
         )
-        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="j"))
+        result = json.loads(await find_flaky_jobs(mock_ctx, job_name="j", detail=True))
         build_entry = result["builds"][0]
         assert build_entry["change"] == 42
         assert "ref" not in build_entry  # full ref dict should not be present
@@ -695,8 +695,20 @@ class TestGetFreezeJob:
         assert result["nodeset"]["nodes"][0]["label"] == "cloud-centos-9"
         assert len(result["playbooks"]) == 1
         assert result["playbooks"][0]["path"] == "playbooks/run.yml"
-        assert result["vars"] == {"cifmw_target": "controller"}
+        assert "vars" not in result  # include_vars defaults to False
         assert result["ansible_version"] == "2.16"
+
+        # With include_vars=True, vars are included
+        result_with_vars = json.loads(
+            await get_freeze_job(
+                mock_ctx,
+                pipeline="check",
+                project="org/repo",
+                job_name="my-job",
+                include_vars=True,
+            )
+        )
+        assert result_with_vars["vars"] == {"cifmw_target": "controller"}
 
 
 class TestGetTenantInfo:

@@ -97,21 +97,17 @@ async def stream_build_console(
     lines: int = 100,
     timeout: int = 10,
 ) -> str:
-    """Read live console output from a RUNNING build.
+    """Read live console output from a RUNNING build via WebSocket.
 
-    Connects to Zuul's WebSocket console-stream endpoint and captures
-    output for ``timeout`` seconds, returning the last ``lines`` lines
-    (tail behavior). This tool is for RUNNING builds only. For completed
-    builds, use tail_build_log or get_build_log instead.
-
-    Optional — requires ``pip install mcp-zuul[console]``.
+    For RUNNING builds only. For completed builds, use tail_build_log.
+    Requires ``pip install mcp-zuul[console]``.
 
     Args:
         uuid: Build UUID (from get_change_status)
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
-        lines: Number of lines to return from the end (default 100, max 500)
-        timeout: Seconds to buffer before returning (default 10, max 30)
+        lines: Lines to return from end (default 100, max 500)
+        timeout: Seconds to buffer (default 10, max 30)
     """
     build_uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     lines = min(max(lines, 1), 500)

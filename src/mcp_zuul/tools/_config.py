@@ -25,9 +25,9 @@ async def list_jobs(
     """List all jobs in a tenant. Optionally filter by name substring.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        filter: Case-insensitive substring to filter job names
-        limit: Max results to return (default 200, 0 for unlimited)
+        tenant: Tenant (default from env)
+        filter: Case-insensitive name substring filter
+        limit: Max results (default 200, 0 for unlimited)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/jobs")
@@ -65,7 +65,7 @@ async def get_job(
 
     Args:
         name: Job name
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/job/{safepath(name)}")
@@ -83,7 +83,7 @@ async def get_project(
 
     Args:
         name: Project name (e.g. "openstack-k8s-operators/openstack-operator")
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/project/{safepath(name)}")
@@ -99,7 +99,7 @@ async def list_pipelines(
     """List all pipelines with their trigger types.
 
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/pipelines")
@@ -120,15 +120,13 @@ async def get_config_errors(
     tenant: str = "",
     project: str = "",
 ) -> str:
-    """Get Zuul configuration errors — why jobs aren't running, broken configs, missing refs.
+    """Get Zuul configuration errors — broken configs, missing refs, syntax errors.
 
-    This is the first tool to check when a job isn't being triggered or a project
-    has unexpected behavior. Returns syntax errors, missing references, and repo
-    access issues for the tenant or a specific project.
+    First tool to check when a job isn't being triggered.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        project: Filter to a specific project name (optional)
+        tenant: Tenant (default from env)
+        project: Project filter (optional)
     """
     t = _tenant(ctx, tenant)
     params: dict[str, Any] = {}
@@ -165,9 +163,9 @@ async def list_projects(
     """List all projects in a tenant. Optionally filter by name substring.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        filter: Case-insensitive substring to filter project names
-        limit: Max results to return (default 200, 0 for unlimited)
+        tenant: Tenant (default from env)
+        filter: Case-insensitive name substring filter
+        limit: Max results (default 200, 0 for unlimited)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/projects")
@@ -203,16 +201,15 @@ async def list_nodes(
     detail: bool = False,
     limit: int = 200,
 ) -> str:
-    """List nodepool nodes — shows what's available, in-use, or being provisioned.
+    """List nodepool nodes — available, in-use, or provisioning.
 
-    Check this when jobs are stuck waiting for nodes. By default returns
-    a summary grouped by label and state. Set detail=true for individual nodes.
+    Check when jobs are stuck waiting for nodes. Summary by default,
+    set detail=true for individual nodes.
 
     Args:
-        tenant: Tenant name (uses default if empty)
-        detail: Include individual node list (default false, summary only)
-        limit: Max nodes in detail list (default 200, 0 for unlimited).
-               Summary stats always cover all nodes regardless of limit.
+        tenant: Tenant (default from env)
+        detail: Include individual node list (default false)
+        limit: Max nodes in detail list (default 200, 0 for unlimited)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/nodes")
@@ -287,7 +284,7 @@ async def list_labels(
     """List available nodepool labels (node types that jobs can request).
 
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/labels")
@@ -303,11 +300,10 @@ async def list_semaphores(
 ) -> str:
     """List semaphores — resource locks that limit concurrent job execution.
 
-    Check this when jobs are waiting unexpectedly. A semaphore at max
-    holders means jobs are queued waiting for the lock to be released.
+    Check when jobs are waiting unexpectedly.
 
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/semaphores")
@@ -335,11 +331,8 @@ async def list_autoholds(
 ) -> str:
     """List autohold requests — nodes held after failure for debugging.
 
-    Shows active autohold requests: which project/job/change triggered
-    them, how many nodes are held, and expiration.
-
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/autohold")
@@ -372,12 +365,9 @@ async def get_autohold(
 ) -> str:
     """Get details of a specific autohold request.
 
-    Shows full details including held nodes, timing, and the project/job
-    that triggered the hold.
-
     Args:
         autohold_id: Autohold request ID (from list_autoholds)
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/autohold/{safepath(autohold_id)}")
@@ -424,14 +414,11 @@ async def list_system_events(
 ) -> str:
     """List system events — config updates, reconfigurations, pipeline changes.
 
-    Useful for debugging "why did my job stop running?" or tracking config
-    deployments. Shows event type, timestamp, and description.
-
     Args:
-        tenant: Tenant name (uses default if empty)
-        event_type: Filter by event type (optional)
+        tenant: Tenant (default from env)
+        event_type: Event type filter
         limit: Max results (default 50)
-        skip: Offset for pagination
+        skip: Pagination offset
     """
     t = _tenant(ctx, tenant)
     params: dict[str, Any] = {}
@@ -464,11 +451,8 @@ async def list_providers(
 ) -> str:
     """List nodepool cloud providers with flavors and images.
 
-    Shows what infrastructure is available for running jobs — provider names,
-    available flavors (VM sizes), and images (base OS).
-
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/providers")
@@ -495,11 +479,8 @@ async def list_images(
 ) -> str:
     """List nodepool disk images with build status and upload artifacts.
 
-    Shows available base images for job nodes, including build history
-    and which providers they've been uploaded to.
-
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/images")
@@ -531,16 +512,13 @@ async def get_badge(
     pipeline: str = "",
     branch: str = "",
 ) -> str:
-    """Get a status badge for a project's latest buildset result.
-
-    Returns the badge URL (SVG) that can be embedded in READMEs to show
-    current CI status. Returns 404 info if no buildset found.
+    """Get a status badge URL (SVG) for a project's latest buildset result.
 
     Args:
         project: Project name (e.g. "org/repo")
-        tenant: Tenant name (uses default if empty)
-        pipeline: Filter by pipeline (optional)
-        branch: Filter by branch (optional)
+        tenant: Tenant (default from env)
+        pipeline: Pipeline filter
+        branch: Branch filter
     """
     t = _tenant(ctx, tenant)
     params: dict[str, str] = {"project": project}
@@ -573,15 +551,14 @@ async def get_freeze_jobs(
 ) -> str:
     """Get the resolved job graph for a pipeline/project/branch.
 
-    Shows exactly which jobs will run with all inheritance resolved,
-    including dependencies between jobs. Use this to understand job
-    ordering and why a job is (or isn't) in a pipeline.
+    Shows which jobs will run with all inheritance resolved, including
+    dependencies. Use to understand job ordering.
 
     Args:
         pipeline: Pipeline name (e.g. "check", "gate")
-        project: Project name (e.g. "openstack-k8s-operators/openstack-operator")
+        project: Project name
         branch: Branch name (default "main")
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     path = (
@@ -636,11 +613,7 @@ async def get_connections(ctx: Context) -> str:
 @mcp.tool(title="System Components", annotations=_READ_ONLY)
 @handle_errors
 async def get_components(ctx: Context) -> str:
-    """Show Zuul system components — schedulers, executors, mergers, web servers.
-
-    Check this to see if Zuul is healthy. Shows component state
-    (running/paused), version, and hostname.
-    """
+    """Show Zuul system components — schedulers, executors, mergers, web servers."""
     data = await api(ctx, "/components")
     result = {}
     for kind, instances in data.items():
@@ -666,20 +639,20 @@ async def get_freeze_job(
     job_name: str,
     branch: str = "main",
     tenant: str = "",
+    include_vars: bool = False,
 ) -> str:
-    """Get the fully-resolved configuration for a specific job after inheritance.
+    """Get fully-resolved job configuration after inheritance.
 
-    Shows the final merged nodeset, timeout, playbooks, and variables
-    after all parent job inheritance is applied. Use this to understand
-    exactly what a job will do — resolves "what nodeset will it use?"
-    and "which playbooks run?" questions.
+    Shows final merged nodeset, timeout, and playbooks. Use to understand
+    exactly what a job will do.
 
     Args:
         pipeline: Pipeline name (e.g. "check", "gate")
-        project: Project name (e.g. "openstack-k8s-operators/openstack-operator")
+        project: Project name
         job_name: Job name to resolve
         branch: Branch name (default "main")
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
+        include_vars: Include vars/extra_vars/host_vars/group_vars (default false, can be large)
     """
     t = _tenant(ctx, tenant)
     path = (
@@ -704,32 +677,29 @@ async def get_freeze_job(
         for pb in data.get("post_playbooks", [])
     ]
 
-    return json.dumps(
-        clean(
+    out: dict = {
+        "job": data.get("job"),
+        "timeout": data.get("timeout"),
+        "post_timeout": data.get("post_timeout"),
+        "nodeset": clean(
             {
-                "job": data.get("job"),
-                "timeout": data.get("timeout"),
-                "post_timeout": data.get("post_timeout"),
-                "nodeset": clean(
-                    {
-                        "name": nodeset.get("name"),
-                        "nodes": [{"name": n.get("name"), "label": n.get("label")} for n in nodes]
-                        or None,
-                    }
-                )
-                if nodeset
-                else None,
-                "playbooks": playbooks or None,
-                "pre_playbooks": pre_playbooks or None,
-                "post_playbooks": post_playbooks or None,
-                "vars": data.get("vars") or None,
-                "extra_vars": data.get("extra_vars") or None,
-                "host_vars": data.get("host_vars") or None,
-                "group_vars": data.get("group_vars") or None,
-                "ansible_version": data.get("ansible_version"),
+                "name": nodeset.get("name"),
+                "nodes": [{"name": n.get("name"), "label": n.get("label")} for n in nodes] or None,
             }
         )
-    )
+        if nodeset
+        else None,
+        "playbooks": playbooks or None,
+        "pre_playbooks": pre_playbooks or None,
+        "post_playbooks": post_playbooks or None,
+        "ansible_version": data.get("ansible_version"),
+    }
+    if include_vars:
+        out["vars"] = data.get("vars") or None
+        out["extra_vars"] = data.get("extra_vars") or None
+        out["host_vars"] = data.get("host_vars") or None
+        out["group_vars"] = data.get("group_vars") or None
+    return json.dumps(clean(out))
 
 
 @mcp.tool(title="Tenant Information", annotations=_READ_ONLY)
@@ -740,11 +710,8 @@ async def get_tenant_info(
 ) -> str:
     """Get tenant capabilities, auth config, and websocket URL.
 
-    Shows what features are available for this tenant (job history,
-    auth realms) and the tenant name.
-
     Args:
-        tenant: Tenant name (uses default if empty)
+        tenant: Tenant (default from env)
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/info")

@@ -10,7 +10,17 @@ import httpx
 from mcp.server.fastmcp import Context
 
 from ..errors import handle_errors
-from ..helpers import AppContext, api, app, error, fetch_log_url, safepath, stream_log, strip_ansi
+from ..helpers import (
+    AppContext,
+    api,
+    app,
+    clean,
+    error,
+    fetch_log_url,
+    safepath,
+    stream_log,
+    strip_ansi,
+)
 from ..server import mcp
 from ._common import (
     _ERROR_NOISE,
@@ -22,6 +32,7 @@ from ._common import (
     _decompress_gzip,
     _no_log_url_error,
     _resolve,
+    _validate_log_url,
 )
 
 # Detect nested quantifiers that cause catastrophic backtracking (ReDoS).
@@ -101,28 +112,33 @@ async def get_build_log(
     grep: str = "",
     context: int = 0,
     url: str = "",
+    direct_log_url: str = "",
 ) -> str:
     """Read, search, and navigate build log files with grep, line ranges, and error summary.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
-        log_name: Log file to read (default "job-output.txt"). For other files,
-                  use the path relative to the build's log_url, e.g.
-                  "logs/controller/ci-framework-data/logs/ci_script_008_run.log"
-        mode: "summary" (default: tail + error lines) or "full" (paginated chunks)
-        lines: For summary: tail line count (default 100). For full: offset start line.
-        start_line: Read from this line number (1-based). If set with end_line,
-                    returns exactly that range (overrides mode).
-        end_line: Read up to this line number (1-based, inclusive).
-        grep: Python regex pattern to filter log lines (overrides mode).
-              Use | for OR: "error|failed|timeout". Do NOT use backslash-pipe.
-        context: Lines of context before/after each grep match (default 0, max 10)
+        tenant: Tenant (default from env)
+        log_name: Log file to read (default "job-output.txt")
+        mode: "summary" (tail + errors) or "full" (paginated)
+        lines: For summary: tail count (default 50). For full: offset start line.
+        start_line: Read from this line (1-based, overrides mode with end_line)
+        end_line: Read up to this line (1-based, inclusive)
+        grep: Regex to filter lines (overrides mode). Use | for OR.
+        context: Lines of context around grep matches (default 0, max 10)
         url: Zuul build URL (alternative to uuid + tenant)
+        direct_log_url: Log URL from a prior get_build/diagnose_build call.
+                        Skips the build metadata fetch when provided.
     """
-    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
-    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
-    log_url = build.get("log_url")
+    log_url: str = ""
+    if direct_log_url:
+        _validate_log_url(direct_log_url)
+        log_url = direct_log_url
+        build: dict = {}
+    else:
+        uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+        build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+        log_url = build.get("log_url") or ""
     if not log_url:
         return _no_log_url_error(build, uuid)
 
@@ -238,7 +254,7 @@ async def get_build_log(
 
     # Summary mode — single pass for both errors and tail
     if mode == "summary":
-        tail_n = max(1, lines) if lines else 100
+        tail_n = max(1, lines) if lines else 50
         tail_start = max(0, total - tail_n)
         errors: list[tuple[int, str]] = []
         tail: list[str] = []
@@ -248,14 +264,16 @@ async def get_build_log(
             if i >= tail_start:
                 tail.append(line)
         return json.dumps(
-            {
-                "total_lines": total,
-                "log_url": txt_url,
-                "job": build.get("job_name", ""),
-                "result": build.get("result", ""),
-                "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
-                "tail": [line[:500] for line in tail],
-            }
+            clean(
+                {
+                    "total_lines": total,
+                    "log_url": txt_url,
+                    "job": build.get("job_name", "") or None,
+                    "result": build.get("result", "") or None,
+                    "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
+                    "tail": [line[:500] for line in tail],
+                }
+            )
         )
 
     # Full mode (paginated)
@@ -282,28 +300,31 @@ async def browse_build_logs(
     path: str = "",
     url: str = "",
     max_lines: int = 0,
+    direct_log_url: str = "",
 ) -> str:
     """Browse or fetch files from a build's log directory.
 
-    Without path: lists the top-level log directory.
-    With path ending in '/': lists that subdirectory.
-    With path to a file: fetches and returns the file content (max 512KB).
-
-    For filtered reads of large files, use get_build_log with log_name
-    and grep instead — it supports regex search and line ranges.
+    Without path: lists top-level. With trailing '/': lists subdirectory.
+    With file path: fetches content (max 512KB). For filtered reads,
+    use get_build_log with grep instead.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
-        path: Relative path within the log dir (e.g. "logs/controller/",
-              "zuul-info/inventory.yaml", "logs/hypervisor/ci-framework-data/artifacts/")
+        tenant: Tenant (default from env)
+        path: Relative path within the log dir (e.g. "logs/controller/")
         url: Zuul build URL (alternative to uuid + tenant)
-        max_lines: Limit file content to first N lines (0 = no limit).
-                   Response includes total_lines count for pagination.
+        max_lines: Limit file content to first N lines (0 = no limit)
+        direct_log_url: Log URL from a prior call. Skips build metadata fetch.
     """
-    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
-    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
-    log_url = build.get("log_url")
+    log_url: str = ""
+    if direct_log_url:
+        _validate_log_url(direct_log_url)
+        log_url = direct_log_url
+        build: dict = {}
+    else:
+        uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+        build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+        log_url = build.get("log_url") or ""
     if not log_url:
         return _no_log_url_error(build, uuid)
 
@@ -387,25 +408,31 @@ async def tail_build_log(
     log_name: str = "job-output.txt",
     url: str = "",
     skip_postrun: bool = True,
+    direct_log_url: str = "",
 ) -> str:
     """Get the last N lines of a build log — fastest way to see why a build failed.
 
-    More token-efficient than get_build_log(mode="summary") when you just
-    need the tail. Use this as the first step when investigating failures.
+    More token-efficient than get_build_log(mode="summary") when you
+    just need the tail.
 
     Args:
         uuid: Build UUID
-        tenant: Tenant name (uses default if empty)
-        lines: Number of lines from the end (default 50, max 500)
+        tenant: Tenant (default from env)
+        lines: Lines from the end (default 50, max 500)
         log_name: Log file to read (default "job-output.txt")
         url: Zuul build URL (alternative to uuid + tenant)
-        skip_postrun: Skip post-run log collection lines and tail from the
-                      end of the run phase instead (default true). Only
-                      applies to job-output.txt. Set false to see raw tail.
+        skip_postrun: Tail from run phase end, skipping post-run (default true)
+        direct_log_url: Log URL from a prior call. Skips build metadata fetch.
     """
-    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
-    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
-    log_url = build.get("log_url")
+    log_url: str = ""
+    if direct_log_url:
+        _validate_log_url(direct_log_url)
+        log_url = direct_log_url
+        build: dict = {}
+    else:
+        uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+        build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+        log_url = build.get("log_url") or ""
     if not log_url:
         return _no_log_url_error(build, uuid)
     if ".." in unquote(log_name).split("/"):
@@ -435,8 +462,8 @@ async def tail_build_log(
     result_dict: dict[str, Any] = {
         "total_lines": total,
         "log_url": txt_url,
-        "job": build.get("job_name", ""),
-        "result": build.get("result", ""),
+        "job": build.get("job_name") or None,
+        "result": build.get("result") or None,
         "tail_from": tail_start + 1,
         "count": len(tail),
         "lines": [line[:500] for line in tail],
@@ -449,4 +476,4 @@ async def tail_build_log(
         result_dict["warning"] = (
             "Log exceeded 10 MB — tail is from truncated content, not the actual end"
         )
-    return json.dumps(result_dict)
+    return json.dumps(clean(result_dict))
