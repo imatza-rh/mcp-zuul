@@ -375,3 +375,45 @@ class TestGetBuildTestResults:
         assert result["suite_count"] == 1
         assert len(result["test_suites"]) == 1
         assert result["totals"]["failed"] == 2
+
+    @respx.mock
+    async def test_failures_only_mixed_suites_reports_total_count(self, mock_ctx):
+        """failures_only=True with mixed suites: suite_count = total, test_suites = failed only."""
+        build = make_build(uuid="mx-uuid", result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/mx-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # Manifest with 2 XML files
+        manifest = {
+            "tree": [
+                {
+                    "name": "tests",
+                    "children": [
+                        {"name": "passing_test_results.xml"},
+                        {"name": "failing_test_results.xml"},
+                    ],
+                }
+            ]
+        }
+        respx.get(f"{build['log_url']}zuul-manifest.json").mock(
+            return_value=httpx.Response(200, json=manifest)
+        )
+        # Suite 1: all passing (10 tests, 0 failures)
+        respx.get(f"{build['log_url']}tests/passing_test_results.xml").mock(
+            return_value=httpx.Response(200, text=_junit_xml(tests=10, failures=0, time=50.0))
+        )
+        # Suite 2: has failures (5 tests, 2 failures)
+        respx.get(f"{build['log_url']}tests/failing_test_results.xml").mock(
+            return_value=httpx.Response(200, text=_junit_xml(tests=5, failures=2, time=30.0))
+        )
+        result = json.loads(await get_build_test_results(mock_ctx, uuid="mx-uuid"))
+        # suite_count should be TOTAL (2), not filtered (1)
+        assert result["suite_count"] == 2, (
+            f"suite_count should be total suites (2), got {result['suite_count']}"
+        )
+        # test_suites should contain only the failing suite
+        assert len(result["test_suites"]) == 1
+        # totals should reflect ALL suites
+        assert result["totals"]["tests"] == 15
+        assert result["totals"]["passed"] == 13
+        assert result["totals"]["failed"] == 2
