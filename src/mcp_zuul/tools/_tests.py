@@ -218,19 +218,22 @@ async def get_build_test_results(
         totals["errored"] += suite.get("errored", 0)
 
     # Step 5: Filter to failure suites only (when requested)
+    total_suite_count = len(test_suites)
     if failures_only:
         failed_suites = [
             s for s in test_suites if s.get("failed", 0) > 0 or s.get("errored", 0) > 0
         ]
         if not failed_suites:
             return json.dumps(
-                {
-                    "job": build.get("job_name", ""),
-                    "result": build.get("result", ""),
-                    "status": "all_passed",
-                    "suite_count": len(test_suites),
-                    "totals": totals,
-                }
+                clean(
+                    {
+                        "job": build.get("job_name", "") or None,
+                        "result": build.get("result", "") or None,
+                        "status": "all_passed",
+                        "suite_count": total_suite_count,
+                        "totals": totals,
+                    }
+                )
             )
         test_suites = failed_suites
 
@@ -239,7 +242,7 @@ async def get_build_test_results(
             "job": build.get("job_name", ""),
             "result": build.get("result", ""),
             "test_suites": test_suites,
-            "suite_count": len(test_suites),
+            "suite_count": total_suite_count,
             "totals": totals,
         }
     )

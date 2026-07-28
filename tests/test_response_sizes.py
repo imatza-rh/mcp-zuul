@@ -71,7 +71,7 @@ class TestResponseSizes:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid-1").mock(
             return_value=httpx.Response(200, json=make_buildset())
         )
-        result = await get_buildset(mock_ctx, uuid="bs-uuid-1")
+        result = await get_buildset(mock_ctx, uuid="bs-uuid-1", brief=False)
         size = len(result.encode())
         assert size < int(1.5 * KB), f"get_buildset bloat: {size} bytes (limit: {int(1.5 * KB)})"
 
