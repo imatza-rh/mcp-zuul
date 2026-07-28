@@ -258,15 +258,14 @@ async def get_build_log(
         for i, line in enumerate(all_lines):
             if _ERROR_PATTERNS.search(line) and not _ERROR_NOISE.search(line) and len(errors) < 30:
                 errors.append((i + 1, line))
-        return json.dumps(
-            clean(
-                {
-                    "total_lines": total,
-                    "log_url": txt_url,
-                    "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
-                }
-            )
-        )
+        result_dict = {
+            "total_lines": total,
+            "log_url": txt_url,
+            "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
+        }
+        if truncated:
+            result_dict["truncated"] = True
+        return json.dumps(clean(result_dict))
 
     # Summary mode — single pass for both errors and tail
     if mode == "summary":
