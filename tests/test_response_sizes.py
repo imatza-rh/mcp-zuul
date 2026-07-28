@@ -180,7 +180,7 @@ class TestTokenOptimizations:
         assert "playbooks" not in brief
         assert "log_context" not in brief
         assert "files_in_failure" not in brief
-        assert "log_url" not in brief
+        # log_url IS included in brief (enables direct_log_url pass-through)
         # Brief must use SAME key names as full for classification fields
         if "classification" in brief:
             assert "classification_confidence" in brief, (

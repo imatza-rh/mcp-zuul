@@ -386,6 +386,7 @@ async def diagnose_build(
         out: dict = {
             "job": build.get("job_name", ""),
             "result": result,
+            "log_url": log_url,
             "duration": build.get("duration"),
             "failure_phase": failure_phase,
             "run_phase_passed": run_phase_passed,
@@ -554,7 +555,10 @@ async def get_buildset(
     url: str = "",
     brief: bool = True,
 ) -> str:
-    """Get full buildset details — all builds, results, events, and timing.
+    """Get buildset details — result, pipeline, project, change.
+
+    Brief (default): compact metadata only. Set brief=False for
+    full details with builds, events, and timing.
 
     Args:
         uuid: Buildset UUID
