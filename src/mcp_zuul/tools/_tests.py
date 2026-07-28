@@ -131,6 +131,7 @@ async def get_build_test_results(
     uuid: str = "",
     tenant: str = "",
     url: str = "",
+    failures_only: bool = True,
 ) -> str:
     """Parse JUnit XML test results from a build's log directory.
 
@@ -141,6 +142,7 @@ async def get_build_test_results(
         uuid: Build UUID
         tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
+        failures_only: Only return suites with failures (default true)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
@@ -206,7 +208,7 @@ async def get_build_test_results(
     if not test_suites:
         return error("Found XML files but none contained valid JUnit test results.")
 
-    # Step 4: Compute totals
+    # Step 4: Compute totals from ALL suites (before filtering)
     totals = {"tests": 0, "passed": 0, "skipped": 0, "failed": 0, "errored": 0}
     for suite in test_suites:
         totals["tests"] += suite.get("tests", 0)
@@ -214,6 +216,23 @@ async def get_build_test_results(
         totals["skipped"] += suite.get("skipped", 0)
         totals["failed"] += suite.get("failed", 0)
         totals["errored"] += suite.get("errored", 0)
+
+    # Step 5: Filter to failure suites only (when requested)
+    if failures_only:
+        failed_suites = [
+            s for s in test_suites if s.get("failed", 0) > 0 or s.get("errored", 0) > 0
+        ]
+        if not failed_suites:
+            return json.dumps(
+                {
+                    "job": build.get("job_name", ""),
+                    "result": build.get("result", ""),
+                    "status": "all_passed",
+                    "suite_count": len(test_suites),
+                    "totals": totals,
+                }
+            )
+        test_suites = failed_suites
 
     return json.dumps(
         {

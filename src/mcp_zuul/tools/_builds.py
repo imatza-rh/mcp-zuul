@@ -552,6 +552,7 @@ async def get_buildset(
     uuid: str = "",
     tenant: str = "",
     url: str = "",
+    brief: bool = True,
 ) -> str:
     """Get full buildset details — all builds, results, events, and timing.
 
@@ -559,7 +560,8 @@ async def get_buildset(
         uuid: Buildset UUID
         tenant: Tenant (default from env)
         url: Zuul buildset URL (alternative to uuid + tenant)
+        brief: Compact response (default true). Set false for full timing/events.
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")
     data = await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(uuid)}")
-    return json.dumps(fmt_buildset(data, brief=False))
+    return json.dumps(fmt_buildset(data, brief=brief))

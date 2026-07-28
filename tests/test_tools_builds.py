@@ -1620,10 +1620,21 @@ class TestGetBuildset:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid").mock(
             return_value=httpx.Response(200, json=make_buildset())
         )
-        result = json.loads(await get_buildset(mock_ctx, "bs-uuid"))
+        result = json.loads(await get_buildset(mock_ctx, "bs-uuid", brief=False))
         assert result["uuid"] == "buildset-uuid-1"
         assert "builds" in result
         assert "events" in result
+
+    @respx.mock
+    async def test_brief_buildset_omits_builds(self, mock_ctx):
+        """Brief buildset (default) should omit builds and events."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid").mock(
+            return_value=httpx.Response(200, json=make_buildset())
+        )
+        result = json.loads(await get_buildset(mock_ctx, "bs-uuid"))
+        assert result["uuid"] == "buildset-uuid-1"
+        assert "builds" not in result
+        assert "events" not in result
 
     @respx.mock
     async def test_builds_include_full_details(self, mock_ctx):
@@ -1631,7 +1642,7 @@ class TestGetBuildset:
         respx.get("https://zuul.example.com/api/tenant/test-tenant/buildset/bs-uuid").mock(
             return_value=httpx.Response(200, json=make_buildset())
         )
-        result = json.loads(await get_buildset(mock_ctx, "bs-uuid"))
+        result = json.loads(await get_buildset(mock_ctx, "bs-uuid", brief=False))
         build = result["builds"][0]
         # These fields are only present in non-brief fmt_build output
         assert "log_url" in build, f"Missing log_url in buildset build: {build}"

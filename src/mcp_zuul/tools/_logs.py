@@ -120,7 +120,7 @@ async def get_build_log(
         uuid: Build UUID
         tenant: Tenant (default from env)
         log_name: Log file to read (default "job-output.txt")
-        mode: "summary" (tail + errors) or "full" (paginated)
+        mode: "summary" (tail + errors), "errors" (errors only, no tail), or "full" (paginated)
         lines: For summary: tail count (default 50). For full: offset start line.
         start_line: Read from this line (1-based, overrides mode with end_line)
         end_line: Read up to this line (1-based, inclusive)
@@ -252,15 +252,35 @@ async def get_build_log(
             result_dict["grep_note"] = grep_note
         return json.dumps(result_dict)
 
+    # Errors-only mode — just error lines, no tail
+    if mode == "errors":
+        errors: list[tuple[int, str]] = []
+        for i, line in enumerate(all_lines):
+            if _ERROR_PATTERNS.search(line) and not _ERROR_NOISE.search(line) and len(errors) < 30:
+                errors.append((i + 1, line))
+        return json.dumps(
+            clean(
+                {
+                    "total_lines": total,
+                    "log_url": txt_url,
+                    "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
+                }
+            )
+        )
+
     # Summary mode — single pass for both errors and tail
     if mode == "summary":
         tail_n = max(1, lines) if lines else 50
         tail_start = max(0, total - tail_n)
-        errors: list[tuple[int, str]] = []
+        sum_errors: list[tuple[int, str]] = []
         tail: list[str] = []
         for i, line in enumerate(all_lines):
-            if _ERROR_PATTERNS.search(line) and not _ERROR_NOISE.search(line) and len(errors) < 30:
-                errors.append((i + 1, line))
+            if (
+                _ERROR_PATTERNS.search(line)
+                and not _ERROR_NOISE.search(line)
+                and len(sum_errors) < 30
+            ):
+                sum_errors.append((i + 1, line))
             if i >= tail_start:
                 tail.append(line)
         return json.dumps(
@@ -270,7 +290,7 @@ async def get_build_log(
                     "log_url": txt_url,
                     "job": build.get("job_name", "") or None,
                     "result": build.get("result", "") or None,
-                    "error_lines": [{"n": n, "text": t[:500]} for n, t in errors],
+                    "error_lines": [{"n": n, "text": t[:500]} for n, t in sum_errors],
                     "tail": [line[:500] for line in tail],
                 }
             )

@@ -301,3 +301,77 @@ class TestGetBuildTestResults:
         assert result["totals"]["failed"] == 1
         assert result["totals"]["passed"] == 1
         assert result["test_suites"][0]["failures"][0]["time"] == 0.0
+
+    @respx.mock
+    async def test_failures_only_filters_passed_suites(self, mock_ctx):
+        """failures_only=True (default) should omit suites with zero failures."""
+        build = make_build(uuid="fo-uuid", result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fo-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}zuul-manifest.json").mock(
+            return_value=httpx.Response(200, json=_manifest_with_xml())
+        )
+        respx.get(
+            f"{build['log_url']}controller/ci-framework-data/tests/test_operator/"
+            "tempest-tests-tempest/tempest_results.xml"
+        ).mock(
+            return_value=httpx.Response(
+                200, text=_junit_xml(tests=10, failures=0, skipped=2, time=500.0)
+            )
+        )
+        result = json.loads(await get_build_test_results(mock_ctx, uuid="fo-uuid"))
+        assert result["status"] == "all_passed"
+        assert "test_suites" not in result
+        assert result["totals"]["tests"] == 10
+        assert result["totals"]["passed"] == 8
+        assert result["suite_count"] == 1
+
+    @respx.mock
+    async def test_failures_only_false_returns_all(self, mock_ctx):
+        """failures_only=False should return all suites including passed ones."""
+        build = make_build(uuid="fa-uuid", result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fa-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}zuul-manifest.json").mock(
+            return_value=httpx.Response(200, json=_manifest_with_xml())
+        )
+        respx.get(
+            f"{build['log_url']}controller/ci-framework-data/tests/test_operator/"
+            "tempest-tests-tempest/tempest_results.xml"
+        ).mock(
+            return_value=httpx.Response(
+                200, text=_junit_xml(tests=10, failures=0, skipped=2, time=500.0)
+            )
+        )
+        result = json.loads(
+            await get_build_test_results(mock_ctx, uuid="fa-uuid", failures_only=False)
+        )
+        assert "status" not in result
+        assert result["suite_count"] == 1
+        assert len(result["test_suites"]) == 1
+        assert result["totals"]["passed"] == 8
+
+    @respx.mock
+    async def test_failures_only_keeps_failed_suites(self, mock_ctx):
+        """failures_only=True should keep suites that have failures."""
+        build = make_build(uuid="fk-uuid", result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fk-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}zuul-manifest.json").mock(
+            return_value=httpx.Response(200, json=_manifest_with_xml())
+        )
+        respx.get(
+            f"{build['log_url']}controller/ci-framework-data/tests/test_operator/"
+            "tempest-tests-tempest/tempest_results.xml"
+        ).mock(
+            return_value=httpx.Response(
+                200, text=_junit_xml(tests=5, failures=2, errors=0, time=100.0)
+            )
+        )
+        result = json.loads(await get_build_test_results(mock_ctx, uuid="fk-uuid"))
+        assert result["suite_count"] == 1
+        assert len(result["test_suites"]) == 1
+        assert result["totals"]["failed"] == 2
