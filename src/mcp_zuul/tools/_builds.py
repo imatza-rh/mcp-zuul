@@ -38,6 +38,9 @@ _FILE_PATH_NOISE = re.compile(
 )
 
 
+_CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
 def _reflect_on_diagnosis(
     classification: Classification,
     build_result: str,
@@ -72,7 +75,6 @@ def _reflect_on_diagnosis(
             playbooks=playbooks,
             log_context=broader_context,
         )
-        _CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
         original_rank = _CONFIDENCE_RANK.get(classification.confidence, 0)
         updated_rank = _CONFIDENCE_RANK.get(updated.confidence, 0)
         if updated.category != "UNKNOWN" and (
