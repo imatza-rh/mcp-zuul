@@ -17,7 +17,7 @@
 
 | Tool | Description |
 |------|-------------|
-| `get_build_log` | Read and search log files. Modes: `summary`, `full`, `grep`, `errors`, or exact line ranges. Supports `log_name` for any file in the build's log directory. |
+| `get_build_log` | Read and search log files. Modes: `summary`, `full`, `grep`, `errors`, or exact line ranges. Supports `log_name` for any file, `max_matches` to cap grep results (default 50), and `filter_noise` to suppress `failed=0`/`RETRYING` noise. |
 | `tail_build_log` | Last N lines of a log (default 50, max 500). The fastest way to check why a build failed. |
 | `browse_build_logs` | List log directory contents or fetch specific files. Max 512KB per file. |
 | `stream_build_console` | Live console output from RUNNING builds via WebSocket. Optional — requires `pip install mcp-zuul[console]`. |

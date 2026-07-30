@@ -30,3 +30,10 @@ claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
 - [Authentication](authentication.md) - Token, Kerberos/SPNEGO setup
 - [Transport & Deployment](transport.md) - stdio, SSE, streamable-http
 - [Troubleshooting](troubleshooting.md) - Common issues and fixes
+
+## Project
+
+- [Contributing](https://github.com/imatza-rh/mcp-zuul/blob/main/CONTRIBUTING.md)
+- [Changelog](https://github.com/imatza-rh/mcp-zuul/blob/main/CHANGELOG.md)
+- [Security Policy](https://github.com/imatza-rh/mcp-zuul/blob/main/SECURITY.md)
+- [License](https://github.com/imatza-rh/mcp-zuul/blob/main/LICENSE) (Apache-2.0)
