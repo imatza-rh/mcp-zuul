@@ -19,6 +19,9 @@ format: ## Auto-format code
 typecheck: ## Run type checker
 	uv run mypy src/mcp_zuul/
 
+docs: ## Serve docs locally (http://127.0.0.1:8001)
+	uvx --with mkdocs-material mkdocs serve -a 127.0.0.1:8001
+
 check: lint typecheck test ## Run all checks (lint + typecheck + test)
 
 build: ## Build Docker image
@@ -31,3 +34,7 @@ clean: ## Remove build artifacts and caches
 release: ## Release a version (make release V=0.5.0 or V=patch)
 	@test -n "$(V)" || (echo "Usage: make release V=<version|patch|minor|major>" && exit 1)
 	./release.sh $(V)
+
+release-check: check ## Dry-run release validation (lint + typecheck + test + build)
+	uv build
+	@echo "Release validation passed. Run 'make release V=<version>' to publish."
