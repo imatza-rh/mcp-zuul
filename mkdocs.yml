@@ -1,0 +1,53 @@
+site_name: mcp-zuul
+site_description: MCP server for Zuul CI — build failure analysis, log search, pipeline status
+site_url: https://imatza-rh.github.io/mcp-zuul/
+repo_url: https://github.com/imatza-rh/mcp-zuul
+repo_name: imatza-rh/mcp-zuul
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Tools Reference: tools.md
+  - Authentication: authentication.md
+  - Transport & Deployment: transport.md
+  - Troubleshooting: troubleshooting.md
