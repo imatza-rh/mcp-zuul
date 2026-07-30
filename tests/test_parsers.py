@@ -39,7 +39,7 @@ class TestBroadErrorPattern:
             "INFO: build completed successfully",
             "WARNING: slow query detected",
             "TASK [Install packages] *****",
-            "ok: [controller] => {\"msg\": \"done\"}",
+            'ok: [controller] => {"msg": "done"}',
             "PLAY RECAP *** controller : ok=45 changed=12 failed=0",
             "normal log line with no errors",
             "",
@@ -65,13 +65,13 @@ class TestGrepLogContextPattern:
         text = "line1\nfatal: something broke\nline3"
         blocks = grep_log_context(text)
         assert len(blocks) == 1
-        assert any(l["match"] for l in blocks[0])
+        assert any(line["match"] for line in blocks[0])
 
     def test_custom_pattern(self):
         text = "line1\nTraceback found here\nline3"
         blocks = grep_log_context(text, pattern=_BROAD_ERROR_PATTERN)
         assert len(blocks) == 1
-        assert any(l["match"] for l in blocks[0])
+        assert any(line["match"] for line in blocks[0])
 
     def test_custom_pattern_no_match(self):
         text = "line1\nnormal output\nline3"
@@ -96,9 +96,7 @@ class TestReflectOnDiagnosis:
         from mcp_zuul.tools._builds import _reflect_on_diagnosis
 
         c = Classification("UNKNOWN", "No data", "low", False)
-        updated, reflection = _reflect_on_diagnosis(
-            c, "FAILURE", None, [], [], []
-        )
+        updated, reflection = _reflect_on_diagnosis(c, "FAILURE", None, [], [], [])
         assert updated.category == "UNKNOWN"
         assert reflection["reclassified"] is False
         assert reflection["broader_matches"] == 0
@@ -108,7 +106,7 @@ class TestReflectOnDiagnosis:
         from mcp_zuul.tools._builds import _reflect_on_diagnosis
 
         c = Classification("UNKNOWN", "No data", "low", False)
-        updated, reflection = _reflect_on_diagnosis(
+        _updated, reflection = _reflect_on_diagnosis(
             c, "FAILURE", "normal output\nno errors\n", [], [], []
         )
         assert reflection["reclassified"] is False
