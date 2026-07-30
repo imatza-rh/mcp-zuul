@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-MCP server for Zuul CI — 45 tools (37 read-only + 6 write + 1 LogJuicer + 1 console stream), 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
+MCP server for Zuul CI — 47 tools (39 read-only + 6 write + 1 LogJuicer + 1 console stream), 3 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
 
 ## Commands
 
@@ -38,15 +38,15 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 ```
 __init__.py        →  imports tools, prompts, resources (registers decorators), exports main()
 server.py          →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
-tools/             →  Package: 44 @mcp.tool() functions split by domain
+tools/             →  Package: 47 @mcp.tool() functions split by domain
   __init__.py      →  Re-exports for backward compat (tests import from mcp_zuul.tools)
   _common.py       →  Shared constants, _check_url_host(), _resolve(), _fetch_job_output(), re-exports from parsers
-  _builds.py       →  6 build tools: list_builds, get_build, get_build_failures, diagnose_build, etc.
+  _builds.py       →  8 build tools: list_builds, get_build, get_build_failures, diagnose_build, batch_diagnose, diagnose_and_test, etc.
   _console.py      →  1 console stream tool: stream_build_console (optional, requires websockets)
   _logs.py         →  3 log tools: get_build_log, browse_build_logs, tail_build_log
-  _status.py       →  6 status/analytics: list_tenants, get_status, get_change_status, find_flaky_jobs, etc.
+  _status.py       →  7 status/analytics: list_tenants, get_status, get_change_status, find_flaky_jobs, etc.
   _config.py       →  15 config/infra: list_jobs, get_job, get_project, list_nodes, get_freeze_job, etc.
-  _write.py        →  5 write ops: enqueue, dequeue, autohold_create, autohold_delete, reenqueue_buildset
+  _write.py        →  6 write ops: enqueue, dequeue, autohold_create, autohold_delete, promote, reenqueue_buildset
   _tests.py        →  1 test results: get_build_test_results + JUnit XML parsing
   _logjuicer.py    →  1 LogJuicer: get_build_anomalies
 prompts.py         →  3 @mcp.prompt() templates (debug_build, compare_builds, check_change)
