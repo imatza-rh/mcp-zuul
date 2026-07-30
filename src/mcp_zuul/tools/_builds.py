@@ -5,14 +5,15 @@ import json
 import re
 from typing import Any
 
+import httpx
 from mcp.server.fastmcp import Context
 
 from ..classifier import Classification, classify_failure, determine_failure_phase
 from ..errors import handle_errors
 from ..formatters import fmt_build, fmt_buildset
-from ..helpers import api, app, clean, safepath, stream_log, strip_ansi
+from ..helpers import api, app, clean, error, fetch_log_url, safepath, stream_log, strip_ansi
 from ..helpers import tenant as _tenant
-from ..parsers import grep_log_context
+from ..parsers import _BROAD_ERROR_PATTERN, grep_log_context
 from ..server import mcp
 from ._common import (
     _READ_ONLY,
@@ -35,6 +36,61 @@ _FILE_PATH_NOISE = re.compile(
     r"site-packages|/home/|/root/|/tmp/|/var/|/usr/|/etc/"
     r"|\.com/|\.io/|\.org/|\.net/"  # URL-derived fragments
 )
+
+
+def _reflect_on_diagnosis(
+    classification: Classification,
+    build_result: str,
+    log_text: str | None,
+    failed_tasks: list[dict],
+    playbooks: list[dict],
+    log_context: list[list[dict]],
+) -> tuple[Classification, dict]:
+    """Second-pass investigation when initial diagnosis is inconclusive.
+
+    Runs broader error pattern grep on cached log text and re-classifies.
+    Returns (possibly_updated_classification, reflection_notes).
+    """
+    checked = ["job-output.json (structured playbook data)"]
+    if log_context:
+        checked.append("job-output.txt (fatal/FAILED grep)")
+    else:
+        checked.append("job-output.txt (unavailable or empty)")
+
+    unchecked = ["inner container/pod logs", "alternate log files (e.g. syslog, journal)"]
+
+    original = classification
+    broader_context: list[list[dict]] = []
+    if log_text:
+        broader_context = grep_log_context(log_text, pattern=_BROAD_ERROR_PATTERN)
+
+    if broader_context:
+        checked.append("job-output.txt (broad error grep: Traceback/Exception/ERROR/timeout)")
+        updated = classify_failure(
+            result=build_result,
+            failed_tasks=failed_tasks,
+            playbooks=playbooks,
+            log_context=broader_context,
+        )
+        _CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+        original_rank = _CONFIDENCE_RANK.get(classification.confidence, 0)
+        updated_rank = _CONFIDENCE_RANK.get(updated.confidence, 0)
+        if updated.category != "UNKNOWN" and (
+            classification.category == "UNKNOWN" or updated_rank > original_rank
+        ):
+            classification = updated
+    else:
+        checked.append("job-output.txt (broad error grep: no additional matches)")
+
+    reflection = clean(
+        {
+            "checked": checked,
+            "unchecked": unchecked,
+            "broader_matches": len(broader_context) if broader_context else 0,
+            "reclassified": classification is not original,
+        }
+    )
+    return classification, reflection
 
 
 def _fallback_message(result: str, has_log_context: bool) -> str:
@@ -340,17 +396,18 @@ async def diagnose_build(
         return _no_log_url_error(build, uuid)
 
     # --- 1+2. Fetch structured failures and text log in parallel ---
-    async def _fetch_log_context() -> tuple[list[list[dict]], bool]:
+    async def _fetch_log_text() -> tuple[str | None, bool]:
         try:
             log_bytes, trunc = await stream_log(app(ctx), log_url.rstrip("/") + "/job-output.txt")
-            return grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace"))), trunc
+            return strip_ansi(log_bytes.decode("utf-8", errors="replace")), trunc
         except Exception:
-            return [], False
+            return None, False
 
-    (playbooks, failed_tasks, _json_ok), (log_context, log_truncated) = await asyncio.gather(
+    (playbooks, failed_tasks, _json_ok), (log_text, log_truncated) = await asyncio.gather(
         _fetch_job_output(ctx, log_url),
-        _fetch_log_context(),
+        _fetch_log_text(),
     )
+    log_context = grep_log_context(log_text) if log_text else []
 
     # --- 3. Classify the failure and determine phase ---
     classification: Classification | None = None
@@ -370,6 +427,21 @@ async def diagnose_build(
             run_phase_passed = not run_failed
         else:
             run_phase_passed = None
+
+    # --- 4. Reflection: second-pass investigation for inconclusive results ---
+    reflection: dict | None = None
+    needs_reflection = classification and (
+        classification.category == "UNKNOWN" or classification.confidence in ("low", "medium")
+    )
+    if needs_reflection:
+        classification, reflection = _reflect_on_diagnosis(
+            classification,  # type: ignore[arg-type]
+            build_result=result,
+            log_text=log_text,
+            failed_tasks=failed_tasks,
+            playbooks=playbooks,
+            log_context=log_context,
+        )
 
     # Extract node name from nodeset for SSH debugging
     nodeset = build.get("nodeset")
@@ -409,6 +481,8 @@ async def diagnose_build(
                     "rc": root.get("rc"),
                 }
             )
+        if reflection:
+            out["reflection"] = reflection
         return json.dumps(clean(out))
 
     out = {
@@ -430,6 +504,7 @@ async def diagnose_build(
         "log_truncated": log_truncated or None,
         "failure_phase": failure_phase,
         "run_phase_passed": run_phase_passed,
+        "reflection": reflection,
     }
 
     if classification:
@@ -439,6 +514,202 @@ async def diagnose_build(
         out["retryable"] = classification.retryable
 
     return json.dumps(clean(out))
+
+
+@mcp.tool(title="Batch Diagnose Builds", annotations=_READ_ONLY)
+@handle_errors
+async def batch_diagnose(
+    ctx: Context,
+    uuids: list[str],
+    tenant: str = "",
+) -> str:
+    """Classify multiple failed builds in one call — returns a triage table.
+
+    Runs diagnose_build(brief=True) in parallel for each UUID and returns
+    a compact classification summary. Use instead of calling diagnose_build
+    N times when triaging multiple failures.
+
+    Args:
+        uuids: List of build UUIDs to diagnose (max 20)
+        tenant: Tenant (default from env)
+    """
+    if not uuids:
+        return error("uuids list is required")
+    if len(uuids) > 20:
+        return error("Maximum 20 UUIDs per call")
+
+    sem = asyncio.Semaphore(5)
+
+    async def _diagnose_one(uuid: str) -> dict:
+        async with sem:
+            try:
+                result_json = await diagnose_build(ctx, uuid=uuid, tenant=tenant, brief=True)
+                return json.loads(result_json)
+            except Exception as exc:
+                return {"uuid": uuid, "error": str(exc)}
+
+    results = await asyncio.gather(*[_diagnose_one(u) for u in uuids])
+    builds = list(results)
+
+    summary: dict[str, int] = {}
+    for b in builds:
+        cat = b.get("classification") or b.get("result", "UNKNOWN")
+        summary[cat] = summary.get(cat, 0) + 1
+
+    return json.dumps({"builds": builds, "summary": summary, "count": len(builds)})
+
+
+@mcp.tool(title="Diagnose with Tests", annotations=_READ_ONLY)
+@handle_errors
+async def diagnose_and_test(
+    ctx: Context,
+    uuid: str = "",
+    tenant: str = "",
+    url: str = "",
+    brief: bool = True,
+) -> str:
+    """One-call diagnosis + test results — combines diagnose_build and get_build_test_results.
+
+    Fetches build metadata once, then runs failure analysis and JUnit test
+    parsing in parallel. Saves a round-trip vs calling both tools separately.
+
+    Args:
+        uuid: Build UUID
+        tenant: Tenant (default from env)
+        url: Zuul build URL (alternative to uuid + tenant)
+        brief: Brief diagnosis (default true). Set false for full failure details.
+    """
+    from ._tests import _MAX_XML_BYTES, _find_test_xmls, _parse_junit_xml
+
+    uuid, t = _resolve(ctx, uuid, tenant, url, "build")
+    build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
+    result = build.get("result", "")
+    log_url = build.get("log_url")
+
+    if result in ("SUCCESS", "SKIPPED"):
+        msg = (
+            "Build succeeded — nothing to diagnose."
+            if result == "SUCCESS"
+            else "Build was skipped."
+        )
+        short = clean({"job": build.get("job_name", ""), "result": result, "message": msg})
+        return json.dumps({"diagnosis": short, "test_results": {"status": "skipped_for_success"}})
+
+    if not log_url:
+        return _no_log_url_error(build, uuid)
+
+    a = app(ctx)
+    base = log_url.rstrip("/")
+
+    # --- Parallel: fetch job-output + test manifest ---
+    async def _fetch_tests() -> dict:
+        manifest_resp = await fetch_log_url(a, f"{base}/zuul-manifest.json")
+        xml_paths: list[str] = []
+        if manifest_resp.status_code == 200:
+            try:
+                manifest = manifest_resp.json()
+                xml_paths = _find_test_xmls(manifest.get("tree", []))
+            except Exception:
+                pass
+        if not xml_paths:
+            return {"status": "no_tests"}
+        sem = asyncio.Semaphore(5)
+
+        async def _fetch_xml(path: str) -> tuple[str, httpx.Response | None]:
+            async with sem:
+                try:
+                    return path, await fetch_log_url(a, f"{base}/{path}")
+                except Exception:
+                    return path, None
+
+        xml_results = await asyncio.gather(*[_fetch_xml(p) for p in xml_paths[:10]])
+        suites = []
+        for xml_path, xml_resp in xml_results:
+            if xml_resp is None or xml_resp.status_code != 200:
+                continue
+            content = xml_resp.content[:_MAX_XML_BYTES].decode("utf-8", errors="replace")
+            parsed = _parse_junit_xml(content, xml_path)
+            if parsed:
+                suites.append(parsed)
+        if not suites:
+            return {"status": "no_tests"}
+        totals = {"tests": 0, "passed": 0, "skipped": 0, "failed": 0, "errored": 0}
+        for s in suites:
+            for k in totals:
+                totals[k] += s.get(k, 0)
+        failed_suites = [s for s in suites if s.get("failed", 0) > 0 or s.get("errored", 0) > 0]
+        if not failed_suites:
+            return {"status": "all_passed", "suite_count": len(suites), "totals": totals}
+        return {
+            "status": "has_failures",
+            "suite_count": len(suites),
+            "totals": totals,
+            "failed_suites": failed_suites,
+        }
+
+    async def _fetch_log_context() -> tuple[list[list[dict]], bool]:
+        try:
+            log_bytes, trunc = await stream_log(a, base + "/job-output.txt")
+            return grep_log_context(strip_ansi(log_bytes.decode("utf-8", errors="replace"))), trunc
+        except Exception:
+            return [], False
+
+    (
+        (playbooks, failed_tasks, _json_ok),
+        test_data,
+        (log_context, _log_truncated),
+    ) = await asyncio.gather(
+        _fetch_job_output(ctx, log_url),
+        _fetch_tests(),
+        _fetch_log_context(),
+    )
+
+    # --- Build diagnosis ---
+    classification: Classification | None = None
+    failure_phase: str | None = None
+    run_phase_passed: bool | None = None
+    if result not in ("SUCCESS", "SKIPPED"):
+        classification = classify_failure(
+            result=result,
+            failed_tasks=failed_tasks,
+            playbooks=playbooks,
+            log_context=log_context,
+        )
+        failure_phase = determine_failure_phase(playbooks)
+        if failure_phase:
+            run_phase_passed = not any(
+                pb.get("phase") == "run" and pb.get("failed") for pb in playbooks
+            )
+
+    diag: dict[str, Any] = {
+        "job": build.get("job_name", ""),
+        "result": result,
+        "log_url": log_url,
+        "duration": build.get("duration"),
+        "failure_phase": failure_phase,
+        "run_phase_passed": run_phase_passed,
+    }
+    if classification:
+        diag["classification"] = classification.category
+        diag["classification_reason"] = classification.reason
+        diag["classification_confidence"] = classification.confidence
+        diag["retryable"] = classification.retryable
+    if brief and failed_tasks:
+        root = failed_tasks[0] if failure_phase == "mixed" else failed_tasks[-1]
+        diag["root_cause"] = clean(
+            {
+                "task": root.get("task"),
+                "host": root.get("host"),
+                "msg": (root.get("msg") or "")[:500] or None,
+                "rc": root.get("rc"),
+            }
+        )
+    elif not brief:
+        diag["playbooks"] = [p for p in playbooks if p.get("failed")]
+        diag["failed_tasks"] = failed_tasks
+        diag["log_context"] = log_context or None
+
+    return json.dumps(clean({"diagnosis": clean(diag), "test_results": test_data}))
 
 
 @mcp.tool(title="Search Buildsets", annotations=_READ_ONLY)

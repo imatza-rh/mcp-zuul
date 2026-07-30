@@ -289,15 +289,32 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
     return playbooks, failed_tasks
 
 
-def grep_log_context(text: str, *, context_lines: int = 3) -> list[list[dict]]:
-    """Grep log text for fatal/FAILED lines and return context blocks."""
+_BROAD_ERROR_PATTERN = re.compile(
+    r"Traceback|Exception:|ERROR\b|timed?\s*out|\bassert\b.*?\bfail"
+    r"|segfault|SIGKILL|\bkilled\b|\bpanic\b",
+    re.IGNORECASE,
+)
+
+
+def grep_log_context(
+    text: str, *, context_lines: int = 3, pattern: re.Pattern[str] | None = None
+) -> list[list[dict]]:
+    """Grep log text for error lines and return context blocks.
+
+    Args:
+        text: Full log text to search.
+        context_lines: Lines of context around each match.
+        pattern: Regex pattern to match. Defaults to fatal/FAILED.
+    """
+    if pattern is None:
+        pattern = _FATAL_PATTERN
     all_lines = text.splitlines()
     total = len(all_lines)
     # Single regex pass — cache matched indices for O(1) lookup in output loop
     match_set: set[int] = set()
     matched: list[tuple[int, str]] = []
     for i, line in enumerate(all_lines):
-        if _FATAL_PATTERN.search(line):
+        if pattern.search(line):
             match_set.add(i)
             matched.append((i + 1, line))
     if not matched:
