@@ -87,7 +87,8 @@ def _reflect_on_diagnosis(
             "checked": checked,
             "unchecked": unchecked,
             "broader_matches": len(broader_context) if broader_context else 0,
-            "reclassified": classification is not original,
+            "reclassified": (classification.category, classification.confidence)
+            != (original.category, original.confidence),
         }
     )
     return classification, reflection

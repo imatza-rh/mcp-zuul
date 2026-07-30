@@ -35,6 +35,9 @@ release: ## Release a version (make release V=0.5.0 or V=patch)
 	@test -n "$(V)" || (echo "Usage: make release V=<version|patch|minor|major>" && exit 1)
 	./release.sh $(V)
 
-release-check: check ## Dry-run release validation (lint + typecheck + test + build)
+release-check: check ## Dry-run release validation (lint + typecheck + test + format + build)
+	uv run ruff format --check src/ tests/
+	@security find-generic-password -a pypi -s mcp-zuul -w >/dev/null 2>&1 \
+		|| (echo "WARNING: PyPI token not found in keychain (release will fail at publish step)" && exit 1)
 	uv build
 	@echo "Release validation passed. Run 'make release V=<version>' to publish."

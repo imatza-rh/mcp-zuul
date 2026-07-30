@@ -291,7 +291,7 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
 
 _BROAD_ERROR_PATTERN = re.compile(
     r"Traceback|Exception:|ERROR\b|timed?\s*out|\bassert\b.*?\bfail"
-    r"|segfault|SIGKILL|\bkilled\b|\bpanic\b",
+    r"|segfault|SIGKILL|killed|\bpanic\b",
     re.IGNORECASE,
 )
 
