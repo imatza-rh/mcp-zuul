@@ -1116,3 +1116,186 @@ class TestFileLevelCorruptedGzip:
         )
         assert "error" in result
         assert "diagnose_build" not in result["error"]
+
+
+class TestMaxMatches:
+    @respx.mock
+    async def test_grep_caps_at_max_matches(self, mock_ctx):
+        """Grep with many matches should cap at max_matches."""
+        lines = "\n".join([f"error line {i}" for i in range(200)])
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", grep="error", max_matches=10)
+        )
+        assert len(result["lines"]) == 10
+        assert result["matched"] == 200
+        assert result["truncated_matches"] == 190
+
+    @respx.mock
+    async def test_grep_no_truncation_below_cap(self, mock_ctx):
+        lines = "\n".join([f"error line {i}" for i in range(5)])
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", grep="error", max_matches=50)
+        )
+        assert len(result["lines"]) == 5
+        assert result["matched"] == 5
+        assert "truncated_matches" not in result
+
+
+class TestTimestampStripping:
+    @respx.mock
+    async def test_zuul_timestamps_stripped_from_grep(self, mock_ctx):
+        lines = "\n".join(
+            [
+                "2026-07-27 21:33:15.213396 | controller | fatal: connection refused",
+                "plain line without timestamp",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="fatal|plain"))
+        assert result["lines"][0]["text"] == "fatal: connection refused"
+        assert result["lines"][1]["text"] == "plain line without timestamp"
+
+    @respx.mock
+    async def test_zuul_timestamps_stripped_from_tail(self, mock_ctx):
+        lines = "\n".join(
+            [
+                "2026-07-27 21:33:15.213396 | controller | task completed",
+                "plain line",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await tail_build_log(mock_ctx, "build-uuid-1", lines=10))
+        assert result["lines"][0] == "task completed"
+        assert result["lines"][1] == "plain line"
+
+    @respx.mock
+    async def test_zuul_timestamps_stripped_from_summary(self, mock_ctx):
+        lines = "\n".join(
+            [
+                "2026-07-27 21:00:00.000000 | host | FAILED! => some error",
+                "2026-07-27 21:00:01.000000 | host | ok line",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1"))
+        assert result["tail"][0] == "FAILED! => some error"
+        assert result["error_lines"][0]["text"] == "FAILED! => some error"
+
+
+class TestNoiseFilter:
+    @respx.mock
+    async def test_noise_filtered_by_default(self, mock_ctx):
+        """Broad grep should filter noise lines like 'failed=0'."""
+        lines = "\n".join(
+            [
+                "ok=5 changed=2 failed=0",
+                "fatal: real error",
+                "ok=3 changed=1 failed=1",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="fatal|failed"))
+        assert result["matched"] == 2
+        assert result["noise_filtered"] == 1
+        assert result["lines"][0]["text"] == "fatal: real error"
+        assert result["lines"][1]["text"] == "ok=3 changed=1 failed=1"
+
+    @respx.mock
+    async def test_noise_filter_disabled(self, mock_ctx):
+        lines = "\n".join(
+            [
+                "ok=5 changed=2 failed=0",
+                "fatal: real error",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(
+            await get_build_log(mock_ctx, "build-uuid-1", grep="failed|fatal", filter_noise=False)
+        )
+        assert result["matched"] == 2
+        assert "noise_filtered" not in result
+
+    @respx.mock
+    async def test_noise_filter_skipped_when_grep_targets_noise(self, mock_ctx):
+        """Grep for 'RETRYING' should NOT filter out RETRYING lines."""
+        lines = "\n".join(
+            [
+                "RETRYING: deploy task (attempt 2/5)",
+                "RETRYING: deploy task (attempt 3/5)",
+                "fatal: deploy failed after retries",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="RETRYING"))
+        assert result["matched"] == 2, f"RETRYING lines should NOT be filtered: {result}"
+        assert "noise_filtered" not in result
+
+    @respx.mock
+    async def test_noise_filter_skipped_for_case_insensitive_match(self, mock_ctx):
+        """Grep for 'retrying' (case-insensitive full word) should skip filtering."""
+        lines = "\n".join(
+            [
+                "RETRYING: deploy task",
+                "other line",
+            ]
+        )
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = json.loads(await get_build_log(mock_ctx, "build-uuid-1", grep="retrying"))
+        assert result["matched"] == 1, f"Noise word match should skip filter: {result}"
+        assert "noise_filtered" not in result

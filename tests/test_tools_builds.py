@@ -8,6 +8,8 @@ import respx
 
 from mcp_zuul.tools import (
     _no_log_url_error,
+    batch_diagnose,
+    diagnose_and_test,
     diagnose_build,
     get_build,
     get_build_failures,
@@ -1648,3 +1650,119 @@ class TestGetBuildset:
         assert "log_url" in build, f"Missing log_url in buildset build: {build}"
         assert "start_time" in build, f"Missing start_time in buildset build: {build}"
         assert "end_time" in build, f"Missing end_time in buildset build: {build}"
+
+
+class TestBatchDiagnose:
+    @respx.mock
+    async def test_batch_diagnose_multiple_builds(self, mock_ctx):
+        """Batch diagnose should classify multiple builds."""
+        for i, result in enumerate(["SUCCESS", "FAILURE", "TIMED_OUT"]):
+            uuid = f"uuid-{i}"
+            build = make_build(uuid=uuid, result=result)
+            respx.get(f"https://zuul.example.com/api/tenant/test-tenant/build/{uuid}").mock(
+                return_value=httpx.Response(200, json=build)
+            )
+            if result == "FAILURE":
+                respx.get(f"{build['log_url']}job-output.json.gz").mock(
+                    return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+                )
+                respx.get(f"{build['log_url']}job-output.txt").mock(
+                    return_value=httpx.Response(200, text="fatal: test error\n")
+                )
+        result = json.loads(await batch_diagnose(mock_ctx, uuids=["uuid-0", "uuid-1", "uuid-2"]))
+        assert result["count"] == 3
+        assert "summary" in result
+        assert len(result["builds"]) == 3
+
+    @respx.mock
+    async def test_batch_diagnose_empty_list(self, mock_ctx):
+        result = json.loads(await batch_diagnose(mock_ctx, uuids=[]))
+        assert "error" in result
+
+    @respx.mock
+    async def test_batch_diagnose_too_many(self, mock_ctx):
+        result = json.loads(await batch_diagnose(mock_ctx, uuids=[f"uuid-{i}" for i in range(21)]))
+        assert "error" in result
+
+    @respx.mock
+    async def test_summary_uses_result_for_success(self, mock_ctx):
+        """SUCCESS builds should appear as SUCCESS in summary, not UNKNOWN."""
+        build = make_build(uuid="pass-uuid", result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/pass-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await batch_diagnose(mock_ctx, uuids=["pass-uuid"]))
+        assert "UNKNOWN" not in result["summary"], f"SUCCESS misclassified: {result['summary']}"
+        assert result["summary"].get("SUCCESS") == 1
+
+    @respx.mock
+    async def test_batch_diagnose_handles_errors(self, mock_ctx):
+        """Individual build errors should not fail the batch."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/good-uuid").mock(
+            return_value=httpx.Response(200, json=make_build(uuid="good-uuid"))
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/bad-uuid").mock(
+            return_value=httpx.Response(500)
+        )
+        result = json.loads(await batch_diagnose(mock_ctx, uuids=["good-uuid", "bad-uuid"]))
+        assert result["count"] == 2
+        errors = [b for b in result["builds"] if "error" in b]
+        assert len(errors) == 1
+
+
+class TestDiagnoseAndTest:
+    @respx.mock
+    async def test_combines_diagnosis_and_test_results(self, mock_ctx):
+        build = make_build(uuid="dt-uuid", result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/dt-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=make_job_output_json(failed=True))
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text="fatal: test error\n")
+        )
+        manifest = {"tree": [{"name": "results.xml", "children": []}]}
+        respx.get(f"{build['log_url']}zuul-manifest.json").mock(
+            return_value=httpx.Response(200, json=manifest)
+        )
+        # No matching XML files (results.xml doesn't have "test" in path)
+        result = json.loads(await diagnose_and_test(mock_ctx, uuid="dt-uuid"))
+        assert "diagnosis" in result
+        assert "test_results" in result
+        assert result["diagnosis"]["result"] == "FAILURE"
+        assert "classification" in result["diagnosis"]
+
+    @respx.mock
+    async def test_success_build_short_circuits(self, mock_ctx):
+        """SUCCESS builds should NOT fetch job-output or test results."""
+        build = make_build(uuid="ok-uuid", result="SUCCESS")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/ok-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # No job-output or manifest mocks — short-circuit should skip them
+        result = json.loads(await diagnose_and_test(mock_ctx, uuid="ok-uuid"))
+        assert result["diagnosis"]["result"] == "SUCCESS"
+        assert result["test_results"]["status"] == "skipped_for_success"
+        assert "message" in result["diagnosis"]
+
+    @respx.mock
+    async def test_skipped_build_short_circuits(self, mock_ctx):
+        """SKIPPED builds should short-circuit like SUCCESS."""
+        build = make_build(uuid="skip-uuid", result="SKIPPED")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/skip-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await diagnose_and_test(mock_ctx, uuid="skip-uuid"))
+        assert result["diagnosis"]["result"] == "SKIPPED"
+
+    @respx.mock
+    async def test_no_log_url(self, mock_ctx):
+        build = make_build(uuid="nolog-uuid", result="FAILURE", log_url="")
+        build["log_url"] = None
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/nolog-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        result = json.loads(await diagnose_and_test(mock_ctx, uuid="nolog-uuid"))
+        assert "error" in result

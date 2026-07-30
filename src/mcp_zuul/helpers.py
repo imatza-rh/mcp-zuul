@@ -315,6 +315,14 @@ def strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+_ZUUL_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \| \S+ \| ")
+
+
+def strip_zuul_timestamp(line: str) -> str:
+    """Strip Zuul log timestamp prefix (e.g. '2026-07-27 21:33:15.213 | host | ')."""
+    return _ZUUL_TS_RE.sub("", line)
+
+
 _ZUUL_URL_RE = re.compile(r"/t/([^/]+)/(build|buildset)/([^/?#]+)")
 _ZUUL_CHANGE_URL_RE = re.compile(r"/t/([^/]+)/status/change/([^/?#]+)")
 # Single-tenant URLs without /t/<tenant>/ prefix

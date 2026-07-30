@@ -20,6 +20,7 @@ from ..helpers import (
     safepath,
     stream_log,
     strip_ansi,
+    strip_zuul_timestamp,
 )
 from ..server import mcp
 from ._common import (
@@ -113,6 +114,8 @@ async def get_build_log(
     context: int = 0,
     url: str = "",
     direct_log_url: str = "",
+    max_matches: int = 50,
+    filter_noise: bool = True,
 ) -> str:
     """Read, search, and navigate build log files with grep, line ranges, and error summary.
 
@@ -129,6 +132,8 @@ async def get_build_log(
         url: Zuul build URL (alternative to uuid + tenant)
         direct_log_url: Log URL from a prior get_build/diagnose_build call.
                         Skips the build metadata fetch when provided.
+        max_matches: Max grep matches to return (default 50, max 200)
+        filter_noise: Filter out noise lines (failed=0, RETRYING) from grep results (default true)
     """
     log_url: str = ""
     if direct_log_url:
@@ -205,6 +210,16 @@ async def get_build_log(
             )
         except TimeoutError:
             return error("Regex search timed out (pattern may be too complex)")
+        # Post-filter noise lines (failed=0, RETRYING) on main thread.
+        # Skip filtering when the grep pattern explicitly targets noise
+        # tokens — otherwise we'd silently remove what the user asked for.
+        raw_count = len(matched)
+        _NOISE_WORDS = ("retrying", "failed=0")
+        g = grep.lower()
+        grep_targets_noise = any(w in g for w in _NOISE_WORDS)
+        if filter_noise and not grep_targets_noise:
+            matched = [(n, t) for n, t in matched if not _ERROR_NOISE.search(t)]
+        max_m = max(1, min(max_matches, 200))
         # Build O(1) match set for context output — avoids re-running the
         # user-supplied regex on the main asyncio thread (ReDoS protection).
         match_set: set[int] = {n - 1 for n, _ in matched}  # 1-based -> 0-based
@@ -212,10 +227,9 @@ async def get_build_log(
         if ctx_n > 0 and matched:
             # Build merged context blocks — deduplicate overlapping ranges
             ranges: list[tuple[int, int]] = []
-            for n, _text in matched[:50]:
+            for n, _text in matched[:max_m]:
                 start = max(0, n - 1 - ctx_n)
                 end = min(total, n + ctx_n)
-                # Merge with previous range if overlapping or adjacent
                 if ranges and start <= ranges[-1][1]:
                     ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
                 else:
@@ -225,7 +239,7 @@ async def get_build_log(
                 block = [
                     {
                         "n": i + 1,
-                        "text": all_lines[i][:500],
+                        "text": strip_zuul_timestamp(all_lines[i])[:500],
                         "match": i in match_set,
                     }
                     for i in range(start, end)
@@ -238,16 +252,25 @@ async def get_build_log(
                 "matched": len(matched),
                 "blocks": blocks,
             }
+            if len(matched) > max_m:
+                result_dict["truncated_matches"] = len(matched) - max_m
+            if raw_count != len(matched):
+                result_dict["noise_filtered"] = raw_count - len(matched)
             if grep_note:
                 result_dict["grep_note"] = grep_note
             return json.dumps(result_dict)
+        capped = matched[:max_m]
         result_dict = {
             "total_lines": total,
             "log_url": txt_url,
             "grep": grep,
             "matched": len(matched),
-            "lines": [{"n": n, "text": text[:500]} for n, text in matched[:100]],
+            "lines": [{"n": n, "text": strip_zuul_timestamp(text)[:500]} for n, text in capped],
         }
+        if len(matched) > max_m:
+            result_dict["truncated_matches"] = len(matched) - max_m
+        if raw_count != len(matched):
+            result_dict["noise_filtered"] = raw_count - len(matched)
         if grep_note:
             result_dict["grep_note"] = grep_note
         return json.dumps(result_dict)
@@ -262,7 +285,8 @@ async def get_build_log(
             "total_lines": total,
             "log_url": txt_url,
             "error_count": len(errors),
-            "error_lines": [{"n": n, "text": t[:500]} for n, t in errors] or None,
+            "error_lines": [{"n": n, "text": strip_zuul_timestamp(t)[:500]} for n, t in errors]
+            or None,
         }
         if truncated:
             err_result["truncated"] = True
@@ -290,8 +314,10 @@ async def get_build_log(
                     "log_url": txt_url,
                     "job": build.get("job_name", "") or None,
                     "result": build.get("result", "") or None,
-                    "error_lines": [{"n": n, "text": t[:500]} for n, t in sum_errors],
-                    "tail": [line[:500] for line in tail],
+                    "error_lines": [
+                        {"n": n, "text": strip_zuul_timestamp(t)[:500]} for n, t in sum_errors
+                    ],
+                    "tail": [strip_zuul_timestamp(line)[:500] for line in tail],
                 }
             )
         )
@@ -486,7 +512,7 @@ async def tail_build_log(
         "result": build.get("result") or None,
         "tail_from": tail_start + 1,
         "count": len(tail),
-        "lines": [line[:500] for line in tail],
+        "lines": [strip_zuul_timestamp(line)[:500] for line in tail],
     }
     if skipped_postrun:
         result_dict["skipped_postrun"] = True

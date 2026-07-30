@@ -14,8 +14,10 @@ import httpx
 import respx
 
 from mcp_zuul.tools import (
+    batch_diagnose,
     get_build,
     get_build_failures,
+    get_build_log,
     get_buildset,
     get_status,
     list_builds,
@@ -320,4 +322,32 @@ class TestTokenOptimizations:
                         ds = ast.get_docstring(node)
                         if ds and not node.name.startswith("_"):
                             total += len(ds)
-        assert total < 15000, f"Docstring total {total} chars exceeds 15K budget"
+        assert total < 16000, f"Docstring total {total} chars exceeds 16K budget"
+
+    @respx.mock
+    async def test_batch_diagnose_3_under_limit(self, mock_ctx):
+        """Batch diagnose of 3 brief builds should be compact."""
+        for i in range(3):
+            uuid = f"batch-{i}"
+            build = make_build(uuid=uuid, result="SUCCESS")
+            respx.get(f"https://zuul.example.com/api/tenant/test-tenant/build/{uuid}").mock(
+                return_value=httpx.Response(200, json=build)
+            )
+        result = await batch_diagnose(mock_ctx, uuids=[f"batch-{i}" for i in range(3)])
+        size = len(result.encode())
+        assert size < 2 * KB, f"batch_diagnose(3) bloat: {size} bytes (limit: {2 * KB})"
+
+    @respx.mock
+    async def test_grep_max_matches_caps_output(self, mock_ctx):
+        """Grep with max_matches should produce bounded output."""
+        lines = "\n".join([f"error on line {i}: something failed" for i in range(200)])
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, text=lines)
+        )
+        result = await get_build_log(mock_ctx, "build-uuid-1", grep="error", max_matches=20)
+        size = len(result.encode())
+        assert size < 4 * KB, f"grep(max_matches=20) bloat: {size} bytes (limit: {4 * KB})"
