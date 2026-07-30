@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & Discussion
+    url: https://github.com/imatza-rh/mcp-zuul/discussions
+    about: Ask questions, share ideas, or discuss usage patterns
+  - name: Troubleshooting
+    url: https://github.com/imatza-rh/mcp-zuul#troubleshooting
+    about: Check common issues before filing a bug
