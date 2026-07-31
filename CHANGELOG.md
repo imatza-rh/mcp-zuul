@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-07-31
+
+### Added
+- `batch_diagnose` tool — classify multiple failed builds in one call, returns a compact triage table (parallel `diagnose_build(brief=True)` for up to 20 UUIDs)
+- `diagnose_and_test` tool — combines `diagnose_build` and `get_build_test_results` in a single call, fetching build metadata once and running both analyses in parallel
+- Structured reflection loop for `diagnose_build` — on UNKNOWN or low/medium confidence results, automatically runs a broader error pattern grep and re-classifies, adding a `reflection` field showing what was checked and whether the classification changed
+- Token-saving parameters across multiple tools: `diagnose_build(brief=True)` for classification-only output (~95% smaller), `get_build_test_results(failures_only=True)` to skip passed suites, `find_flaky_jobs(detail=False)` to omit builds array, `get_build_times(detail=True/False)` to control build list, `get_freeze_job(include_vars=False)` to omit vars
+- `direct_log_url` parameter on `get_build_log`, `tail_build_log`, and `browse_build_logs` — skip the build metadata fetch when the log URL is already known from a prior call
+- Log noise filtering for `get_build_log` — new `max_matches` (default 50, max 200) and `filter_noise` (default true) parameters reduce grep output by removing common false positives (`failed=0`, `RETRYING:`)
+- MkDocs Material documentation site at https://imatza-rh.github.io/mcp-zuul/ with 6 pages (getting started, tools reference, authentication, transport, troubleshooting)
+- Per-module tool review checklists in `src/mcp_zuul/tools/REVIEW.md`
+- Issue template chooser (`.github/ISSUE_TEMPLATE/config.yml`) with links to Discussions and Troubleshooting
+- Makefile targets: `docs` (serve documentation locally) and `release-check` (dry-run release validation)
+- 34 parametrized regression tests for broad error pattern matching and reflection loop
+
+### Fixed
+- `diagnose_build` brief mode now includes `log_url` in response (was stripped, making follow-up log calls require a separate `get_build` call)
+- `errors-only` log mode now includes `truncated` field when output is truncated
+- 4 bugs from adversarial testing on token optimization (edge cases in compact playbook output)
+- Regex false positives in `_BROAD_ERROR_PATTERN` from attack cycle testing
+- Reflection loop update condition checked classification state instead of delta (from cross-model review)
+- Pinned `mcp<2.0.0` to prevent breaking changes from MCP SDK v2 stable release
+
+### Performance
+- Token optimization: tool docstrings reduced ~24% across existing tools, brief/detail parameter controls on build and buildset formatters
+- Compact playbook summaries and brief builds in `get_change_status` not-in-pipeline path
+
+### Security
+- `direct_log_url` parameter validated via `_validate_log_url()` (scheme + hostname check) to prevent SSRF when callers pass arbitrary URLs
+
+### Changed
+- Tool count: 45 → 47 (39 read-only + 6 write + 1 LogJuicer + 1 console stream)
+
 ## [0.9.0] - 2026-07-12
 
 ### Added
@@ -351,6 +384,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Kerberos/SPNEGO authentication support
 - PyPI package: `mcp-zuul`
 
+[0.10.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.10.0
+[0.9.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.9.0
+[0.8.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.8.1
+[0.8.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.8.0
+[0.7.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.7.0
+[0.6.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.6.1
+[0.6.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.6.0
+[0.5.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.5.1
+[0.5.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.5.0
 [0.4.2]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.2
 [0.4.1]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.1
 [0.4.0]: https://github.com/imatza-rh/mcp-zuul/releases/tag/v0.4.0
