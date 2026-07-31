@@ -23,9 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - `diagnose_build` brief mode now includes `log_url` in response (was stripped, making follow-up log calls require a separate `get_build` call)
 - `errors-only` log mode now includes `truncated` field when output is truncated
-- 4 bugs from adversarial testing on token optimization (edge cases in compact playbook output)
-- Regex false positives in `_BROAD_ERROR_PATTERN` from attack cycle testing
-- Reflection loop update condition checked classification state instead of delta (from cross-model review)
+- 4 edge-case bugs in compact playbook output from token optimization
+- Reduced false positives in broad error pattern matching
+- Reflection loop now correctly detects when re-classification changes the result
 - Pinned `mcp<2.0.0` to prevent breaking changes from MCP SDK v2 stable release
 
 ### Performance
