@@ -9,3 +9,4 @@ uv.lock
 .claude/
 .coverage
 coverage.xml
+site/
