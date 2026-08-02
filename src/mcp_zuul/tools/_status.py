@@ -8,7 +8,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from ..errors import handle_errors
 from ..formatters import (

@@ -44,20 +44,16 @@ class TestRemoveTool:
     def test_removes_existing_tool(self):
         """Successfully removes a registered tool."""
         server = MagicMock()
-        server._tool_manager.remove_tool = MagicMock()
+        server.remove_tool = MagicMock()
         assert _remove_tool(server, "get_build") is True
-        server._tool_manager.remove_tool.assert_called_once_with("get_build")
+        server.remove_tool.assert_called_once_with("get_build")
 
-    def test_returns_false_on_key_error(self):
-        """Returns False when tool doesn't exist (KeyError)."""
-        server = MagicMock()
-        server._tool_manager.remove_tool.side_effect = KeyError("get_build")
-        assert _remove_tool(server, "get_build") is False
+    def test_returns_false_on_unknown_tool(self):
+        """Returns False when tool doesn't exist."""
+        from mcp.server.mcpserver.exceptions import ToolError
 
-    def test_returns_false_on_attribute_error(self):
-        """Returns False when FastMCP API changes (AttributeError)."""
         server = MagicMock()
-        server._tool_manager.remove_tool.side_effect = AttributeError
+        server.remove_tool.side_effect = ToolError("Unknown tool: get_build")
         assert _remove_tool(server, "get_build") is False
 
 
@@ -67,22 +63,18 @@ class TestRemoveTool:
 
 
 class TestListToolNames:
-    def test_lists_registered_tools(self):
-        """Returns list of tool names from tool manager via list_tools()."""
+    async def test_lists_registered_tools(self):
+        """Returns list of tool names via public list_tools() API."""
+        from unittest.mock import AsyncMock
+
         server = MagicMock()
         tool_a, tool_b, tool_c = MagicMock(), MagicMock(), MagicMock()
         tool_a.name = "get_build"
         tool_b.name = "list_builds"
         tool_c.name = "get_job"
-        server._tool_manager.list_tools.return_value = [tool_a, tool_b, tool_c]
-        result = _list_tool_names(server)
+        server.list_tools = AsyncMock(return_value=[tool_a, tool_b, tool_c])
+        result = await _list_tool_names(server)
         assert sorted(result) == ["get_build", "get_job", "list_builds"]
-
-    def test_returns_empty_on_attribute_error(self):
-        """Returns empty list when FastMCP internal API changes."""
-        server = MagicMock()
-        server._tool_manager.list_tools.side_effect = AttributeError
-        assert _list_tool_names(server) == []
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +270,36 @@ class TestToolCountConsistency:
         assert f"{init_count} tools" in readme_md, (
             f"README.md does not mention '{init_count} tools' (found in __init__.py)"
         )
+
+
+class TestVersionFallback:
+    """Test version resolution from importlib.metadata."""
+
+    def test_version_resolves_when_installed(self):
+        """Installed package returns correct version."""
+        from mcp_zuul.server import _version
+
+        assert _version == "0.10.0"
+
+    def test_version_fallback_on_missing_package(self):
+        """PackageNotFoundError falls back to 0.0.0-dev."""
+        import importlib
+        from importlib.metadata import PackageNotFoundError
+
+        original = importlib.metadata.version
+
+        def _raise(name):
+            raise PackageNotFoundError(name)
+
+        import mcp_zuul.server as srv
+
+        importlib.metadata.version = _raise
+        try:
+            importlib.reload(srv)
+            assert srv._version == "0.0.0-dev"
+        finally:
+            importlib.metadata.version = original
+            importlib.reload(srv)
 
 
 class TestLifespanContext:

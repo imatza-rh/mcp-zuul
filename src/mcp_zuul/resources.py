@@ -2,7 +2,7 @@
 
 import json
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from .formatters import fmt_build, fmt_job_variants, fmt_project
 from .helpers import api, safepath

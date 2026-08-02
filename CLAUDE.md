@@ -37,7 +37,7 @@ All source lives in `src/mcp_zuul/`. The package uses `hatchling` as build backe
 
 ```
 __init__.py        →  imports tools, prompts, resources (registers decorators), exports main()
-server.py          →  FastMCP instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
+server.py          →  MCPServer instance ("zuul-ci"), lifespan (creates httpx clients), _BearerAuth
 tools/             →  Package: 47 @mcp.tool() functions split by domain
   __init__.py      →  Re-exports for backward compat (tests import from mcp_zuul.tools)
   _common.py       →  Shared constants, _check_url_host(), _resolve(), _fetch_job_output(), re-exports from parsers
@@ -65,7 +65,7 @@ classifier.py      →  Failure classification (INFRA_FLAKE, REAL_FAILURE, CONFI
 - **Two httpx clients**: `client` (API calls, has base_url + `_BearerAuth`) and `log_client` (log file fetches from external hosts, no base_url/auth). Both created in `server.py:lifespan`. `_pick_client()` selects based on log host vs API host.
 - **Auth safety**: `_BearerAuth` (httpx.Auth subclass) ensures tokens are stripped on cross-origin redirects. An `asyncio.Lock` (`_auth_lock` on AppContext) serializes Kerberos re-auth to prevent concurrent session corruption. `kerberos_auth()` clears BOTH cookies AND the `authorization` header before re-auth — a stale JWT causes Apache to return 401 (rejecting the bad token) instead of 302 (OIDC redirect), which silently breaks the entire SPNEGO flow. A verification GET after auth catches silent failures.
 - **Streaming with size caps**: `fetch_log_url()` streams up to 20 MB (prevents unbounded memory from large `job-output.json`). `stream_log()` streams up to 10 MB and returns `(bytes, truncated_bool)` so callers can warn users.
-- **AppContext**: Injected via FastMCP lifespan, accessed in tools via `app(ctx)` helper. Holds both clients, config, and the auth lock.
+- **AppContext**: Injected via MCPServer lifespan, accessed in tools via `app(ctx)` helper. Holds both clients, config, and the auth lock.
 - **Tenant resolution**: Every tool accepts optional `tenant` param; `helpers.tenant()` falls back to `ZUUL_DEFAULT_TENANT` env var.
 - **URL-based input**: Build/buildset/change tools accept a `url` param as alternative to `uuid` + `tenant`. `parse_zuul_url()` extracts tenant and resource ID from Zuul web URLs. Supports both multi-tenant (`/t/<tenant>/build/...`) and single-tenant (`/build/...`) URL formats.
 - **`_resolve()`**: Shared helper in _common.py that resolves resource ID + tenant from either explicit params or URL. Used by 12 of 13 `url`-accepting tools. **Exception**: `get_change_status` parses URLs directly (needs comma+SHA stripping and ref pattern matching). Both paths share `_check_url_host()` for hostname validation — any URL validation added to `_resolve()` must also be added to `get_change_status`'s URL parsing block in `_status.py`.
@@ -73,10 +73,10 @@ classifier.py      →  Failure classification (INFRA_FLAKE, REAL_FAILURE, CONFI
 - **`clean()`**: Strips `None` values from dicts to minimize token usage in responses.
 - **All tools return JSON strings**, never raw dicts. Errors also return JSON via `helpers.error()`.
 - **XML parsing**: Uses `defusedxml` (not stdlib `xml.etree.ElementTree`) for JUnit XML to prevent entity expansion attacks on untrusted test artifacts.
-- **ToolAnnotations**: Read-only tools: `readOnlyHint=True`. Write tools: `readOnlyHint=False`, with `destructiveHint=True` for dequeue/autohold_delete.
+- **ToolAnnotations**: Read-only tools: `read_only_hint=True`. Write tools: `read_only_hint=False`, with `destructive_hint=True` for dequeue/autohold_delete.
 - **Read-only mode**: `ZUUL_READ_ONLY=true` (default) removes write tools at startup. Set to `false` to enable enqueue/dequeue/autohold operations.
 - **Transport**: Configurable via `MCP_TRANSPORT` env var — `stdio` (default), `sse`, or `streamable-http`. HTTP transport enables remote/shared deployment.
-- **Tool filtering**: `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS` (mutually exclusive) remove tools at startup via `ToolManager.remove_tool()`. Reduces LLM tool-selection noise.
+- **Tool filtering**: `ZUUL_ENABLED_TOOLS` or `ZUUL_DISABLED_TOOLS` (mutually exclusive) remove tools at startup via `MCPServer.remove_tool()`. Reduces LLM tool-selection noise.
 - **LogJuicer**: Optional ML-based log anomaly detection via `LOGJUICER_URL`. Uses `log_client` (no auth headers) to avoid leaking Zuul tokens to external services.
 
 ### Testing

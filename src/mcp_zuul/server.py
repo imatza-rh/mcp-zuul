@@ -1,13 +1,15 @@
-"""FastMCP server instance and lifespan management."""
+"""MCPServer instance and lifespan management."""
 
 import asyncio
 import concurrent.futures
 import logging
 import sys
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .auth import kerberos_auth
 from .config import Config
@@ -39,26 +41,22 @@ class _BearerAuth(httpx.Auth):
         yield request
 
 
-def _remove_tool(server: FastMCP, name: str) -> bool:
-    """Remove a tool by name, tolerating FastMCP internal API changes."""
+def _remove_tool(server: MCPServer, name: str) -> bool:
+    """Remove a tool by name. Returns False if tool does not exist."""
     try:
-        server._tool_manager.remove_tool(name)
+        server.remove_tool(name)
         return True
-    except (AttributeError, KeyError):
+    except ToolError:
         return False
 
 
-def _list_tool_names(server: FastMCP) -> list[str]:
-    """List registered tool names, tolerating FastMCP internal API changes."""
-    try:
-        return [t.name for t in server._tool_manager.list_tools()]
-    except AttributeError:
-        log.warning("Cannot list tools - FastMCP internal API may have changed")
-        return []
+async def _list_tool_names(server: MCPServer) -> list[str]:
+    """List registered tool names."""
+    return [t.name for t in await server.list_tools()]
 
 
 @asynccontextmanager
-async def lifespan(server: FastMCP):
+async def lifespan(server: MCPServer):
     config = Config.from_env()
     headers = {"Accept": "application/json"}
     auth = _BearerAuth(config.auth_token) if config.auth_token else None
@@ -126,7 +124,7 @@ async def lifespan(server: FastMCP):
 
         # Apply tool filtering
         if config.enabled_tools:
-            all_tools = _list_tool_names(server)
+            all_tools = await _list_tool_names(server)
             for name in all_tools:
                 if name not in config.enabled_tools:
                     _remove_tool(server, name)
@@ -149,4 +147,14 @@ async def lifespan(server: FastMCP):
             executor.shutdown(wait=False, cancel_futures=True)
 
 
-mcp = FastMCP("zuul-ci", lifespan=lifespan)
+try:
+    _version = version("mcp-zuul")
+except PackageNotFoundError:
+    _version = "0.0.0-dev"
+
+mcp = MCPServer(
+    "zuul-ci",
+    instructions="Zuul CI server providing build analysis, log search, pipeline status, and job configuration",
+    version=_version,
+    lifespan=lifespan,
+)

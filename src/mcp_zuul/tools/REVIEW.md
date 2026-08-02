@@ -51,8 +51,8 @@ Per-module verification checklists for reviewing changes to tool submodules.
 ## `_write.py` — Write Operations
 
 - [ ] Gated by `_READ_ONLY` check (removed when `ZUUL_READ_ONLY=true`)
-- [ ] `annotations` include `readOnlyHint=False`
-- [ ] Destructive ops: `destructiveHint=True`
+- [ ] `annotations` include `read_only_hint=False`
+- [ ] Destructive ops: `destructive_hint=True`
 
 ## `_logjuicer.py` — LogJuicer Anomaly Detection
 
