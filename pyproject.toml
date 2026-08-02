@@ -23,7 +23,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "mcp>=1.26.0,<2.0.0",
+    "mcp>=2.0.0,<3.0.0",
     "httpx>=0.28.0",
     "defusedxml>=0.7.1",
 ]

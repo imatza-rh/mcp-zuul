@@ -6,7 +6,7 @@ import json
 import logging
 import ssl
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from ..auth import kerberos_auth
 from ..errors import handle_errors

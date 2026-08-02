@@ -52,7 +52,7 @@ A minimal tool looks like this (`_logjuicer.py` is a good reference at ~80 lines
 
 ```python
 import json
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from ..errors import handle_errors
 from ..helpers import api, clean, safepath
 from ..helpers import tenant as _tenant

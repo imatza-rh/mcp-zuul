@@ -4,7 +4,7 @@ import json
 from typing import Any
 from urllib.parse import urlencode
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from ..errors import handle_errors
 from ..formatters import fmt_job_variants, fmt_project

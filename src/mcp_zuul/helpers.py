@@ -9,11 +9,11 @@ import ssl
 import time as _time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote, urlparse
 
 import httpx
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from .auth import kerberos_auth
 from .config import Config
@@ -25,7 +25,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 @dataclass
 class AppContext:
-    """Shared application state injected via FastMCP lifespan."""
+    """Shared application state injected via MCPServer lifespan."""
 
     client: httpx.AsyncClient
     log_client: httpx.AsyncClient
@@ -37,7 +37,7 @@ class AppContext:
 
 def app(ctx: Context) -> AppContext:
     """Extract AppContext from the MCP request context."""
-    return ctx.request_context.lifespan_context
+    return cast("AppContext", ctx.request_context.lifespan_context)
 
 
 def tenant(ctx: Context, t: str) -> str:
@@ -105,7 +105,7 @@ async def api(ctx: Context, path: str, params: dict | None = None) -> Any:
 async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = None) -> Any:
     """Shared logic for POST/DELETE with Kerberos re-auth and 500/503 retry.
 
-    All write tools declare idempotentHint=True, so transient 503 from
+    All write tools declare idempotent_hint=True, so transient 503 from
     load balancers can safely be retried (same pattern as api() for GET).
 
     Uses follow_redirects=False to prevent POST→GET conversion on 302

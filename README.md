@@ -492,7 +492,7 @@ MCP Client (Claude Code, Cursor, etc.)
 ┌──────────────────────────────────────────────────┐
 │  src/mcp_zuul/                                   │
 │                                                  │
-│  server.py       FastMCP instance                │
+│  server.py       MCPServer instance               │
 │  config.py       env vars, transport, filtering  │
 │  auth.py         Kerberos/SPNEGO + OIDC          │
 │  errors.py       @handle_errors decorator        │

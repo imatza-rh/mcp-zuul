@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from ..classifier import Classification, classify_failure, determine_failure_phase
 from ..errors import handle_errors

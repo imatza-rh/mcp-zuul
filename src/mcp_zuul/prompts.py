@@ -2,7 +2,7 @@
 
 import json
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
 from .helpers import api, safepath
@@ -14,7 +14,7 @@ from .tools import _fetch_job_output
 @mcp.prompt()
 async def debug_build(uuid: str, tenant: str = "", ctx: Context | None = None) -> str:
     """Investigate a CI build failure - pre-loads build details and structured failures."""
-    assert ctx is not None  # FastMCP always injects ctx
+    assert ctx is not None  # MCPServer always injects ctx
     t = _tenant(ctx, tenant)
     build = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
     info = fmt_build(build, brief=False)
