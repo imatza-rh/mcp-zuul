@@ -358,13 +358,16 @@ def _format_job(j: dict, now: float) -> dict:
     return clean(out)
 
 
-def fmt_status_item(item: dict) -> dict:
+def fmt_status_item(item: dict, brief: bool = False) -> dict:
     """Format a pipeline status item into a compact representation.
 
     Times are normalized to seconds. Each job includes a computed ``status``
     field (RUNNING, WAITING, QUEUED, SUCCESS, FAILURE, ...) and human-readable
     ``elapsed``/``remaining``. A ``chain_summary`` with critical-path
     ETA is added when jobs are present.
+
+    When *brief* is True, jobs are compressed to name/status/result only
+    and chain_summary is omitted (~75% smaller for repeated polling).
     """
     out: dict = {
         "id": item.get("id", ""),
@@ -384,8 +387,23 @@ def fmt_status_item(item: dict) -> dict:
     if zuul_ref.startswith("Z"):
         out["buildset_uuid"] = zuul_ref[1:]
 
-    formatted_jobs: list[dict] = []
     jobs = item.get("jobs", [])
+
+    if brief:
+        if jobs:
+            out["jobs"] = [
+                clean(
+                    {"name": j.get("name", ""), "status": _job_status(j), "result": j.get("result")}
+                )
+                for j in jobs
+            ]
+        failing = item.get("failing_reasons", [])
+        if failing:
+            out["failing_reasons"] = failing
+        return out
+
+    # Full mode
+    formatted_jobs: list[dict] = []
     if jobs:
         now = _time.time()
         formatted_jobs = [_format_job(j, now) for j in jobs]

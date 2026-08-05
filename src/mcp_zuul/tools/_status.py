@@ -77,6 +77,7 @@ async def get_status(
     pipeline: str = "",
     project: str = "",
     active_only: bool = True,
+    brief: bool = False,
 ) -> str:
     """Live pipeline status showing what's currently queued/running.
 
@@ -85,6 +86,7 @@ async def get_status(
         pipeline: Pipeline name filter
         project: Project filter
         active_only: Only show pipelines with active items (default true)
+        brief: Compact output (~75% smaller) for repeated polling
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status")
@@ -104,7 +106,7 @@ async def get_status(
             break
         items = by_pipeline.setdefault(pname, [])
         if len(items) < _MAX_PER_PIPELINE:
-            items.append(fmt_status_item(item))
+            items.append(fmt_status_item(item, brief=brief))
             total_items += 1
         else:
             pipeline_capped.add(pname)

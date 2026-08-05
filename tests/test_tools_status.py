@@ -6,7 +6,7 @@ import time
 import httpx
 import respx
 
-from mcp_zuul.formatters import _compute_chain_summary, _format_duration
+from mcp_zuul.formatters import _compute_chain_summary, _format_duration, fmt_status_item
 from mcp_zuul.tools import get_change_status, get_status
 from tests.conftest import (
     make_buildset,
@@ -1602,3 +1602,82 @@ class TestCheckHealth:
         assert result["status"] == "connected"
         assert result["tenant_count"] == 0
         assert "tenants" not in result
+
+
+class TestBriefStatusItem:
+    def test_brief_omits_chain_summary(self):
+        item = make_status_item()
+        formatted = fmt_status_item(item, brief=True)
+        assert "chain_summary" not in formatted
+
+    def test_brief_compresses_jobs(self):
+        item = make_status_item()
+        formatted = fmt_status_item(item, brief=True)
+        job = formatted["jobs"][0]
+        assert "name" in job
+        assert "status" in job
+        assert "elapsed" not in job
+        assert "remaining" not in job
+
+    def test_brief_includes_result_when_present(self):
+        item = make_status_item()
+        item["jobs"][0]["result"] = "SUCCESS"
+        formatted = fmt_status_item(item, brief=True)
+        job = formatted["jobs"][0]
+        assert job["result"] == "SUCCESS"
+
+    def test_brief_preserves_failing_reasons(self):
+        item = make_status_item()
+        item["failing_reasons"] = ["test-job"]
+        formatted = fmt_status_item(item, brief=True)
+        assert formatted["failing_reasons"] == ["test-job"]
+
+    def test_brief_preserves_item_fields(self):
+        item = make_status_item(change=99999)
+        formatted = fmt_status_item(item, brief=True)
+        assert formatted["id"] == "99999,1"
+        assert formatted["project"] == "org/repo"
+        assert formatted["change"] == 99999
+        assert "enqueue_time" in formatted
+
+    def test_full_unchanged(self):
+        item = make_status_item()
+        formatted = fmt_status_item(item, brief=False)
+        assert "chain_summary" in formatted
+        job = formatted["jobs"][0]
+        assert "elapsed" in job or "status" in job
+
+
+class TestGetStatusBrief:
+    @respx.mock
+    async def test_brief_omits_chain_summary(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "zuul_version": "10.0.0",
+                    "pipelines": [make_status_pipeline("check")],
+                },
+            )
+        )
+        result = json.loads(await get_status(mock_ctx, brief=True))
+        item = result["pipelines"][0]["items"][0]
+        assert "chain_summary" not in item
+        job = item["jobs"][0]
+        assert "name" in job and "status" in job
+        assert "elapsed" not in job
+
+    @respx.mock
+    async def test_full_includes_chain_summary(self, mock_ctx):
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/status").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "zuul_version": "10.0.0",
+                    "pipelines": [make_status_pipeline("check")],
+                },
+            )
+        )
+        result = json.loads(await get_status(mock_ctx, brief=False))
+        item = result["pipelines"][0]["items"][0]
+        assert "chain_summary" in item
