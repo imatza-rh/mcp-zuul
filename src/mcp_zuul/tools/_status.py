@@ -326,7 +326,7 @@ async def get_change_status(
             log.warning("not_in_pipeline buildset fetch failed: %s: %s", type(exc).__name__, exc)
         return json.dumps(result)
     base = app(ctx).config.base_url
-    formatted = [fmt_status_item(item) for item in data]
+    formatted = [fmt_status_item(item, brief=brief) for item in data]
     # Enrich with status_url and tenant
     for raw, fmt in zip(data, formatted, strict=True):
         fmt["tenant"] = t

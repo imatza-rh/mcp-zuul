@@ -687,7 +687,7 @@ class TestGetChangeStatus:
 
     @respx.mock
     async def test_brief_in_pipeline_strips_job_fields(self, mock_ctx):
-        """brief=True should strip static fields from in-pipeline jobs."""
+        """brief=True uses fmt_status_item(brief=True) — compact jobs."""
         item = make_status_item(change=90001)
         respx.get("https://zuul.example.com/api/tenant/test-tenant/status/change/90001").mock(
             return_value=httpx.Response(200, json=[item])
@@ -695,23 +695,13 @@ class TestGetChangeStatus:
         result = json.loads(await get_change_status(mock_ctx, "90001", brief=True))
         assert isinstance(result, list)
         job = result[0]["jobs"][0]
-        # Essential fields preserved
+        # Brief: only name + status (result stripped when None)
         assert "name" in job
         assert "status" in job
-        assert "elapsed" in job
-        # Static fields stripped
-        assert "uuid" not in job
-        assert "stream_url" not in job
-        assert "dependencies" not in job
-        assert "waiting_status" not in job
+        # Everything else stripped by fmt_status_item(brief=True)
+        assert "elapsed" not in job
         assert "remaining" not in job
-        assert "estimated" not in job
-        assert "report_url" not in job
-        # Item-level static fields stripped
-        assert "status_url" not in result[0]
-        assert "enqueue_time" not in result[0]
-        # chain_summary preserved (compact, useful for monitoring)
-        assert "chain_summary" in result[0]
+        assert "chain_summary" not in result[0]
 
     @respx.mock
     async def test_brief_in_pipeline_smaller_than_full(self, mock_ctx):

@@ -1,9 +1,12 @@
 """Pre-built prompt templates for common Zuul CI debugging workflows."""
 
+from __future__ import annotations
+
 import asyncio
 import json
+from typing import Any
 
-from mcp.server.mcpserver import Context
+from mcp.server.mcpserver import Context  # noqa: TC002 — MCPServer resolves at runtime
 
 from .formatters import fmt_build, fmt_buildset, fmt_status_item
 from .helpers import api, safepath
@@ -153,8 +156,8 @@ async def check_change(change: str, tenant: str = "", ctx: Context | None = None
     )
 
 
-def _or_empty(val: object, fallback: object = None) -> object:
-    """Return val if it's not an Exception, else fallback (default: empty list/dict)."""
+def _or_empty(val: Any, fallback: Any = None) -> Any:
+    """Return val if it's not an Exception, else fallback (default: empty list)."""
     if isinstance(val, BaseException):
         return fallback if fallback is not None else []
     return val
