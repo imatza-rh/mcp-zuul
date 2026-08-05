@@ -26,7 +26,7 @@ Debug build failures by asking questions, not clicking through web UIs. An [MCP]
 claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
 ```
 
-47 tools, 3 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
+47 tools, 5 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
 
 ## Why mcp-zuul?
 
@@ -192,6 +192,8 @@ Pre-built prompt templates that pre-load context and guide analysis:
 | `debug_build` | Fetches build details + structured failures, checks for flaky signal from recent history, then guides root cause analysis. |
 | `compare_builds` | Loads two builds side-by-side with inline failure data for differential analysis — "why did this start failing?" |
 | `check_change` | Determines live pipeline status or latest results for a change, with appropriate next steps. |
+| `tenant_health` | Assesses overall tenant health — components, config errors, and node pool status in one view. |
+| `diagnose_queue_delay` | Diagnoses why jobs are queued or delayed — checks nodes, semaphores, and system state. |
 
 ## Resources
 
@@ -498,7 +500,7 @@ MCP Client (Claude Code, Cursor, etc.)
 │  errors.py       @handle_errors decorator        │
 ├──────────────────────────────────────────────────┤
 │  tools/          47 tools across 8 submodules    │
-│  prompts.py      3 prompt templates              │
+│  prompts.py      5 prompt templates              │
 │  resources.py    3 zuul:// resources             │
 ├──────────────────────────────────────────────────┤
 │  helpers.py      API client, URL parsing         │
