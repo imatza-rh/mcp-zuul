@@ -86,7 +86,7 @@ async def get_status(
         pipeline: Pipeline name filter
         project: Project filter
         active_only: Only show pipelines with active items (default true)
-        brief: Compact output (~75% smaller) for repeated polling
+        brief: Compact output (~50% smaller) for repeated polling
     """
     t = _tenant(ctx, tenant)
     data = await api(ctx, f"/tenant/{safepath(t)}/status")
@@ -174,7 +174,7 @@ async def get_change_status(
         change: Change number, GitHub ref (refs/pull/N/head), or GitLab ref
         tenant: Tenant (default from env)
         url: Zuul change status URL (alternative to change + tenant)
-        brief: Strip to monitoring essentials (~75% smaller). Use for repeated polls.
+        brief: Strip to monitoring essentials (~50% smaller). Use for repeated polls.
     """
     if url:
         parts = parse_zuul_url(url)

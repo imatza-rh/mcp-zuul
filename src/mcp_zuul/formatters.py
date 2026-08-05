@@ -367,7 +367,7 @@ def fmt_status_item(item: dict, brief: bool = False) -> dict:
     ETA is added when jobs are present.
 
     When *brief* is True, jobs are compressed to name/status/result only
-    and chain_summary is omitted (~75% smaller for repeated polling).
+    and chain_summary is omitted (~50% smaller for repeated polling).
     """
     out: dict = {
         "id": item.get("id", ""),
