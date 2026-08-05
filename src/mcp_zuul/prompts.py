@@ -1,5 +1,6 @@
 """Pre-built prompt templates for common Zuul CI debugging workflows."""
 
+import asyncio
 import json
 
 from mcp.server.mcpserver import Context
@@ -150,3 +151,123 @@ async def check_change(change: str, tenant: str = "", ctx: Context | None = None
         "- The project may not be configured in this tenant\n"
         f'- Check `get_config_errors(project="...")` for configuration issues'
     )
+
+
+def _or_empty(val: object, fallback: object = None) -> object:
+    """Return val if it's not an Exception, else fallback (default: empty list/dict)."""
+    if isinstance(val, BaseException):
+        return fallback if fallback is not None else []
+    return val
+
+
+@mcp.prompt()
+async def tenant_health(tenant: str = "", ctx: Context | None = None) -> str:
+    """Assess overall health of a Zuul tenant - components, config errors, and node pool status."""
+    assert ctx is not None
+    t = _tenant(ctx, tenant)
+
+    raw = await asyncio.gather(
+        api(ctx, "/components"),
+        api(ctx, f"/tenant/{safepath(t)}/config-errors"),
+        api(ctx, f"/tenant/{safepath(t)}/nodes"),
+        return_exceptions=True,
+    )
+    components = _or_empty(raw[0], {})
+    config_errors = _or_empty(raw[1])
+    nodes = _or_empty(raw[2])
+
+    node_counts: dict[str, int] = {}
+    for n in nodes:
+        state = n.get("state", "unknown").replace("-", "_")
+        node_counts[state] = node_counts.get(state, 0) + 1
+    node_counts["total"] = len(nodes)
+
+    parts = [
+        f'Assess the health of Zuul tenant "{t}":\n',
+        f"## System Components\n```json\n{json.dumps(components, indent=2)}\n```\n",
+        f"## Config Errors ({len(config_errors)})\n"
+        f"```json\n{json.dumps(config_errors, indent=2)}\n```\n",
+        f"## Node Pool\n```json\n{json.dumps(node_counts, indent=2)}\n```\n",
+        "## Analysis\n"
+        "1. Check component states - are all schedulers/executors running?\n"
+        "2. Review config errors - these block jobs from running\n"
+        "3. Assess node pool - low ready count may cause queue delays\n"
+        f'4. For deeper investigation use `get_status(tenant="{t}")` for live pipeline state',
+    ]
+    return "\n".join(parts)
+
+
+@mcp.prompt()
+async def diagnose_queue_delay(
+    tenant: str = "", pipeline: str = "", ctx: Context | None = None
+) -> str:
+    """Diagnose why jobs are queued or delayed - checks nodes, semaphores, and system state."""
+    assert ctx is not None
+    t = _tenant(ctx, tenant)
+
+    raw = await asyncio.gather(
+        api(ctx, f"/tenant/{safepath(t)}/status"),
+        api(ctx, f"/tenant/{safepath(t)}/nodes"),
+        api(ctx, f"/tenant/{safepath(t)}/semaphores"),
+        api(ctx, "/components"),
+        return_exceptions=True,
+    )
+    status_data = _or_empty(raw[0], {})
+    nodes = _or_empty(raw[1])
+    semaphores = _or_empty(raw[2])
+    components = _or_empty(raw[3], {})
+
+    all_pipelines = status_data.get("pipelines", [])
+    if pipeline:
+        all_pipelines = [p for p in all_pipelines if p.get("name") == pipeline]
+    status_summary = []
+    for p in all_pipelines:
+        item_count = 0
+        for queue in p.get("change_queues", []):
+            for heads_group in queue.get("heads", []):
+                item_count += len(heads_group)
+        if item_count > 0:
+            status_summary.append({"pipeline": p.get("name"), "items": item_count})
+
+    node_counts: dict[str, int] = {}
+    for n in nodes:
+        state = n.get("state", "unknown").replace("-", "_")
+        node_counts[state] = node_counts.get(state, 0) + 1
+    node_counts["total"] = len(nodes)
+
+    active_semaphores = []
+    for s in semaphores:
+        holders = s.get("holders", {})
+        count = holders.get("count", 0) if isinstance(holders, dict) else 0
+        if count > 0:
+            active_semaphores.append(
+                {
+                    "name": s.get("name"),
+                    "max": s.get("max"),
+                    "holders": count,
+                }
+            )
+
+    comp_summary: dict = {}
+    for kind, instances in components.items():
+        comp_summary[kind] = len(instances)
+        paused = [c.get("hostname") for c in instances if c.get("state") == "paused"]
+        if paused:
+            comp_summary[f"{kind}_paused"] = paused
+
+    pipeline_filter = f" (pipeline: {pipeline})" if pipeline else ""
+    parts = [
+        f'Diagnose queue delays in Zuul tenant "{t}"{pipeline_filter}:\n',
+        f"## Pipeline Status\n```json\n{json.dumps(status_summary, indent=2)}\n```\n",
+        f"## Node Pool\n```json\n{json.dumps(node_counts, indent=2)}\n```\n",
+        f"## Semaphores\n```json\n{json.dumps(active_semaphores, indent=2)}\n```\n",
+        f"## System Components\n```json\n{json.dumps(comp_summary, indent=2)}\n```\n",
+        "## Analysis\n"
+        "1. Check node pool: if ready=0 and building>0, nodes are being provisioned\n"
+        "2. Check node pool: if ready=0 and building=0, pool may be exhausted\n"
+        "3. Check semaphores: if max reached, jobs wait for lock release\n"
+        "4. Check components: paused scheduler stops all enqueueing\n"
+        "5. If queue is large but nodes available, check for job dependencies\n"
+        f'6. Use `list_nodes(detail=true, tenant="{t}")` for per-node state details',
+    ]
+    return "\n".join(parts)
