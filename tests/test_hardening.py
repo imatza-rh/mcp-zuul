@@ -10,12 +10,12 @@ from mcp_zuul.classifier import classify_failure
 from mcp_zuul.formatters import _compute_chain_summary, fmt_buildset, fmt_status_item
 from mcp_zuul.helpers import (
     AppContext,
-    pick_client,
     api,
     api_delete,
     api_post,
     fetch_log_url,
     parse_zuul_url,
+    pick_client,
     stream_log,
 )
 from mcp_zuul.parsers import parse_playbooks, smart_truncate
