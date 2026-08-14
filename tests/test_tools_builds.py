@@ -1785,9 +1785,7 @@ class TestDiagnoseFetchOutputLog:
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=b"some log output")
         )
-        respx.head(f"{build['log_url']}fetch-output.log").mock(
-            return_value=httpx.Response(200)
-        )
+        respx.head(f"{build['log_url']}fetch-output.log").mock(return_value=httpx.Response(200))
         result = json.loads(await diagnose_build(mock_ctx, "fetch-log-uuid"))
         assert result.get("has_fetch_output_log") is True
 
@@ -1805,9 +1803,7 @@ class TestDiagnoseFetchOutputLog:
         respx.get(f"{build['log_url']}job-output.txt").mock(
             return_value=httpx.Response(200, content=b"some log output")
         )
-        respx.head(f"{build['log_url']}fetch-output.log").mock(
-            return_value=httpx.Response(404)
-        )
+        respx.head(f"{build['log_url']}fetch-output.log").mock(return_value=httpx.Response(404))
         result = json.loads(await diagnose_build(mock_ctx, "no-fetch-log-uuid"))
         assert "has_fetch_output_log" not in result
 
