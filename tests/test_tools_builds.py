@@ -1766,3 +1766,65 @@ class TestDiagnoseAndTest:
         )
         result = json.loads(await diagnose_and_test(mock_ctx, uuid="nolog-uuid"))
         assert "error" in result
+
+
+class TestDiagnoseFetchOutputLog:
+    """Tests for fetch-output.log detection in diagnose_build."""
+
+    @respx.mock
+    async def test_fetch_output_log_detected(self, mock_ctx):
+        """When fetch-output.log exists, diagnose_build includes it in output."""
+        build = make_build(uuid="fetch-log-uuid", result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fetch-log-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"some log output")
+        )
+        respx.head(f"{build['log_url']}fetch-output.log").mock(
+            return_value=httpx.Response(200)
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "fetch-log-uuid"))
+        assert result.get("has_fetch_output_log") is True
+
+    @respx.mock
+    async def test_fetch_output_log_missing(self, mock_ctx):
+        """When fetch-output.log returns 404, field is absent from output."""
+        build = make_build(uuid="no-fetch-log-uuid", result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/no-fetch-log-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"some log output")
+        )
+        respx.head(f"{build['log_url']}fetch-output.log").mock(
+            return_value=httpx.Response(404)
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "no-fetch-log-uuid"))
+        assert "has_fetch_output_log" not in result
+
+    @respx.mock
+    async def test_brief_mode_skips_check(self, mock_ctx):
+        """Brief mode should not make a HEAD request for fetch-output.log."""
+        build = make_build(uuid="brief-uuid", result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/brief-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"some log output")
+        )
+        # No HEAD mock — if brief tries it, respx will raise
+        result = json.loads(await diagnose_build(mock_ctx, "brief-uuid", brief=True))
+        assert "has_fetch_output_log" not in result

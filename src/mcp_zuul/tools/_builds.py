@@ -11,7 +11,17 @@ from mcp.server.mcpserver import Context
 from ..classifier import Classification, classify_failure, determine_failure_phase
 from ..errors import handle_errors
 from ..formatters import fmt_build, fmt_buildset
-from ..helpers import api, app, clean, error, fetch_log_url, safepath, stream_log, strip_ansi
+from ..helpers import (
+    api,
+    app,
+    clean,
+    error,
+    fetch_log_url,
+    pick_client,
+    safepath,
+    stream_log,
+    strip_ansi,
+)
 from ..helpers import tenant as _tenant
 from ..parsers import _BROAD_ERROR_PATTERN, grep_log_context
 from ..server import mcp
@@ -406,10 +416,22 @@ async def diagnose_build(
         except Exception:
             return None, False
 
-    (playbooks, failed_tasks, _json_ok), (log_text, log_truncated) = await asyncio.gather(
-        _fetch_job_output(ctx, log_url),
-        _fetch_log_text(),
-    )
+    async def _check_fetch_output_log() -> bool:
+        try:
+            a = app(ctx)
+            target = log_url.rstrip("/") + "/fetch-output.log"
+            resp = await pick_client(a, target).head(target, follow_redirects=True)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
+    coros: list = [_fetch_job_output(ctx, log_url), _fetch_log_text()]
+    if not brief:
+        coros.append(_check_fetch_output_log())
+    results = await asyncio.gather(*coros)
+    (playbooks, failed_tasks, _json_ok) = results[0]
+    (log_text, log_truncated) = results[1]
+    has_fetch_log = results[2] if len(results) > 2 else False
     log_context = grep_log_context(log_text) if log_text else []
 
     # --- 3. Classify the failure and determine phase ---
@@ -508,6 +530,7 @@ async def diagnose_build(
         "failure_phase": failure_phase,
         "run_phase_passed": run_phase_passed,
         "reflection": reflection,
+        "has_fetch_output_log": has_fetch_log or None,
     }
 
     if classification:

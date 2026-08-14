@@ -170,7 +170,7 @@ _MAX_FETCH_BYTES = 20 * 1024 * 1024  # 20 MB (for JSON log files)
 _STREAM_DEADLINE_SECS = 300  # 5 minutes total streaming deadline
 
 
-def _pick_client(a: AppContext, url: str) -> httpx.AsyncClient:
+def pick_client(a: AppContext, url: str) -> httpx.AsyncClient:
     """Pick the right HTTP client based on log host vs API host."""
     api_host = urlparse(a.config.base_url).hostname
     log_host = urlparse(url).hostname
@@ -196,7 +196,7 @@ async def _stream_response(
     scheme = urlparse(url).scheme
     if scheme not in ("http", "https"):
         raise ValueError(f"Invalid URL scheme: {scheme!r}")
-    http = _pick_client(a, url)
+    http = pick_client(a, url)
 
     async def _fetch() -> tuple[httpx.Response, bool]:
         chunks: list[bytes] = []

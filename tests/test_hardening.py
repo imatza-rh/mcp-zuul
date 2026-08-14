@@ -10,7 +10,7 @@ from mcp_zuul.classifier import classify_failure
 from mcp_zuul.formatters import _compute_chain_summary, fmt_buildset, fmt_status_item
 from mcp_zuul.helpers import (
     AppContext,
-    _pick_client,
+    pick_client,
     api,
     api_delete,
     api_post,
@@ -157,7 +157,7 @@ class TestApiDeleteNonJsonResponse:
             await api_delete(mock_ctx, "/tenant/test-tenant/autohold/ah-1")
 
 
-# -- _pick_client --
+# -- pick_client --
 
 
 class TestPickClient:
@@ -165,14 +165,14 @@ class TestPickClient:
         client = httpx.AsyncClient(base_url="https://zuul.example.com")
         log_client = httpx.AsyncClient()
         ctx = AppContext(client=client, log_client=log_client, config=config)
-        result = _pick_client(ctx, "https://zuul.example.com/logs/build/file.txt")
+        result = pick_client(ctx, "https://zuul.example.com/logs/build/file.txt")
         assert result is client
 
     def test_different_host_returns_log_client(self, config):
         client = httpx.AsyncClient(base_url="https://zuul.example.com")
         log_client = httpx.AsyncClient()
         ctx = AppContext(client=client, log_client=log_client, config=config)
-        result = _pick_client(ctx, "https://logs.external.com/build/file.txt")
+        result = pick_client(ctx, "https://logs.external.com/build/file.txt")
         assert result is log_client
 
 
