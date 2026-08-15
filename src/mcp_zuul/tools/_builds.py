@@ -526,6 +526,13 @@ async def diagnose_build(
             ]
             if matches:
                 out["error_snippet"] = matches[0][:300]
+        # Natural-language summary for direct LLM consumption
+        duration = build.get("duration")
+        dur_str = f" after {duration // 60}m" if duration and duration > 60 else ""
+        job_name = build.get("job_name", "unknown")
+        reason = (classification.reason if classification else "") or ""
+        retry = " (retryable)" if classification and classification.retryable else ""
+        out["summary"] = f"{job_name} {result}{dur_str}: {reason}{retry}".strip()
         return json.dumps(clean(out))
 
     out = {

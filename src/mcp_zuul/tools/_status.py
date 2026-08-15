@@ -176,6 +176,7 @@ async def get_change_status(
         url: Zuul change status URL (alternative to change + tenant)
         brief: Strip to monitoring essentials (~50% smaller). Use for repeated polls.
     """
+    project_hint = ""
     if url:
         parts = parse_zuul_url(url)
         if not parts:
@@ -188,6 +189,15 @@ async def get_change_status(
         tenant = tenant or url_tenant
     if not change:
         raise ValueError("change or url is required")
+    # When the change identifier contains a project path (e.g.,
+    # "ci-framework%2Fci-framework-testproject" from a Zuul status URL),
+    # extract the project for buildset filtering and keep just the change
+    # number for the status API.
+    if "%2F" in change or ("/" in change and not change.startswith("refs/")):
+        decoded = change.replace("%2F", "/")
+        project_hint = decoded
+        # The status API handles project-qualified changes natively
+        # but the buildsets API needs a separate project param.
     # Extract change number from GitHub/GitLab ref patterns so callers can
     # pass "refs/pull/123/head" or "refs/merge-requests/456/head" directly.
     ref_match = re.match(r"refs/(?:pull|merge-requests)/(\d+)/head", change)
@@ -228,10 +238,13 @@ async def get_change_status(
         # the caller a list_buildsets + get_buildset round-trip.
         result: dict[str, Any] = {"change": change, "status": "not_in_pipeline"}
         try:
+            bs_params: dict[str, Any] = {"change": change, "limit": 1}
+            if project_hint:
+                bs_params["project"] = project_hint
             buildsets = await api(
                 ctx,
                 f"/tenant/{safepath(t)}/buildsets",
-                {"change": change, "limit": 1},
+                bs_params,
             )
             if buildsets:
                 bs_uuid = buildsets[0].get("uuid")
