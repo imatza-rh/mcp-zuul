@@ -130,7 +130,6 @@ class TestAutoholdCreate:
         assert result["job"] == "deploy-job"
         assert result["id"] == "42"
 
-
     @respx.mock
     async def test_handles_boolean_response(self, mock_ctx):
         """Zuul autohold API may return bare `true` instead of a JSON object."""
@@ -138,9 +137,7 @@ class TestAutoholdCreate:
             "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
         ).mock(return_value=httpx.Response(200, json=True))
         result = json.loads(
-            await autohold_create(
-                mock_ctx, project="org/repo", job="deploy-job", reason="debug"
-            )
+            await autohold_create(mock_ctx, project="org/repo", job="deploy-job", reason="debug")
         )
         assert result["status"] == "created"
         assert result["job"] == "deploy-job"
@@ -150,9 +147,7 @@ class TestAutoholdCreate:
         route = respx.post(
             "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
         ).mock(return_value=httpx.Response(200, json=True))
-        await autohold_create(
-            mock_ctx, project="org/repo", job="deploy-job", change="12345"
-        )
+        await autohold_create(mock_ctx, project="org/repo", job="deploy-job", change="12345")
         body = json.loads(route.calls[0].request.content)
         assert body["change"] == "12345"
         assert body["job"] == "deploy-job"
@@ -164,9 +159,7 @@ class TestAutoholdCreate:
         route = respx.post(
             "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
         ).mock(return_value=httpx.Response(200, json=True))
-        await autohold_create(
-            mock_ctx, project="org/repo", job="deploy-job", ref="refs/heads/main"
-        )
+        await autohold_create(mock_ctx, project="org/repo", job="deploy-job", ref="refs/heads/main")
         body = json.loads(route.calls[0].request.content)
         assert body["ref_filter"] == "refs/heads/main"
 

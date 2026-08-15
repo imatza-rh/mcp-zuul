@@ -522,10 +522,7 @@ async def diagnose_build(
             out["reflection"] = reflection
         if not failed_tasks and log_context:
             matches = [
-                line["text"]
-                for block in log_context[:2]
-                for line in block
-                if line.get("match")
+                line["text"] for block in log_context[:2] for line in block if line.get("match")
             ]
             if matches:
                 out["error_snippet"] = matches[0][:300]

@@ -975,7 +975,7 @@ class TestParsePlaybooksPhaseField:
                 ],
             },
         ]
-        playbooks, failed_tasks = parse_playbooks(data)
+        _playbooks, failed_tasks = parse_playbooks(data)
         assert len(failed_tasks) == 2
         assert failed_tasks[0]["phase"] == "run"
         assert failed_tasks[1]["phase"] == "post"
