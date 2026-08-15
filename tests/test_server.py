@@ -97,7 +97,7 @@ class TestLifespanReadOnly:
             yield
 
     async def test_read_only_removes_write_tools(self, _env):
-        """ZUUL_READ_ONLY=true (default) removes enqueue/dequeue/autohold tools."""
+        """ZUUL_READ_ONLY=true (default) removes pipeline-affecting tools."""
         from mcp_zuul.server import lifespan, mcp
 
         removed = []
@@ -114,10 +114,11 @@ class TestLifespanReadOnly:
         assert set(removed) >= {
             "enqueue",
             "dequeue",
-            "autohold_create",
-            "autohold_delete",
             "reenqueue_buildset",
         }
+        # autohold_create/delete are management ops, NOT pipeline-affecting
+        assert "autohold_create" not in removed
+        assert "autohold_delete" not in removed
 
     async def test_write_enabled_keeps_write_tools(self):
         """ZUUL_READ_ONLY=false does NOT remove write tools."""
@@ -144,8 +145,6 @@ class TestLifespanReadOnly:
         write_tools = {
             "enqueue",
             "dequeue",
-            "autohold_create",
-            "autohold_delete",
             "reenqueue_buildset",
         }
         assert write_tools.isdisjoint(set(removed))

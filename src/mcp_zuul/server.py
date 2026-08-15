@@ -108,13 +108,13 @@ async def lifespan(server: MCPServer):
                 )
                 await asyncio.sleep(delay)
 
-        # Remove write tools when in read-only mode (default)
+        # Remove write tools when in read-only mode (default).
+        # autohold_create and autohold_delete are management operations
+        # (not pipeline-affecting) and remain available in read-only mode.
         _WRITE_TOOLS = {
             "enqueue",
             "promote",
             "dequeue",
-            "autohold_create",
-            "autohold_delete",
             "reenqueue_buildset",
         }
         if config.read_only:

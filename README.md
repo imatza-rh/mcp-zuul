@@ -91,7 +91,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 **Streamable HTTP transport** — Run as a persistent HTTP server with `MCP_TRANSPORT=streamable-http` for remote/shared deployment. Supports stdio (default), SSE, and streamable-http.
 
-**Write operations** — Enqueue/dequeue/promote changes, re-enqueue buildsets, and manage autoholds. Disabled by default (`ZUUL_READ_ONLY=true`), write tools are removed from the server entirely so LLMs don't even see them until explicitly enabled.
+**Write operations** — Enqueue/dequeue/promote changes and re-enqueue buildsets. Pipeline-affecting tools are disabled by default (`ZUUL_READ_ONLY=true`) and removed from the server entirely so LLMs don't even see them. Autohold management (create/delete) is always available since it doesn't affect running pipelines.
 
 **LogJuicer integration** — `get_build_anomalies` uses ML-based log analysis to find unusual lines by comparing failed logs against successful baselines. Optional — requires `LOGJUICER_URL`.
 
@@ -165,7 +165,7 @@ See [Setup](#setup) for full configuration options including Kerberos and multi-
 
 ### Write Operations
 
-Disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enable. Requires auth token or Kerberos.
+Pipeline-affecting operations — disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enable. Requires auth token or Kerberos. Autohold management (create/delete) is always available since it doesn't affect running pipelines.
 
 | Tool | What it does |
 |------|-------------|
@@ -173,8 +173,8 @@ Disabled by default (`ZUUL_READ_ONLY=true`). Set `ZUUL_READ_ONLY=false` to enabl
 | `promote` | Promote changes to the top of a pipeline queue. Use for urgent fixes when gate has a long queue. |
 | `reenqueue_buildset` | Re-enqueue a buildset — reads project/pipeline/ref from a previous buildset and enqueues it again. |
 | `dequeue` | Remove a change or ref from a pipeline. **Destructive.** |
-| `autohold_create` | Create an autohold request — hold nodes after failure for debugging. |
-| `autohold_delete` | Delete an autohold request. **Destructive.** |
+| `autohold_create` | Create an autohold request — hold nodes after failure for debugging. Not gated by `ZUUL_READ_ONLY`. |
+| `autohold_delete` | Delete an autohold request. Not gated by `ZUUL_READ_ONLY`. |
 
 ### Test Results & Log Analysis
 
@@ -252,7 +252,7 @@ claude mcp add zuul \
 | `MCP_PORT` | No | `8000` | HTTP server port (non-stdio transports) |
 | `ZUUL_ENABLED_TOOLS` | No | — | Comma-separated list of tools to enable (disables all others) |
 | `ZUUL_DISABLED_TOOLS` | No | — | Comma-separated list of tools to disable (mutually exclusive with above) |
-| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable write operations (enqueue, promote, dequeue, reenqueue_buildset, autohold) |
+| `ZUUL_READ_ONLY` | No | `true` | Set to `false` to enable pipeline-affecting write operations (enqueue, promote, dequeue, reenqueue_buildset). Autohold management (create/delete) is always available. |
 | `LOGJUICER_URL` | No | — | LogJuicer base URL for ML-based log anomaly detection |
 
 ### Token authentication
