@@ -175,6 +175,50 @@ class Classification:
     retryable: bool  # Whether automated retry is safe
 
 
+def _classify_tasks(
+    tasks: list[dict[str, Any]],
+    log_context: list[Any] | None = None,
+) -> Classification:
+    """Classify from task error text and log context.
+
+    Checks both infra and real-failure pattern lists. REAL_FAILURE takes
+    precedence when both match. Returns UNKNOWN if no pattern matches.
+    """
+    all_text = _collect_error_text(tasks)
+    if log_context:
+        all_text += " " + _collect_log_text(log_context)
+    if not all_text:
+        return Classification(category="UNKNOWN", reason="No error text", confidence="low", retryable=False)
+
+    infra_reason: str | None = None
+    for pattern, reason in _INFRA_PATTERNS:
+        if pattern.search(all_text):
+            infra_reason = reason
+            break
+
+    real_reason: str | None = None
+    for pattern, reason in _REAL_FAILURE_PATTERNS:
+        if pattern.search(all_text):
+            real_reason = reason
+            break
+
+    if real_reason:
+        return Classification(
+            category="REAL_FAILURE",
+            reason=real_reason,
+            confidence="high",
+            retryable=False,
+        )
+    if infra_reason:
+        return Classification(
+            category="INFRA_FLAKE",
+            reason=infra_reason,
+            confidence="high",
+            retryable=True,
+        )
+    return Classification(category="UNKNOWN", reason="No pattern matched", confidence="low", retryable=False)
+
+
 def classify_failure(
     result: str,
     failed_tasks: list[dict[str, Any]],
@@ -208,44 +252,41 @@ def classify_failure(
                 confidence="high",
                 retryable=True,
             )
-        # Run phase also failed — classify the run-phase errors below
-
-    # Match failed task error text against patterns
-    all_text = _collect_error_text(failed_tasks)
-    if log_context:
-        all_text += " " + _collect_log_text(log_context)
-
-    if all_text:
-        # Check both pattern lists, then decide priority.
-        # Real failure patterns are more specific (code/config bugs) and take
-        # precedence over infra patterns when both match — retrying a real bug
-        # wastes CI resources, so the conservative call is REAL_FAILURE.
-        infra_reason: str | None = None
-        for pattern, reason in _INFRA_PATTERNS:
-            if pattern.search(all_text):
-                infra_reason = reason
-                break
-
-        real_reason: str | None = None
-        for pattern, reason in _REAL_FAILURE_PATTERNS:
-            if pattern.search(all_text):
-                real_reason = reason
-                break
-
-        if real_reason:
+        # Run phase also failed — prioritize run-phase errors so post-run
+        # cleanup noise (e.g. SSH DNS errors during log collection) doesn't
+        # mask the real failure.
+        run_tasks = [t for t in failed_tasks if t.get("phase") == "run"]
+        if run_tasks:
+            run_cls = _classify_tasks(run_tasks, log_context)
+            if run_cls.category != "UNKNOWN":
+                return run_cls
+            # Run-phase tasks exist but no pattern matched — use the
+            # run-phase fallback (task name + msg) instead of falling
+            # through to all-task classification where post-run infra
+            # errors would dominate.
+            first = run_tasks[0]
+            task_name = first.get("task", "unknown task")
+            msg = (first.get("msg") or "")[:100]
+            inner_list = first.get("inner_failures") or []
+            if inner_list:
+                inner = inner_list[-1]
+                inner_task = inner.get("task", "")
+                inner_msg = (inner.get("msg") or inner.get("raw") or "")[:100]
+                reason = f"Inner playbook: '{inner_task}' failed: {inner_msg}".rstrip()
+            else:
+                reason = f"Task '{task_name}' failed: {msg}".rstrip()
             return Classification(
                 category="REAL_FAILURE",
-                reason=real_reason,
-                confidence="high",
+                reason=reason,
+                confidence="medium",
                 retryable=False,
             )
-        if infra_reason:
-            return Classification(
-                category="INFRA_FLAKE",
-                reason=infra_reason,
-                confidence="high",
-                retryable=True,
-            )
+        # No run-phase tasks found — fall through to classify all tasks
+
+    # Match failed task error text against patterns
+    cls = _classify_tasks(failed_tasks, log_context)
+    if cls.category != "UNKNOWN":
+        return cls
 
     # Failed tasks exist but no pattern matched
     if failed_tasks:

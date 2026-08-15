@@ -125,6 +125,105 @@ class TestClassifyFailure:
         result = classify_failure("POST_FAILURE", tasks, playbooks)
         assert result.category == "REAL_FAILURE"
 
+    def test_post_failure_run_error_not_masked_by_postrun_dns(self):
+        """POST_FAILURE: run-phase oc login error should NOT be masked by post-run SSH DNS error.
+
+        Real-world scenario: build a677846 had oc login failing at validation.sh:89
+        (run phase), but post-run SSH error "Name or service not known" matched
+        INFRA_FLAKE and overrode the real failure.
+        """
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            # Run-phase task: oc login failed (code error, not infra)
+            {
+                "phase": "run",
+                "task": "Run validation script",
+                "msg": "non-zero return code",
+                "stderr": "error: failed to login to OpenShift: oc login failed at validation.sh:89",
+            },
+            # Post-run task: SSH DNS error during log collection
+            {
+                "phase": "post",
+                "task": "Collect logs from controller",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        # Should classify based on run-phase error, NOT as INFRA_FLAKE from DNS
+        assert result.category != "INFRA_FLAKE", (
+            f"POST_FAILURE should prioritize run-phase errors over post-run DNS: {result.reason}"
+        )
+        assert result.category == "REAL_FAILURE"
+
+    def test_post_failure_only_postrun_failures_still_classifies(self):
+        """POST_FAILURE with ONLY post-run failures should classify normally."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        # All tasks are post-run (no run-phase tasks despite run playbook failing)
+        tasks = [
+            {
+                "phase": "post",
+                "task": "Collect logs",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        # No run-phase tasks to prioritize → falls through to all-task classification
+        assert result.category == "INFRA_FLAKE"
+        assert "DNS" in result.reason
+
+    def test_non_post_failure_dns_error_unchanged(self):
+        """FAILURE (not POST_FAILURE) with DNS error should remain INFRA_FLAKE (regression test)."""
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Deploy",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+        assert "DNS" in result.reason
+
+    def test_non_post_failure_code_error_unchanged(self):
+        """FAILURE with code error should remain REAL_FAILURE (regression test)."""
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Deploy",
+                "msg": "AnsibleUndefinedVariable: 'cifmw_foo' is undefined",
+            },
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "REAL_FAILURE"
+
+    def test_post_failure_run_phase_with_phase_field(self):
+        """POST_FAILURE with phase-tagged tasks uses run-phase classification path."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Deploy",
+                "msg": "AnsibleUndefinedVariable: x",
+            },
+            {
+                "phase": "post",
+                "task": "Upload logs",
+                "msg": "Connection refused to log server",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        assert result.category == "REAL_FAILURE"
+        assert "Undefined" in result.reason
+
     def test_rpm_exception_is_infra_flake(self):
         """RPM database errors are transient infra issues (e.g. stale package state after Beaker)."""
         tasks = [
@@ -717,3 +816,192 @@ class TestChainSummaryAllDecided:
 
         summary = _compute_chain_summary([])
         assert summary["all_decided"] is False
+
+
+class TestPostFailurePhaseAwareClassification:
+    """Benchmark: POST_FAILURE phase-aware classification accuracy.
+
+    Verifies that POST_FAILURE builds with mixed run/post errors correctly
+    prioritize run-phase errors over post-run cleanup noise.
+    """
+
+    def test_post_failure_run_code_error_plus_postrun_dns(self):
+        """POST_FAILURE: run-phase code error + post-run DNS → NOT INFRA_FLAKE."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Run validation",
+                "msg": "non-zero return code",
+                "stderr": "oc login failed at validation.sh:89",
+            },
+            {
+                "phase": "post",
+                "task": "Collect logs",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        assert result.category == "REAL_FAILURE"
+
+    def test_post_failure_only_postrun(self):
+        """POST_FAILURE: only post-run failure → INFRA_FLAKE (DNS)."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            {
+                "phase": "post",
+                "task": "Upload logs",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        assert result.category == "INFRA_FLAKE"
+
+    def test_failure_dns_error_unchanged(self):
+        """FAILURE (not POST_FAILURE) with DNS error → INFRA_FLAKE (unchanged)."""
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Deploy",
+                "msg": "Could not resolve host: registry.example.com",
+            },
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "INFRA_FLAKE"
+
+    def test_failure_code_error_unchanged(self):
+        """FAILURE with code error → REAL_FAILURE (unchanged)."""
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Deploy",
+                "msg": "AnsibleUndefinedVariable: 'cifmw_foo' is undefined",
+            },
+        ]
+        result = classify_failure("FAILURE", tasks, [])
+        assert result.category == "REAL_FAILURE"
+
+    def test_post_failure_run_infra_plus_postrun_dns(self):
+        """POST_FAILURE: run-phase infra error + post-run DNS → INFRA_FLAKE from run."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Wait for cluster",
+                "msg": "Connection timed out waiting for cluster",
+            },
+            {
+                "phase": "post",
+                "task": "Collect logs",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        assert result.category == "INFRA_FLAKE"
+        assert "timed out" in result.reason.lower()
+
+    def test_post_failure_run_unknown_uses_run_fallback(self):
+        """POST_FAILURE: run-phase has unknown error → uses run-phase fallback, not post-run DNS."""
+        playbooks = [
+            {"phase": "run", "failed": True},
+            {"phase": "post", "failed": True},
+        ]
+        tasks = [
+            {
+                "phase": "run",
+                "task": "Custom check",
+                "msg": "some completely novel error",
+            },
+            {
+                "phase": "post",
+                "task": "Collect logs",
+                "msg": "ssh: Could not resolve hostname controller-0: Name or service not known",
+            },
+        ]
+        result = classify_failure("POST_FAILURE", tasks, playbooks)
+        # Run-phase tasks always take priority over post-run noise:
+        # run-phase unknown → run-phase fallback (task name + msg) → REAL_FAILURE
+        assert result.category == "REAL_FAILURE"
+        assert "Custom check" in result.reason
+        assert "novel error" in result.reason
+
+
+class TestParsePlaybooksPhaseField:
+    """Verify that parse_playbooks includes phase field on failed tasks."""
+
+    def test_failed_task_includes_phase(self):
+        from mcp_zuul.parsers import parse_playbooks
+
+        data = [
+            {
+                "phase": "run",
+                "playbook": "run.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Deploy"},
+                                "hosts": {"ctrl": {"failed": True, "msg": "error"}},
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "phase": "post",
+                "playbook": "post.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "Post"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Collect logs"},
+                                "hosts": {"ctrl": {"failed": True, "msg": "ssh error"}},
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+        playbooks, failed_tasks = parse_playbooks(data)
+        assert len(failed_tasks) == 2
+        assert failed_tasks[0]["phase"] == "run"
+        assert failed_tasks[1]["phase"] == "post"
+
+    def test_phase_field_empty_string_cleaned(self):
+        """Empty phase string should be cleaned away by clean()."""
+        from mcp_zuul.parsers import parse_playbooks
+
+        data = [
+            {
+                "phase": "",
+                "playbook": "x.yaml",
+                "stats": {"ctrl": {"failures": 1, "ok": 0}},
+                "plays": [
+                    {
+                        "play": {"name": "X"},
+                        "tasks": [
+                            {
+                                "task": {"name": "T"},
+                                "hosts": {"ctrl": {"failed": True, "msg": "err"}},
+                            }
+                        ],
+                    }
+                ],
+            },
+        ]
+        _playbooks, failed_tasks = parse_playbooks(data)
+        # clean() strips None values; phase="" → None → stripped
+        assert "phase" not in failed_tasks[0]

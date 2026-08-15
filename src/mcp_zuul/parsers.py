@@ -269,6 +269,7 @@ def parse_playbooks(data: list) -> tuple[list[dict], list[dict]]:
                                 rescued_count = parse_rescued_count(inner_recap)
                             ft = clean(
                                 {
+                                    "phase": phase or None,
                                     "task": task_name,
                                     "host": host,
                                     "msg": msg,
