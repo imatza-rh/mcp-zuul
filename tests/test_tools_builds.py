@@ -1824,3 +1824,82 @@ class TestDiagnoseFetchOutputLog:
         # No HEAD mock — if brief tries it, respx will raise
         result = json.loads(await diagnose_build(mock_ctx, "brief-uuid", brief=True))
         assert "has_fetch_output_log" not in result
+
+
+class TestBriefModeRescuedCount:
+    """Brief mode should include rescued_count when present."""
+
+    @respx.mock
+    async def test_brief_mode_includes_rescued_count(self, mock_ctx):
+        """Brief mode root_cause should include rescued_count and note."""
+        build = make_build(result="FAILURE")
+        inner_ansible = (
+            "TASK [rhsm : Check status] ****\n"
+            'fatal: [localhost]: FAILED! => {"msg": "not registered"}\n'
+            "TASK [net : Deactivate default] ****\n"
+            'fatal: [localhost]: FAILED! => {"msg": "network error"}\n'
+            "TASK [net : Set bridge IP] ****\n"
+            'fatal: [localhost]: FAILED! => {"msg": "bridge conflict"}\n'
+            "TASK [libvirt : Wait for SSH] ****\n"
+            'fatal: [localhost]: FAILED! => {"msg": "SSH timeout after 600s"}\n'
+            "PLAY RECAP *******\n"
+            "localhost : ok=50 changed=20 unreachable=0 failed=1 skipped=10 rescued=3 ignored=0\n"
+        )
+        job_output = [
+            {
+                "phase": "run",
+                "playbook": "run.yml",
+                "plays": [
+                    {
+                        "play": {"name": "Run"},
+                        "tasks": [
+                            {
+                                "task": {"name": "Run ansible in container"},
+                                "hosts": {
+                                    "controller": {
+                                        "failed": True,
+                                        "rc": 2,
+                                        "msg": "non-zero return code",
+                                        "stdout": inner_ansible,
+                                        "stderr": "",
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "stats": {"controller": {"failures": 1}},
+            }
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"log line")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        root = result["root_cause"]
+        assert root["rescued_count"] == 3
+        assert "3 of 4 inner failures were rescued" in root["inner_failures_note"]
+
+    @respx.mock
+    async def test_brief_mode_no_rescued_count_when_zero(self, mock_ctx):
+        """Brief mode root_cause should not include rescued fields when count is 0."""
+        build = make_build(result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"log line")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        root = result["root_cause"]
+        assert "rescued_count" not in root
+        assert "inner_failures_note" not in root

@@ -498,12 +498,21 @@ async def diagnose_build(
             # (from the earliest phase — run before post in parse_playbooks order).
             # When single phase, use the last task (play-killer in block/rescue).
             root = failed_tasks[0] if failure_phase == "mixed" else failed_tasks[-1]
+            rescued = root.get("rescued_count") or 0
+            inner_count = len(root.get("inner_failures") or [])
             out["root_cause"] = clean(
                 {
                     "task": root.get("task"),
                     "host": root.get("host"),
                     "msg": (root.get("msg") or "")[:500] or None,
                     "rc": root.get("rc"),
+                    "rescued_count": rescued or None,
+                    "inner_failures_note": (
+                        f"{rescued} of {inner_count} inner failures were rescued "
+                        "(handled by block/rescue)"
+                    )
+                    if rescued > 0
+                    else None,
                 }
             )
         if reflection:
@@ -722,12 +731,21 @@ async def diagnose_and_test(
         diag["retryable"] = classification.retryable
     if brief and failed_tasks:
         root = failed_tasks[0] if failure_phase == "mixed" else failed_tasks[-1]
+        rescued = root.get("rescued_count") or 0
+        inner_count = len(root.get("inner_failures") or [])
         diag["root_cause"] = clean(
             {
                 "task": root.get("task"),
                 "host": root.get("host"),
                 "msg": (root.get("msg") or "")[:500] or None,
                 "rc": root.get("rc"),
+                "rescued_count": rescued or None,
+                "inner_failures_note": (
+                    f"{rescued} of {inner_count} inner failures were rescued "
+                    "(handled by block/rescue)"
+                )
+                if rescued > 0
+                else None,
             }
         )
     elif not brief:
