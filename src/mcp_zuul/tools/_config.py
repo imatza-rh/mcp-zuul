@@ -328,14 +328,29 @@ async def list_semaphores(
 async def list_autoholds(
     ctx: Context,
     tenant: str = "",
+    project: str = "",
+    job: str = "",
 ) -> str:
     """List autohold requests — nodes held after failure for debugging.
 
+    Check when jobs are stuck waiting for nodes or to find your autohold.
+
     Args:
         tenant: Tenant (default from env)
+        project: Project filter (substring match). When set, uses the
+            project-scoped API endpoint for server-side filtering.
+        job: Job name filter (substring match, client-side)
     """
     t = _tenant(ctx, tenant)
-    data = await api(ctx, f"/tenant/{safepath(t)}/autohold")
+    if project and "/" in project:
+        path = f"/tenant/{safepath(t)}/project/{safepath(project)}/autohold"
+    else:
+        path = f"/tenant/{safepath(t)}/autohold"
+    data = await api(ctx, path)
+    if project and "/" not in project:
+        data = [a for a in data if project in (a.get("project") or "")]
+    if job:
+        data = [a for a in data if job in (a.get("job") or "")]
     result = [
         clean(
             {
@@ -344,7 +359,6 @@ async def list_autoholds(
                 "job": a.get("job"),
                 "ref_filter": a.get("ref_filter"),
                 "reason": (a.get("reason") or "")[:200] or None,
-                "count": a.get("count"),
                 "current_count": a.get("current_count"),
                 "max_count": a.get("max_count"),
                 "node_expiration": a.get("node_expiration"),

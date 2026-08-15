@@ -257,17 +257,20 @@ async def get_build(
     uuid: str = "",
     tenant: str = "",
     url: str = "",
+    brief: bool = False,
 ) -> str:
-    """Get full build details — log URL, nodeset, artifacts, timing, error detail.
+    """Get build details — log URL, nodeset, artifacts, timing, error detail.
 
     Args:
         uuid: Build UUID (full or prefix from list_builds)
         tenant: Tenant (default from env)
         url: Zuul build URL (alternative to uuid + tenant)
+        brief: Compact response with just uuid, job, result, pipeline,
+            duration (default false)
     """
     uuid, t = _resolve(ctx, uuid, tenant, url, "build")
     data = await api(ctx, f"/tenant/{safepath(t)}/build/{safepath(uuid)}")
-    return json.dumps(fmt_build(data, brief=False))
+    return json.dumps(fmt_build(data, brief=brief))
 
 
 @mcp.tool(title="Build Failure Analysis", annotations=_READ_ONLY)
@@ -517,6 +520,15 @@ async def diagnose_build(
             )
         if reflection:
             out["reflection"] = reflection
+        if not failed_tasks and log_context:
+            matches = [
+                line["text"]
+                for block in log_context[:2]
+                for line in block
+                if line.get("match")
+            ]
+            if matches:
+                out["error_snippet"] = matches[0][:300]
         return json.dumps(clean(out))
 
     out = {

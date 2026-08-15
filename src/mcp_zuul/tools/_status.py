@@ -307,9 +307,7 @@ async def get_change_status(
                         # this so consumers don't blindly trust the result.
                         result["chain_summary"]["sql_lag"] = True
                         result["status_hint"] = (
-                            "IN_PROGRESS may be stale - the SQL API updates "
-                            "only after post-run completes. Builds showing "
-                            "IN_PROGRESS may have already failed. "
+                            "IN_PROGRESS may be stale (SQL lags post-run). "
                             "Check report_url for authoritative status."
                         )
         except httpx.HTTPStatusError as exc:

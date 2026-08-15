@@ -13,17 +13,19 @@ from .helpers import error, is_ssl_error
 log = logging.getLogger("zuul-mcp")
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_CSS_BLOCK_RE = re.compile(r"[\w#.\-]+\s*\{[^}]*\}")
 
 
 def _clean_body(text: str, limit: int = 200) -> str:
     """Extract a clean error message from an HTTP response body.
 
-    Strips HTML tags and collapses whitespace so error messages
-    are useful for LLM consumers instead of containing raw markup.
+    Strips HTML tags, CSS blocks, and collapses whitespace so error
+    messages are useful for LLM consumers.
     """
     if not text:
         return ""
     cleaned = _HTML_TAG_RE.sub(" ", text)
+    cleaned = _CSS_BLOCK_RE.sub("", cleaned)
     cleaned = " ".join(cleaned.split())
     return cleaned[:limit].strip()
 
