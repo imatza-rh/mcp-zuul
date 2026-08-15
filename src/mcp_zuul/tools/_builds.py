@@ -247,7 +247,24 @@ async def list_builds(
 
     has_more = len(data) > limit or (tf.active and api_returned_full)
     builds = [fmt_build(b) for b in data[:limit]]
-    return json.dumps({"builds": builds, "count": len(builds), "has_more": has_more})
+    out: dict[str, Any] = {"builds": builds, "count": len(builds), "has_more": has_more}
+    # Progressive summary: result counts + latest failure UUID.
+    # Helps LLMs decide whether to drill deeper without parsing
+    # individual builds.
+    if builds:
+        counts: dict[str, int] = {}
+        latest_failure_uuid = None
+        for b in builds:
+            r = b.get("result", "UNKNOWN")
+            counts[r] = counts.get(r, 0) + 1
+            if not latest_failure_uuid and r in (
+                "FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE",
+            ):
+                latest_failure_uuid = b.get("uuid")
+        out["result_counts"] = counts
+        if latest_failure_uuid:
+            out["latest_failure_uuid"] = latest_failure_uuid
+    return json.dumps(out)
 
 
 @mcp.tool(title="Build Details", annotations=_READ_ONLY)
