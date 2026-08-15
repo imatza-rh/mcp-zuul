@@ -47,6 +47,10 @@ _FILE_PATH_NOISE = re.compile(
     r"|\.com/|\.io/|\.org/|\.net/"  # URL-derived fragments
 )
 
+_DIAGNOSABLE = frozenset(
+    {"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"}
+)
+
 
 _CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
 
@@ -548,8 +552,12 @@ async def diagnose_build(
         dur_str = f" after {duration // 60}m" if duration and duration > 60 else ""
         job_name = build.get("job_name", "unknown")
         reason = (classification.reason if classification else "") or ""
-        retry = " (retryable)" if classification and classification.retryable else ""
-        out["summary"] = f"{job_name} {result}{dur_str}: {reason}{retry}".strip()
+        parts = [f"{job_name} {result}{dur_str}"]
+        if reason:
+            parts.append(reason)
+        if classification and classification.retryable:
+            parts.append("(retryable)")
+        out["summary"] = " — ".join(parts)
         return json.dumps(clean(out))
 
     out = {
@@ -956,17 +964,11 @@ async def investigate_change(
             return [a for a in data if job in (a.get("job") or "")]
         return data
 
-    _DIAGNOSABLE = frozenset(
-        {"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"}
+    results = await asyncio.gather(
+        _fetch_builds(), _fetch_autoholds(), return_exceptions=True
     )
-
-    try:
-        builds_raw, autoholds_raw = await asyncio.gather(
-            _fetch_builds(), _fetch_autoholds()
-        )
-    except Exception:
-        builds_raw = await _fetch_builds()
-        autoholds_raw = []
+    builds_raw: list = results[0] if not isinstance(results[0], BaseException) else []
+    autoholds_raw: list = results[1] if not isinstance(results[1], BaseException) else []
 
     builds = [fmt_build(b) for b in builds_raw]
 

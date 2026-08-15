@@ -185,19 +185,25 @@ async def get_change_status(
         if url_kind != "change":
             raise ValueError(f"Expected change URL, got {url_kind}")
         _check_url_host(ctx, url)
-        change = url_id.split(",")[0] if "," in url_id else url_id
+        # Zuul status URLs have two comma formats:
+        # - "PROJECT,CHANGE" for GitLab MRs (first part has /)
+        # - "CHANGE,SHA" for patchset refs (first part is a number)
+        # For PROJECT,CHANGE: keep full string for status API, extract
+        # project for buildsets fallback.
+        # For CHANGE,SHA: strip SHA, use just the change number.
+        if "," in url_id:
+            parts_csv = url_id.split(",", 1)
+            raw_first = parts_csv[0].replace("%2F", "/")
+            if "/" in raw_first:
+                project_hint = raw_first
+                change = url_id  # Full "PROJECT,CHANGE" for status API
+            else:
+                change = parts_csv[0]  # Just the change number, drop SHA
+        else:
+            change = url_id
         tenant = tenant or url_tenant
     if not change:
         raise ValueError("change or url is required")
-    # When the change identifier contains a project path (e.g.,
-    # "ci-framework%2Fci-framework-testproject" from a Zuul status URL),
-    # extract the project for buildset filtering and keep just the change
-    # number for the status API.
-    if "%2F" in change or ("/" in change and not change.startswith("refs/")):
-        decoded = change.replace("%2F", "/")
-        project_hint = decoded
-        # The status API handles project-qualified changes natively
-        # but the buildsets API needs a separate project param.
     # Extract change number from GitHub/GitLab ref patterns so callers can
     # pass "refs/pull/123/head" or "refs/merge-requests/456/head" directly.
     ref_match = re.match(r"refs/(?:pull|merge-requests)/(\d+)/head", change)
@@ -238,7 +244,11 @@ async def get_change_status(
         # the caller a list_buildsets + get_buildset round-trip.
         result: dict[str, Any] = {"change": change, "status": "not_in_pipeline"}
         try:
-            bs_params: dict[str, Any] = {"change": change, "limit": 1}
+            # For the buildsets API, use the change number only (not
+            # the project-qualified "PROJECT,CHANGE" format that the
+            # status API accepts).
+            bs_change = change.split(",")[-1] if "," in change else change
+            bs_params: dict[str, Any] = {"change": bs_change, "limit": 1}
             if project_hint:
                 bs_params["project"] = project_hint
             buildsets = await api(
