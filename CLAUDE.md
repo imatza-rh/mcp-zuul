@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-MCP server for Zuul CI — 47 tools (39 read-only + 6 write + 1 LogJuicer + 1 console stream), 5 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
+MCP server for Zuul CI — 48 tools (40 read-only + 6 write + 1 LogJuicer + 1 console stream), 5 prompts, and 3 resources exposing builds, logs, pipelines, jobs, infrastructure, and live status via the Model Context Protocol. Published on PyPI as `mcp-zuul`. Supports stdio, SSE, and streamable-http transports.
 
 ## Commands
 

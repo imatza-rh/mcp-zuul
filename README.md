@@ -26,7 +26,7 @@ Debug build failures by asking questions, not clicking through web UIs. An [MCP]
 claude mcp add zuul -e ZUUL_URL=https://your-zuul.example.com -- uvx mcp-zuul
 ```
 
-47 tools, 5 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
+48 tools, 5 prompts, 3 resources — covering builds, logs, pipelines, jobs, infrastructure, and live status. Works with Claude Code, Claude Desktop, Cursor, Codex, Windsurf, and any MCP-compatible client.
 
 ## Why mcp-zuul?
 
@@ -499,7 +499,7 @@ MCP Client (Claude Code, Cursor, etc.)
 │  auth.py         Kerberos/SPNEGO + OIDC          │
 │  errors.py       @handle_errors decorator        │
 ├──────────────────────────────────────────────────┤
-│  tools/          47 tools across 8 submodules    │
+│  tools/          48 tools across 8 submodules    │
 │  prompts.py      5 prompt templates              │
 │  resources.py    3 zuul:// resources             │
 ├──────────────────────────────────────────────────┤

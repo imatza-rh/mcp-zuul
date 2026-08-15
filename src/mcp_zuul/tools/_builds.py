@@ -893,3 +893,110 @@ async def get_buildset(
     uuid, t = _resolve(ctx, uuid, tenant, url, "buildset")
     data = await api(ctx, f"/tenant/{safepath(t)}/buildset/{safepath(uuid)}")
     return json.dumps(fmt_buildset(data, brief=brief))
+
+
+@mcp.tool(title="Investigate Change", annotations=_READ_ONLY)
+@handle_errors
+async def investigate_change(
+    ctx: Context,
+    change: str,
+    job: str = "",
+    tenant: str = "",
+) -> str:
+    """One-call investigation — builds + diagnosis + autohold status for a change.
+
+    Combines list_builds, diagnose_build(brief), and autohold lookup into
+    a single response.  Designed for the common "what's happening with
+    this change?" workflow — replaces 3-4 separate tool calls.
+
+    Args:
+        change: Change number (e.g. "2601")
+        job: Job name filter (substring). When set, only builds matching
+            this job are included and autoholds are filtered.
+        tenant: Tenant (default from env)
+    """
+    if not change:
+        raise ValueError("change is required")
+    t = _tenant(ctx, tenant)
+
+    # --- Parallel: builds + autoholds ---
+    async def _fetch_builds() -> list:
+        params: dict[str, Any] = {"change": change, "limit": 10}
+        if job:
+            params["job_name"] = job
+        return await api(ctx, f"/tenant/{safepath(t)}/builds", params)
+
+    async def _fetch_autoholds() -> list:
+        data = await api(ctx, f"/tenant/{safepath(t)}/autohold")
+        if job:
+            return [a for a in data if job in (a.get("job") or "")]
+        return data
+
+    _DIAGNOSABLE = frozenset(
+        {"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"}
+    )
+
+    try:
+        builds_raw, autoholds_raw = await asyncio.gather(
+            _fetch_builds(), _fetch_autoholds()
+        )
+    except Exception:
+        builds_raw = await _fetch_builds()
+        autoholds_raw = []
+
+    builds = [fmt_build(b) for b in builds_raw]
+
+    # --- Result summary ---
+    result_counts: dict[str, int] = {}
+    for b in builds:
+        r = b.get("result", "UNKNOWN")
+        result_counts[r] = result_counts.get(r, 0) + 1
+
+    # --- Diagnose latest failure ---
+    diagnosis: dict | None = None
+    latest_failure = next(
+        (b for b in builds_raw if b.get("result") in _DIAGNOSABLE),
+        None,
+    )
+    if latest_failure and latest_failure.get("uuid"):
+        try:
+            diag_json = await diagnose_build(
+                ctx, uuid=latest_failure["uuid"], tenant=tenant, brief=True
+            )
+            diagnosis = json.loads(diag_json)
+        except Exception as exc:
+            diagnosis = {"error": f"diagnosis failed: {type(exc).__name__}"}
+
+    # --- Format autoholds ---
+    relevant_autoholds = []
+    for a in autoholds_raw:
+        relevant_autoholds.append(
+            clean(
+                {
+                    "id": a.get("id"),
+                    "project": a.get("project"),
+                    "job": a.get("job"),
+                    "current_count": a.get("current_count"),
+                    "max_count": a.get("max_count"),
+                    "node_expiration": a.get("node_expiration"),
+                    "expired": a.get("expired"),
+                }
+            )
+        )
+
+    # --- Build summary line ---
+    total = len(builds)
+    parts = [f"{v} {k}" for k, v in sorted(result_counts.items())]
+    summary = f"{total} builds: {', '.join(parts)}" if parts else "no builds found"
+
+    out: dict = {
+        "change": change,
+        "summary": summary,
+        "result_counts": result_counts,
+        "builds": builds,
+    }
+    if diagnosis:
+        out["latest_failure_diagnosis"] = diagnosis
+    if relevant_autoholds:
+        out["autoholds"] = relevant_autoholds
+    return json.dumps(clean(out))
