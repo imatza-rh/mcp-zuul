@@ -149,10 +149,15 @@ async def _api_mutate(ctx: Context, method: str, path: str, body: dict | None = 
     if not resp.text:
         return {}
     try:
-        return resp.json()
+        data = resp.json()
     except json.JSONDecodeError as exc:
         ct = resp.headers.get("content-type", "")
         raise ValueError(f"API returned non-JSON response (content-type: {ct})") from exc
+    # Zuul write endpoints may return a bare boolean or integer.
+    # Normalize to dict so callers can safely use **result.
+    if not isinstance(data, dict):
+        return {"raw_response": data}
+    return data
 
 
 async def api_post(ctx: Context, path: str, body: dict) -> Any:

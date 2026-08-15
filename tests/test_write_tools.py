@@ -131,6 +131,46 @@ class TestAutoholdCreate:
         assert result["id"] == "42"
 
 
+    @respx.mock
+    async def test_handles_boolean_response(self, mock_ctx):
+        """Zuul autohold API may return bare `true` instead of a JSON object."""
+        respx.post(
+            "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
+        ).mock(return_value=httpx.Response(200, json=True))
+        result = json.loads(
+            await autohold_create(
+                mock_ctx, project="org/repo", job="deploy-job", reason="debug"
+            )
+        )
+        assert result["status"] == "created"
+        assert result["job"] == "deploy-job"
+
+    @respx.mock
+    async def test_sends_change_filter(self, mock_ctx):
+        route = respx.post(
+            "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
+        ).mock(return_value=httpx.Response(200, json=True))
+        await autohold_create(
+            mock_ctx, project="org/repo", job="deploy-job", change="12345"
+        )
+        body = json.loads(route.calls[0].request.content)
+        assert body["change"] == "12345"
+        assert body["job"] == "deploy-job"
+        assert body["count"] == 1
+        assert body["node_hold_expiration"] == 86400
+
+    @respx.mock
+    async def test_sends_ref_filter(self, mock_ctx):
+        route = respx.post(
+            "https://zuul.example.com/api/tenant/test-tenant/project/org%2Frepo/autohold"
+        ).mock(return_value=httpx.Response(200, json=True))
+        await autohold_create(
+            mock_ctx, project="org/repo", job="deploy-job", ref="refs/heads/main"
+        )
+        body = json.loads(route.calls[0].request.content)
+        assert body["ref_filter"] == "refs/heads/main"
+
+
 class TestAutoholdDelete:
     @respx.mock
     async def test_deletes_autohold(self, mock_ctx):
