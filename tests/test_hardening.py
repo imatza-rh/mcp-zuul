@@ -142,7 +142,6 @@ class TestApiPostNonJsonResponse:
         )
         assert result == {}
 
-
     @respx.mock
     async def test_boolean_response_normalized_to_dict(self, mock_ctx):
         """Zuul write endpoints may return bare `true`; must not break **result."""
@@ -160,9 +159,9 @@ class TestApiPostNonJsonResponse:
     @respx.mock
     async def test_integer_response_normalized_to_dict(self, mock_ctx):
         """Zuul write endpoints may return a bare integer (e.g. autohold ID)."""
-        respx.post("https://zuul.example.com/api/tenant/test-tenant/project/org/repo/autohold").mock(
-            return_value=httpx.Response(200, json=42)
-        )
+        respx.post(
+            "https://zuul.example.com/api/tenant/test-tenant/project/org/repo/autohold"
+        ).mock(return_value=httpx.Response(200, json=42))
         result = await api_post(
             mock_ctx,
             "/tenant/test-tenant/project/org/repo/autohold",

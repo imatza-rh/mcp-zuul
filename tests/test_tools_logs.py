@@ -624,7 +624,9 @@ class TestBrowseBuildLogs404Guidance:
             return_value=httpx.Response(200, json=build)
         )
         respx.get(f"{build['log_url']}some-other-path/").mock(return_value=httpx.Response(404))
-        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="some-other-path/"))
+        result = json.loads(
+            await browse_build_logs(mock_ctx, "build-uuid-1", path="some-other-path/")
+        )
         assert "error" in result
         assert "diagnose_build" not in result["error"]
 

@@ -188,7 +188,9 @@ def _classify_tasks(
     if log_context:
         all_text += " " + _collect_log_text(log_context)
     if not all_text:
-        return Classification(category="UNKNOWN", reason="No error text", confidence="low", retryable=False)
+        return Classification(
+            category="UNKNOWN", reason="No error text", confidence="low", retryable=False
+        )
 
     infra_reason: str | None = None
     for pattern, reason in _INFRA_PATTERNS:
@@ -216,7 +218,9 @@ def _classify_tasks(
             confidence="high",
             retryable=True,
         )
-    return Classification(category="UNKNOWN", reason="No pattern matched", confidence="low", retryable=False)
+    return Classification(
+        category="UNKNOWN", reason="No pattern matched", confidence="low", retryable=False
+    )
 
 
 def classify_failure(
