@@ -571,6 +571,64 @@ class TestBrowseBuildLogs:
         assert "Coverage Report" in result["content"]
 
 
+class TestBrowseBuildLogs404Guidance:
+    """browse_build_logs should provide helpful guidance when logs/ returns 404."""
+
+    @respx.mock
+    async def test_logs_404_provides_guidance(self, mock_ctx):
+        """404 on logs/ should suggest diagnose_build and get_build_log."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}logs/").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}fetch-output.log").mock(return_value=httpx.Response(404))
+        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="logs/"))
+        assert "error" in result
+        assert "diagnose_build" in result["error"]
+        assert "get_build_log" in result["error"]
+
+    @respx.mock
+    async def test_logs_404_mentions_fetch_output_log(self, mock_ctx):
+        """404 on logs/ should mention fetch-output.log if it exists."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}logs/").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}fetch-output.log").mock(
+            return_value=httpx.Response(200, content=b"post-run output")
+        )
+        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="logs/"))
+        assert "error" in result
+        assert "fetch-output.log" in result["error"]
+
+    @respx.mock
+    async def test_root_404_provides_guidance(self, mock_ctx):
+        """404 on root (no path) should also provide guidance."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}").mock(return_value=httpx.Response(404))
+        respx.get(f"{build['log_url']}fetch-output.log").mock(return_value=httpx.Response(404))
+        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path=""))
+        assert "error" in result
+        assert "diagnose_build" in result["error"]
+
+    @respx.mock
+    async def test_nonlog_path_404_no_guidance(self, mock_ctx):
+        """404 on non-logs path should return simple error (no guidance)."""
+        build = make_build()
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}some-other-path/").mock(return_value=httpx.Response(404))
+        result = json.loads(await browse_build_logs(mock_ctx, "build-uuid-1", path="some-other-path/"))
+        assert "error" in result
+        assert "diagnose_build" not in result["error"]
+
+
 class TestGetBuildLogUrl:
     @respx.mock
     async def test_accepts_url(self, mock_ctx):

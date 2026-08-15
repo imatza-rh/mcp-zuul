@@ -390,7 +390,25 @@ async def browse_build_logs(
     # wastes bandwidth when the output is capped at _MAX_FILE_BYTES.
     resp = await fetch_log_url(a, target_url, max_bytes=_MAX_FILE_BYTES * 4)
     if resp.status_code == 404:
-        return error(f"Not found: {path or '/'}")
+        display_path = path or "/"
+        # Provide helpful guidance for common "logs not found" scenario
+        if not path or path.startswith("logs"):
+            msg = f"Not found: {display_path}. "
+            msg += (
+                "Post-run log collection may have failed. Alternatives: "
+                "use diagnose_build for structured failure analysis, "
+                "or get_build_log for the outer job-output.txt"
+            )
+            # Check if fetch-output.log exists (post-run log capture output)
+            try:
+                fetch_url = log_url.rstrip("/") + "/fetch-output.log"
+                fetch_resp = await fetch_log_url(a, fetch_url)
+                if fetch_resp.status_code == 200:
+                    msg += ". fetch-output.log is available — use browse_build_logs(path='fetch-output.log') to check post-run failures"
+            except Exception:
+                pass
+            return error(msg)
+        return error(f"Not found: {display_path}")
     resp.raise_for_status()
 
     content_type = resp.headers.get("content-type", "")
