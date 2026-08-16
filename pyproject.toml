@@ -40,6 +40,7 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
     "types-defusedxml>=0.7",
+    "websockets>=14.0",
 ]
 
 [project.scripts]
@@ -50,7 +51,7 @@ Homepage = "https://github.com/imatza-rh/mcp-zuul"
 Documentation = "https://github.com/imatza-rh/mcp-zuul#why-mcp-zuul"
 Repository = "https://github.com/imatza-rh/mcp-zuul"
 Issues = "https://github.com/imatza-rh/mcp-zuul/issues"
-Changelog = "https://github.com/imatza-rh/mcp-zuul/releases"
+Changelog = "https://github.com/imatza-rh/mcp-zuul/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling"]
@@ -69,21 +70,8 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear
-    "SIM",  # flake8-simplify
-    "TCH",  # flake8-type-checking
-    "RUF",  # ruff-specific
-]
-ignore = [
-    "E501",   # line length (handled by formatter)
-    "SIM108", # ternary operator (readability preference)
-]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "TCH", "RUF"]
+ignore = ["E501", "SIM108"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["mcp_zuul"]
@@ -94,6 +82,9 @@ warn_return_any = false
 warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = "gssapi.*"
@@ -102,4 +93,3 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "websockets.*"
 ignore_missing_imports = true
-
