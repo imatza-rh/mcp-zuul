@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.0] - 2026-08-16
+
+### Added
+- `investigate_change` composite tool - combines builds, diagnosis, and autohold lookup for a change into a single call, replacing 3-4 separate tool calls
+- `tenant_health` prompt - assesses overall Zuul tenant health (components, config errors, node pool)
+- `diagnose_queue_delay` prompt - diagnoses why jobs are queued or delayed (nodes, semaphores, system state)
+- Progressive summary in `list_builds` response - includes `result_counts` and `latest_failure_uuid` to help decide whether to drill deeper
+- `brief` parameter on `get_build` and `get_status` for compact responses during polling
+- POST_FAILURE phase-aware classification - prioritizes run-phase errors over post-run cleanup noise
+- `fetch-output.log` detection in `diagnose_build` (non-brief mode)
+- `rescued_count` and `inner_failures_note` in brief mode root cause output
+- Natural-language `summary` field in `diagnose_build` brief response
+- `error_snippet` fallback when no failed tasks but log context has error matches
+- Helpful 404 guidance in `browse_build_logs` with common path suggestions
+- `RETRY_LIMIT` and `MERGER_FAILURE` added to diagnosable result types
+
+### Changed
+- **Breaking**: Migrated from MCP SDK v1 (`FastMCP`) to v2 (`MCPServer`). Requires `mcp>=2.0.0,<3.0.0`
+- Autohold tools (`autohold_create`, `autohold_delete`) now available in read-only mode - they are management operations, not pipeline-affecting
+- Write API responses normalized - bare boolean/integer responses wrapped in `{"raw_response": data}` for consistent handling
+- Classifier refactored - extracted `_classify_tasks()` helper, run-phase errors prioritized when both run and post-run phases fail
+- `pick_client` renamed from `_pick_client` (now public API for tool modules)
+
+### Fixed
+- `get_change_status` brief mode not wired through on the in-pipeline path
+- Non-JSON 200 responses from reverse proxies now produce clear error messages instead of crashes
+- Duration formatting handles non-numeric values gracefully
+
 ## [0.10.0] - 2026-07-31
 
 ### Added

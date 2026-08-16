@@ -557,7 +557,7 @@ async def diagnose_build(
         duration = build.get("duration")
         try:
             dur_str = f" after {int(duration) // 60}m" if duration and duration > 60 else ""
-        except (OverflowError, ValueError):
+        except (OverflowError, TypeError, ValueError):
             dur_str = ""
         job_name = build.get("job_name", "unknown")
         reason = (classification.reason if classification else "") or ""
