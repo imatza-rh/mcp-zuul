@@ -342,13 +342,14 @@ async def list_autoholds(
         job: Job name filter (substring match, client-side)
     """
     t = _tenant(ctx, tenant)
-    if project and "/" in project:
-        path = f"/tenant/{safepath(t)}/project/{safepath(project)}/autohold"
+    decoded_project = project.replace("%2F", "/") if project else ""
+    if decoded_project and "/" in decoded_project:
+        path = f"/tenant/{safepath(t)}/project/{safepath(decoded_project)}/autohold"
     else:
         path = f"/tenant/{safepath(t)}/autohold"
     data = await api(ctx, path)
-    if project and "/" not in project:
-        data = [a for a in data if project in (a.get("project") or "")]
+    if decoded_project and "/" not in decoded_project:
+        data = [a for a in data if decoded_project in (a.get("project") or "")]
     if job:
         data = [a for a in data if job in (a.get("job") or "")]
     result = [

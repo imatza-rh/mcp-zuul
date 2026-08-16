@@ -259,12 +259,7 @@ async def list_builds(
         for b in builds:
             r = b.get("result", "UNKNOWN")
             counts[r] = counts.get(r, 0) + 1
-            if not latest_failure_uuid and r in (
-                "FAILURE",
-                "POST_FAILURE",
-                "TIMED_OUT",
-                "NODE_FAILURE",
-            ):
+            if not latest_failure_uuid and r in _DIAGNOSABLE:
                 latest_failure_uuid = b.get("uuid")
         out["result_counts"] = counts
         if latest_failure_uuid:

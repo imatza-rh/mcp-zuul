@@ -247,7 +247,10 @@ async def get_change_status(
             # For the buildsets API, use the change number only (not
             # the project-qualified "PROJECT,CHANGE" format that the
             # status API accepts).
-            bs_change = change.split(",")[-1] if "," in change else change
+            # PROJECT,CHANGE format: change number is part after first comma.
+            # "project%2Fsubproject,12345" → "12345"
+            # "project%2Fsubproject,12345,patchset" → "12345"
+            bs_change = change.split(",")[1] if "," in change else change
             bs_params: dict[str, Any] = {"change": bs_change, "limit": 1}
             if project_hint:
                 bs_params["project"] = project_hint
