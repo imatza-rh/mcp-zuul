@@ -1906,6 +1906,91 @@ class TestBriefModeRescuedCount:
         assert "inner_failures_note" not in root
 
 
+class TestBriefModeDurStr:
+    """Brief mode summary duration string formatting."""
+
+    @respx.mock
+    async def test_float_duration_no_decimal(self, mock_ctx):
+        """Float duration should produce clean '2m' not '2.0m'."""
+        build = make_build(result="FAILURE", duration=120.5)
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"log line")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        assert "2.0m" not in result["summary"]
+        assert "after 2m" in result["summary"]
+
+    @respx.mock
+    async def test_short_duration_omitted(self, mock_ctx):
+        """Duration <= 60s should not appear in summary."""
+        build = make_build(result="FAILURE", duration=45)
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"log line")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        assert "after" not in result["summary"]
+
+
+class TestBriefModeErrorSnippet:
+    """Brief mode should show error_snippet when no failed tasks but log context exists."""
+
+    @respx.mock
+    async def test_error_snippet_from_log_context(self, mock_ctx):
+        """When job-output.json has no failures but log has fatal lines, show snippet."""
+        build = make_build(result="FAILURE")
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        # job-output.json returns empty playbook list (no failures)
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        # job-output.txt has a fatal error line
+        log_content = (
+            "2026-01-01 00:00:00 | host | normal log line\n"
+            "2026-01-01 00:01:00 | host | fatal: [controller]: FAILED! => connection refused\n"
+            "2026-01-01 00:02:00 | host | more log output\n"
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=log_content.encode())
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        assert "error_snippet" in result
+        assert "connection refused" in result["error_snippet"]
+
+    @respx.mock
+    async def test_no_error_snippet_when_tasks_present(self, mock_ctx):
+        """When failed tasks exist, error_snippet should not be added."""
+        build = make_build(result="FAILURE")
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/build-uuid-1").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"fatal: something")
+        )
+        result = json.loads(await diagnose_build(mock_ctx, "build-uuid-1", brief=True))
+        assert "error_snippet" not in result
+        assert "root_cause" in result
+
+
 class TestInvestigateChange:
     """Tests for the investigate_change composite tool."""
 
