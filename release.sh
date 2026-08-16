@@ -5,8 +5,8 @@
 #   ./release.sh <version>          # e.g. ./release.sh 0.5.0
 #   ./release.sh patch|minor|major  # auto-bump from current version
 #
-# Steps: validate → bump → commit → push → tag → PyPI → GH release → MCP registry
-# Aborts on any failure. Requires: uv, gh, git, security (macOS keychain).
+# Steps: validate → bump → commit → push → tag → (release.yml handles PyPI + GH release)
+# Aborts on any failure. Requires: uv, gh, git.
 
 set -euo pipefail
 
@@ -61,10 +61,6 @@ BEHIND=$(git rev-list --count HEAD..origin/main)
 
 command -v uv  >/dev/null || die "uv not found"
 command -v gh  >/dev/null || die "gh not found"
-
-# Check PyPI token is accessible
-security find-generic-password -a pypi -s mcp-zuul -w >/dev/null 2>&1 \
-    || die "PyPI token not found in keychain (service: mcp-zuul, account: pypi)"
 
 git tag -l "v${VERSION}" | grep -q . && die "Tag v${VERSION} already exists"
 
@@ -123,34 +119,7 @@ info "Creating tag v${VERSION}"
 
 git tag -a "v${VERSION}" -m "v${VERSION}"
 git push origin "v${VERSION}"
-ok "Tag v${VERSION} pushed (Docker build triggered)"
-
-# ── PyPI ─────────────────────────────────────────────────────────────────────
-
-info "Publishing to PyPI"
-
-rm -rf dist/
-uv build
-
-( set +x; UV_PUBLISH_TOKEN=$(security find-generic-password -a pypi -s mcp-zuul -w) uv publish )
-ok "Published to PyPI"
-
-# ── GitHub Release ───────────────────────────────────────────────────────────
-
-info "Creating GitHub Release"
-
-# Extract changelog section for this version
-NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found" CHANGELOG.md)
-[[ -n "$NOTES" ]] || NOTES="Release v${VERSION}"
-
-gh release create "v${VERSION}" --title "v${VERSION}" --notes "$NOTES"
-ok "GitHub Release created"
-
-# ── MCP Registry ─────────────────────────────────────────────────────────────
-
-info "Triggering MCP Registry publish"
-gh workflow run publish-registry.yml
-ok "MCP Registry workflow dispatched"
+ok "Tag v${VERSION} pushed (release.yml handles PyPI + GH release + Docker)"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
@@ -163,4 +132,6 @@ echo "  GitHub:   https://github.com/imatza-rh/mcp-zuul/releases/tag/v${VERSION}
 echo "  Docker:   https://github.com/imatza-rh/mcp-zuul/actions/workflows/docker.yml"
 echo "  Registry: https://github.com/imatza-rh/mcp-zuul/actions/workflows/publish-registry.yml"
 echo ""
+echo "Note: release.yml workflow handles PyPI publish, GitHub Release,"
+echo "and MCP Registry dispatch automatically on tag push."
 echo "Remember to update CLAUDE.md if tool count changed."

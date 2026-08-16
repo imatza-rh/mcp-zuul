@@ -5,6 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
+  actions: write
   contents: write
   id-token: write
 
@@ -42,3 +43,7 @@ jobs:
         with:
           generate_release_notes: true
           files: dist/*
+      - name: Trigger MCP Registry publish
+        run: gh workflow run publish-registry.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
