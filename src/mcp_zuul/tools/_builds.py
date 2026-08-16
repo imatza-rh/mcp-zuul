@@ -47,9 +47,7 @@ _FILE_PATH_NOISE = re.compile(
     r"|\.com/|\.io/|\.org/|\.net/"  # URL-derived fragments
 )
 
-_DIAGNOSABLE = frozenset(
-    {"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"}
-)
+_DIAGNOSABLE = frozenset({"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"})
 
 
 _CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
@@ -262,7 +260,10 @@ async def list_builds(
             r = b.get("result", "UNKNOWN")
             counts[r] = counts.get(r, 0) + 1
             if not latest_failure_uuid and r in (
-                "FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE",
+                "FAILURE",
+                "POST_FAILURE",
+                "TIMED_OUT",
+                "NODE_FAILURE",
             ):
                 latest_failure_uuid = b.get("uuid")
         out["result_counts"] = counts
@@ -964,9 +965,7 @@ async def investigate_change(
             return [a for a in data if job in (a.get("job") or "")]
         return data
 
-    results = await asyncio.gather(
-        _fetch_builds(), _fetch_autoholds(), return_exceptions=True
-    )
+    results = await asyncio.gather(_fetch_builds(), _fetch_autoholds(), return_exceptions=True)
     builds_raw: list = results[0] if not isinstance(results[0], BaseException) else []
     autoholds_raw: list = results[1] if not isinstance(results[1], BaseException) else []
 
