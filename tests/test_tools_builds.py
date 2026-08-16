@@ -15,6 +15,7 @@ from mcp_zuul.tools import (
     get_build_failures,
     get_buildset,
     get_job_durations,
+    investigate_change,
     list_builds,
     list_buildsets,
 )
@@ -1903,3 +1904,167 @@ class TestBriefModeRescuedCount:
         root = result["root_cause"]
         assert "rescued_count" not in root
         assert "inner_failures_note" not in root
+
+
+class TestInvestigateChange:
+    """Tests for the investigate_change composite tool."""
+
+    @respx.mock
+    async def test_happy_path_with_failure(self, mock_ctx):
+        """Should return builds, diagnosis, and summary."""
+        builds = [
+            make_build(uuid="b1", result="FAILURE", job_name="job-a"),
+            make_build(uuid="b2", result="SUCCESS", job_name="job-b"),
+        ]
+        job_output = make_job_output_json(failed=True)
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        # diagnose_build sub-call: build detail + job-output + log text
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(200, json=builds[0])
+        )
+        respx.get(f"{builds[0]['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(200, json=job_output)
+        )
+        respx.get(f"{builds[0]['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(200, content=b"log line")
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="12345"))
+        assert result["change"] == "12345"
+        assert len(result["builds"]) == 2
+        assert result["result_counts"]["FAILURE"] == 1
+        assert result["result_counts"]["SUCCESS"] == 1
+        assert "latest_failure_diagnosis" in result
+        diag = result["latest_failure_diagnosis"]
+        assert diag["job"] == "job-a"
+        assert diag["result"] == "FAILURE"
+        assert "classification" in diag
+        assert "summary" in diag
+        assert "autoholds" not in result  # empty list excluded by clean()
+        assert "errors" not in result  # no fetch errors
+        assert "2 builds:" in result["summary"]
+
+    @respx.mock
+    async def test_all_success_no_diagnosis(self, mock_ctx):
+        """When all builds succeed, no diagnosis should be attempted."""
+        builds = [make_build(uuid="b1", result="SUCCESS")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="100"))
+        assert result["change"] == "100"
+        assert "latest_failure_diagnosis" not in result
+        assert result["result_counts"] == {"SUCCESS": 1}
+
+    @respx.mock
+    async def test_no_builds(self, mock_ctx):
+        """Should handle empty build list gracefully."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="999"))
+        assert result["change"] == "999"
+        assert "builds" not in result  # empty list stripped by clean()
+        assert result["summary"] == "no builds found"
+        assert "latest_failure_diagnosis" not in result
+
+    @respx.mock
+    async def test_builds_api_error_reported(self, mock_ctx):
+        """When builds API fails, error should be reported in response."""
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(500, text="Internal Server Error")
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="123"))
+        assert "errors" in result
+        assert any("builds:" in e for e in result["errors"])
+        assert "builds" not in result  # empty list stripped by clean()
+
+    @respx.mock
+    async def test_autoholds_api_error_reported(self, mock_ctx):
+        """When autoholds API fails, error should be reported but builds still work."""
+        builds = [make_build(uuid="b1", result="SUCCESS")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(500, text="Server Error")
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="123"))
+        assert len(result["builds"]) == 1
+        assert "errors" in result
+        assert any("autoholds:" in e for e in result["errors"])
+
+    @respx.mock
+    async def test_job_filter(self, mock_ctx):
+        """Job filter should be passed to builds API and autohold filtering."""
+        builds = [make_build(uuid="b1", result="SUCCESS", job_name="target-job")]
+        autoholds = [
+            {
+                "id": "ah1",
+                "project": "org/repo",
+                "job": "target-job",
+                "current_count": 0,
+                "max_count": 1,
+            },
+            {
+                "id": "ah2",
+                "project": "org/repo",
+                "job": "other-job",
+                "current_count": 0,
+                "max_count": 1,
+            },
+        ]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=autoholds)
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="123", job="target-job"))
+        assert len(result["builds"]) == 1
+        # Only the matching autohold should be included
+        assert len(result["autoholds"]) == 1
+        assert result["autoholds"][0]["id"] == "ah1"
+
+    async def test_missing_change_raises(self, mock_ctx):
+        """Should raise ValueError when change is empty."""
+        result = json.loads(await investigate_change(mock_ctx, change=""))
+        assert "error" in result
+
+    @respx.mock
+    async def test_diagnosis_failure_graceful(self, mock_ctx):
+        """When diagnose_build fails, should include error in diagnosis."""
+        builds = [make_build(uuid="b1", result="FAILURE")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/autohold").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        # diagnose_build will fail because no build detail mock
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/b1").mock(
+            return_value=httpx.Response(500, text="error")
+        )
+
+        result = json.loads(await investigate_change(mock_ctx, change="123"))
+        assert "latest_failure_diagnosis" in result
+        assert "error" in result["latest_failure_diagnosis"]

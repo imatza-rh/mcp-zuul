@@ -545,7 +545,10 @@ async def diagnose_build(
                 out["error_snippet"] = matches[0][:300]
         # Natural-language summary for direct LLM consumption
         duration = build.get("duration")
-        dur_str = f" after {duration // 60}m" if duration and duration > 60 else ""
+        try:
+            dur_str = f" after {int(duration) // 60}m" if duration and duration > 60 else ""
+        except (OverflowError, ValueError):
+            dur_str = ""
         job_name = build.get("job_name", "unknown")
         reason = (classification.reason if classification else "") or ""
         parts = [f"{job_name} {result}{dur_str}"]
@@ -963,6 +966,11 @@ async def investigate_change(
     results = await asyncio.gather(_fetch_builds(), _fetch_autoholds(), return_exceptions=True)
     builds_raw: list = results[0] if not isinstance(results[0], BaseException) else []
     autoholds_raw: list = results[1] if not isinstance(results[1], BaseException) else []
+    fetch_errors: list[str] = []
+    if isinstance(results[0], BaseException):
+        fetch_errors.append(f"builds: {type(results[0]).__name__}")
+    if isinstance(results[1], BaseException):
+        fetch_errors.append(f"autoholds: {type(results[1]).__name__}")
 
     builds = [fmt_build(b) for b in builds_raw]
 
@@ -1019,4 +1027,6 @@ async def investigate_change(
         out["latest_failure_diagnosis"] = diagnosis
     if relevant_autoholds:
         out["autoholds"] = relevant_autoholds
+    if fetch_errors:
+        out["errors"] = fetch_errors
     return json.dumps(clean(out))
