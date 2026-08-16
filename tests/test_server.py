@@ -276,9 +276,14 @@ class TestVersionFallback:
 
     def test_version_resolves_when_installed(self):
         """Installed package returns correct version."""
+        import tomllib
+        from pathlib import Path
+
         from mcp_zuul.server import _version
 
-        assert _version == "0.10.0"
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        expected = tomllib.loads(pyproject.read_text())["project"]["version"]
+        assert _version == expected
 
     def test_version_fallback_on_missing_package(self):
         """PackageNotFoundError falls back to 0.0.0-dev."""
