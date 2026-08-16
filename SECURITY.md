@@ -12,8 +12,9 @@ You will receive an acknowledgment within 48 hours and a detailed response withi
 
 | Version | Supported |
 |---------|-----------|
-| 0.3.x   | Yes       |
-| < 0.3   | No        |
+| 0.10.x  | Yes       |
+| 0.9.x   | Yes       |
+| < 0.9   | No        |
 
 ## Security Controls
 
@@ -27,6 +28,9 @@ mcp-zuul implements the following security measures:
 - **Regex timeout**: User-supplied grep patterns run in a thread executor with a 10-second timeout to prevent catastrophic backtracking.
 - **Read-only by default**: Write tools (enqueue, dequeue, autohold) are removed from the server entirely when `ZUUL_READ_ONLY=true` (default). LLMs cannot invoke tools that don't exist.
 - **Input validation**: All user-facing parameters are validated before use. Limits enforced on pagination (max 100), log lines (max 500), and response sizes.
+- **Supply-chain integrity**: Docker images are built with SBOM generation and provenance attestation. PyPI releases use OIDC Trusted Publishing.
+- **Dependency auditing**: `pip-audit` runs in CI on every push and PR.
+- **OpenSSF Scorecard**: Weekly scorecard scans publish results to GitHub Security.
 
 ## Best Practices for Users
 
@@ -35,3 +39,4 @@ mcp-zuul implements the following security measures:
 - Keep `ZUUL_READ_ONLY=true` (default) unless write operations are explicitly needed
 - For Docker, forward tokens without values: `-e ZUUL_AUTH_TOKEN` (inherits from host)
 - Use `ZUUL_ENABLED_TOOLS` to restrict tool exposure to only what's needed
+- Pin container images to a specific digest for reproducible deployments
