@@ -47,7 +47,17 @@ _FILE_PATH_NOISE = re.compile(
     r"|\.com/|\.io/|\.org/|\.net/"  # URL-derived fragments
 )
 
-_DIAGNOSABLE = frozenset({"FAILURE", "POST_FAILURE", "TIMED_OUT", "NODE_FAILURE", "DISK_FULL"})
+_DIAGNOSABLE = frozenset(
+    {
+        "FAILURE",
+        "POST_FAILURE",
+        "TIMED_OUT",
+        "NODE_FAILURE",
+        "DISK_FULL",
+        "RETRY_LIMIT",
+        "MERGER_FAILURE",
+    }
+)
 
 
 _CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}

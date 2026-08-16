@@ -102,6 +102,42 @@ class TestListBuilds:
         assert params["limit"] == "101"  # clamped to 100 + 1
 
 
+class TestListBuildsProgressiveSummary:
+    """Tests for progressive summary in list_builds (result_counts + latest_failure_uuid)."""
+
+    @respx.mock
+    async def test_retry_limit_is_diagnosable(self, mock_ctx):
+        """RETRY_LIMIT builds should appear in latest_failure_uuid."""
+        builds = [make_build(uuid="rl-1", result="RETRY_LIMIT")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx))
+        assert result["latest_failure_uuid"] == "rl-1"
+        assert result["result_counts"]["RETRY_LIMIT"] == 1
+
+    @respx.mock
+    async def test_merger_failure_is_diagnosable(self, mock_ctx):
+        """MERGER_FAILURE builds should appear in latest_failure_uuid."""
+        builds = [make_build(uuid="mf-1", result="MERGER_FAILURE")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx))
+        assert result["latest_failure_uuid"] == "mf-1"
+
+    @respx.mock
+    async def test_success_not_in_latest_failure(self, mock_ctx):
+        """SUCCESS builds should not be flagged as latest_failure_uuid."""
+        builds = [make_build(uuid="s-1", result="SUCCESS")]
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/builds").mock(
+            return_value=httpx.Response(200, json=builds)
+        )
+        result = json.loads(await list_builds(mock_ctx))
+        assert "latest_failure_uuid" not in result
+        assert result["result_counts"]["SUCCESS"] == 1
+
+
 class TestListBuildsTimeFiltering:
     """Tests for client-side time filtering in list_builds."""
 
