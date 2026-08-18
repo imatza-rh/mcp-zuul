@@ -148,7 +148,8 @@ class TestStreamBuildConsole:
         """When config has auth_token, it's included in the first WS message."""
         from mcp_zuul.tools._console import stream_build_console
 
-        mock_ctx.request_context.lifespan_context.config.auth_token = "test-auth-placeholder"
+        fake_value = "test-auth-placeholder"
+        mock_ctx.request_context.lifespan_context.config.auth_token = fake_value
         ws = _make_ws(["some output\n"])
         mod = _mock_ws_module(connect_rv=ws)
 
