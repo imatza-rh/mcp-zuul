@@ -148,7 +148,7 @@ class TestStreamBuildConsole:
         """When config has auth_token, it's included in the first WS message."""
         from mcp_zuul.tools._console import stream_build_console
 
-        mock_ctx.request_context.lifespan_context.config.auth_token = "my-jwt-token"
+        mock_ctx.request_context.lifespan_context.config.auth_token = "test-auth-placeholder"
         ws = _make_ws(["some output\n"])
         mod = _mock_ws_module(connect_rv=ws)
 
@@ -157,7 +157,7 @@ class TestStreamBuildConsole:
 
         ws.send.assert_called_once()
         sent = json.loads(ws.send.call_args[0][0])
-        assert sent["token"] == "my-jwt-token"
+        assert sent["token"] == "test-auth-placeholder"
         assert sent["uuid"] == "abc123"
         assert sent["logfile"] == "console.log"
 
