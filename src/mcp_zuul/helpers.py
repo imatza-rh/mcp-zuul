@@ -232,8 +232,15 @@ async def _stream_response(
                         truncated = True
                         break
                     chunks.append(chunk)
+        # aiter_bytes() already applies Content-Encoding. Rebuild the decoded
+        # representation and let HTTPX recalculate the bounded content length.
+        decoded_headers = [
+            (key, value)
+            for key, value in hdrs.multi_items()
+            if key.lower() not in ("content-encoding", "content-length")
+        ]
         return httpx.Response(
-            status_code=status, headers=hdrs, content=b"".join(chunks), request=req
+            status_code=status, headers=decoded_headers, content=b"".join(chunks), request=req
         ), truncated
 
     resp, truncated = await _fetch()

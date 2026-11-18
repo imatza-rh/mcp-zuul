@@ -1410,6 +1410,50 @@ class TestDiagnoseBuild:
         assert "fatal" in fatal_lines[0]["text"]
 
     @respx.mock
+    async def test_http_gzip_flows_through_diagnosis(self, mock_ctx):
+        build = make_build(result="FAILURE")
+        job_output = json.dumps(make_job_output_json(failed=True)).encode()
+        log_text = b"setup complete\nfatal: [controller-0]: FAILED! => deployment failed\n"
+        respx.get("https://zuul.example.com/api/tenant/test-tenant/build/fail-uuid").mock(
+            return_value=httpx.Response(200, json=build)
+        )
+        json_route = respx.get(f"{build['log_url']}job-output.json.gz").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(job_output),
+            )
+        )
+        respx.get(f"{build['log_url']}job-output.json").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(job_output),
+            )
+        )
+        log_route = respx.get(f"{build['log_url']}job-output.txt").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(log_text),
+            )
+        )
+        respx.head(f"{build['log_url']}fetch-output.log").mock(return_value=httpx.Response(404))
+
+        result = json.loads(await diagnose_build(mock_ctx, "fail-uuid"))
+
+        assert result["result"] == "FAILURE"
+        assert result["classification"] == "INFRA_FLAKE"
+        assert result["failed_tasks"][0]["task"] == "Run deployment"
+        assert any(
+            line.get("match") and "fatal" in line["text"]
+            for block in result["log_context"]
+            for line in block
+        )
+        assert json_route.call_count == 1
+        assert log_route.call_count == 1
+
+    @respx.mock
     async def test_diagnose_includes_cmd_and_invocation(self, mock_ctx):
         """diagnose_build must include cmd/invocation like get_build_failures."""
         build = make_build(result="FAILURE")

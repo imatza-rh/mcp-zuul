@@ -1,5 +1,6 @@
 """Tests for helpers, formatters, config, and error handling."""
 
+import gzip
 import json
 import os
 import time as _time
@@ -914,6 +915,55 @@ class TestApiRetry:
 
 
 class TestFetchLogUrlDecodingError:
+    @respx.mock
+    async def test_gzip_encoded_body_is_decoded_once(self, mock_ctx):
+        a = mock_ctx.request_context.lifespan_context
+        url = "https://logs.example.com/build/job-output.json"
+        body = b'[{"phase": "run", "plays": []}]'
+        encoded = gzip.compress(body)
+        route = respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                headers=[
+                    ("Content-Encoding", "gzip"),
+                    ("Content-Length", str(len(encoded))),
+                    ("Content-Type", "application/json"),
+                    ("Set-Cookie", "a=1"),
+                    ("Set-Cookie", "b=2"),
+                ],
+                content=encoded,
+            )
+        )
+
+        resp = await fetch_log_url(a, url)
+
+        assert resp.content == body
+        assert "content-encoding" not in resp.headers
+        assert resp.headers["content-length"] == str(len(body))
+        assert resp.headers.get_list("set-cookie") == ["a=1", "b=2"]
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_gzip_size_cap_applies_to_decoded_body(self, mock_ctx):
+        a = mock_ctx.request_context.lifespan_context
+        url = "https://logs.example.com/build/large.json"
+        body = b"x" * 1024
+        encoded = gzip.compress(body)
+        route = respx.get(url).mock(
+            return_value=httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=encoded,
+            )
+        )
+
+        resp = await fetch_log_url(a, url, max_bytes=64)
+
+        assert len(encoded) < 64
+        assert resp.content == body[:64]
+        assert resp.headers["content-length"] == "64"
+        assert route.call_count == 1
+
     @respx.mock
     async def test_retries_with_identity_on_decoding_error(self, mock_ctx):
         """DecodingError on first attempt should retry with Accept-Encoding: identity."""
