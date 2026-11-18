@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] - 2026-11-18
+
+### Fixed
+- Double decoding of streamed log responses - stale `Content-Encoding` and `Content-Length` headers are stripped when a bounded stream is reassembled, preventing spurious corrupted-gzip retries when fetching `job-output.json` and log files (#38)
+
 ## [0.11.0] - 2026-08-16
 
 ### Added
