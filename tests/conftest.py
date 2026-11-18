@@ -9,6 +9,34 @@ import pytest
 from mcp_zuul.config import Config
 from mcp_zuul.helpers import AppContext
 
+# Environment variables read by Config.from_env(). Tests must be hermetic:
+# a developer shell running a local mcp-zuul MCP server often exports these,
+# which otherwise leaks into Config/lifespan tests and causes spurious
+# failures (e.g. mutually-exclusive ZUUL_ENABLED_TOOLS/ZUUL_DISABLED_TOOLS,
+# unwanted Kerberos auth in lifespan tests).
+_CONFIG_ENV_VARS = (
+    "ZUUL_URL",
+    "ZUUL_TIMEOUT",
+    "ZUUL_USE_KERBEROS",
+    "ZUUL_AUTH_TOKEN",
+    "ZUUL_ENABLED_TOOLS",
+    "ZUUL_DISABLED_TOOLS",
+    "ZUUL_DEFAULT_TENANT",
+    "ZUUL_VERIFY_SSL",
+    "ZUUL_READ_ONLY",
+    "LOGJUICER_URL",
+    "MCP_TRANSPORT",
+    "MCP_PORT",
+    "MCP_HOST",
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_config_env(monkeypatch):
+    """Remove config env vars inherited from the developer's shell."""
+    for var in _CONFIG_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
 
 @pytest.fixture
 def config():
